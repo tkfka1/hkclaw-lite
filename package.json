@@ -1,0 +1,42 @@
+{
+  "name": "hkclaw-lite",
+  "version": "0.1.0",
+  "description": "CLI-first lightweight agent runner inspired by hkclaw",
+  "license": "MIT",
+  "author": "hankyo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tkfka1/hkclaw-lite.git"
+  },
+  "homepage": "https://github.com/tkfka1/hkclaw-lite#readme",
+  "bugs": {
+    "url": "https://github.com/tkfka1/hkclaw-lite/issues"
+  },
+  "keywords": [
+    "cli",
+    "agent",
+    "codex",
+    "claude",
+    "automation",
+    "hkclaw"
+  ],
+  "type": "module",
+  "bin": {
+    "hkclaw-lite": "./bin/hkclaw-lite.js"
+  },
+  "files": [
+    "README.md",
+    "LICENSE",
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
