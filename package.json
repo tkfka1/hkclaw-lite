@@ -1,7 +1,7 @@
 {
   "name": "hkclaw-lite",
   "version": "0.1.0",
-  "description": "CLI-first lightweight agent runner inspired by hkclaw",
+  "description": "Discord-only AI agent runtime managed from the CLI with full host-account privileges",
   "license": "MIT",
   "author": "hankyo",
   "repository": {
@@ -13,6 +13,7 @@
     "url": "https://github.com/tkfka1/hkclaw-lite/issues"
   },
   "keywords": [
+    "discord",
     "cli",
     "agent",
     "codex",

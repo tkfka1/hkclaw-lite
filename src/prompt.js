@@ -6,14 +6,15 @@ import { resolveProjectPath } from './store.js';
 export function buildPromptEnvelope({
   projectRoot,
   config,
-  service,
+  agent,
+  channel,
   session,
   userPrompt,
 }) {
   const sections = [];
-  const systemPrompt = loadSystemPrompt(projectRoot, service);
+  const systemPrompt = loadSystemPrompt(projectRoot, agent);
   const historyWindow =
-    service.historyWindow ?? config.defaults.historyWindow ?? DEFAULT_HISTORY_WINDOW;
+    agent.historyWindow ?? config.defaults.historyWindow ?? DEFAULT_HISTORY_WINDOW;
   const recentMessages = session?.messages?.slice(-historyWindow * 2) ?? [];
 
   if (systemPrompt) {
@@ -23,9 +24,12 @@ export function buildPromptEnvelope({
   sections.push(
     [
       'Runtime context:',
-      `- service: ${service.name}`,
-      `- agent: ${service.agent}`,
-      `- workdir: ${resolveProjectPath(projectRoot, service.workdir)}`,
+      `- agent name: ${agent.name}`,
+      `- agent type: ${agent.agent}`,
+      `- workdir: ${resolveProjectPath(projectRoot, agent.workdir)}`,
+      channel ? `- discord channel: ${channel.name}` : null,
+      channel ? `- discord channel id: ${channel.discordChannelId}` : null,
+      channel?.guildId ? `- discord guild id: ${channel.guildId}` : null,
       session ? `- session: ${session.id}` : null,
     ]
       .filter(Boolean)
@@ -50,16 +54,16 @@ export function buildPromptEnvelope({
   return sections.join('\n\n---\n\n');
 }
 
-export function loadSystemPrompt(projectRoot, service) {
+export function loadSystemPrompt(projectRoot, agent) {
   const parts = [];
-  if (typeof service.systemPrompt === 'string' && service.systemPrompt.trim()) {
-    parts.push(service.systemPrompt.trim());
+  if (typeof agent.systemPrompt === 'string' && agent.systemPrompt.trim()) {
+    parts.push(agent.systemPrompt.trim());
   }
   if (
-    typeof service.systemPromptFile === 'string' &&
-    service.systemPromptFile.trim()
+    typeof agent.systemPromptFile === 'string' &&
+    agent.systemPromptFile.trim()
   ) {
-    const filePath = resolveProjectPath(projectRoot, service.systemPromptFile);
+    const filePath = resolveProjectPath(projectRoot, agent.systemPromptFile);
     parts.push(fs.readFileSync(filePath, 'utf8').trim());
   }
   return parts.filter(Boolean).join('\n\n');

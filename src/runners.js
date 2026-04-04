@@ -11,32 +11,32 @@ import {
 import { resolveProjectPath } from './store.js';
 import { assert, resolveExecutable, toErrorMessage, trimTrailingWhitespace } from './utils.js';
 
-export async function runServiceTurn({
+export async function runAgentTurn({
   projectRoot,
-  service,
+  agent,
   prompt,
   rawPrompt,
   sessionId,
 }) {
-  switch (service.agent) {
+  switch (agent.agent) {
     case 'codex':
-      return runCodex({ projectRoot, service, prompt, rawPrompt, sessionId });
+      return runCodex({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
     case 'claude-code':
-      return runClaude({ projectRoot, service, prompt, rawPrompt, sessionId });
+      return runClaude({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
     case 'gemini-cli':
-      return runGeminiCli({ projectRoot, service, prompt, rawPrompt, sessionId });
+      return runGeminiCli({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
     case 'local-llm':
-      return runLocalLlm({ projectRoot, service, prompt, rawPrompt, sessionId });
+      return runLocalLlm({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
     case 'command':
-      return runCommand({ projectRoot, service, prompt, rawPrompt, sessionId });
+      return runCommand({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
     default:
-      throw new Error(`Unsupported agent "${service.agent}".`);
+      throw new Error(`Unsupported agent "${agent.agent}".`);
   }
 }
 
-export function inspectServiceRuntime(projectRoot, service) {
-  const workdir = resolveProjectPath(projectRoot, service.workdir);
-  switch (service.agent) {
+export function inspectAgentRuntime(projectRoot, agent) {
+  const workdir = resolveProjectPath(projectRoot, agent.workdir);
+  switch (agent.agent) {
     case 'codex':
       return {
         ready: Boolean(resolveExecutable('codex')),
@@ -58,13 +58,13 @@ export function inspectServiceRuntime(projectRoot, service) {
     case 'local-llm':
       return {
         ready: true,
-        detail: service.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL,
+        detail: agent.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL,
         workdir,
       };
     case 'command':
       return {
         ready: true,
-        detail: service.command,
+        detail: agent.command,
         workdir,
       };
     default:
@@ -75,6 +75,9 @@ export function inspectServiceRuntime(projectRoot, service) {
       };
   }
 }
+
+export const runServiceTurn = runAgentTurn;
+export const inspectServiceRuntime = inspectAgentRuntime;
 
 async function runCodex({ projectRoot, service, prompt, rawPrompt, sessionId }) {
   assert(resolveExecutable('codex'), 'codex executable was not found in PATH.');
@@ -296,6 +299,7 @@ function buildChildEnv({
     ...process.env,
     ...service.env,
     HKCLAW_LITE_PROJECT_ROOT: projectRoot,
+    HKCLAW_LITE_AGENT_NAME: service.name,
     HKCLAW_LITE_SERVICE_NAME: service.name,
     HKCLAW_LITE_AGENT: service.agent,
     HKCLAW_LITE_WORKDIR: workdir,

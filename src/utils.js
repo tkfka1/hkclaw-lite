@@ -117,6 +117,13 @@ export function parseInteger(value, fieldName) {
   return parsed;
 }
 
+export function parseOptionalInteger(value, fieldName) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return undefined;
+  }
+  return parseInteger(value, fieldName);
+}
+
 export function isSafeIdentifier(value) {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
 }
@@ -168,6 +175,46 @@ export function parseKeyValuePairs(entries, fieldName) {
     output[key] = value;
   }
   return output;
+}
+
+export function parseCommaSeparatedList(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => parseCommaSeparatedList(entry));
+  }
+  if (value === undefined || value === null) {
+    return [];
+  }
+  return String(value)
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+export function parseKeyValueText(value, fieldName) {
+  return parseKeyValuePairs(parseCommaSeparatedList(value), fieldName);
+}
+
+export function coerceBoolean(value, fallbackValue = false) {
+  if (value === undefined || value === null || value === '') {
+    return fallbackValue;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'y', 'yes'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'n', 'no'].includes(normalized)) {
+    return false;
+  }
+  return fallbackValue;
+}
+
+export function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 export function trimTrailingWhitespace(text) {
