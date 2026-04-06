@@ -6,7 +6,6 @@ import {
   CURRENT_CONFIG_VERSION,
   DASHBOARD_ALL_AGENTS,
   DEFAULT_DASHBOARD_REFRESH_MS,
-  DEFAULT_HISTORY_WINDOW,
   SUPPORTED_AGENTS,
   TOOL_DIRNAME,
 } from './constants.js';
@@ -27,7 +26,7 @@ export function getProjectLayout(projectRoot) {
     projectRoot,
     toolRoot,
     configPath: path.join(toolRoot, CONFIG_FILENAME),
-    sessionsRoot: path.join(toolRoot, 'sessions'),
+    watchersRoot: path.join(toolRoot, 'watchers'),
   };
 }
 
@@ -66,7 +65,7 @@ export function initProject(projectRoot, { force = false } = {}) {
     );
   }
   ensureDir(layout.toolRoot);
-  ensureDir(layout.sessionsRoot);
+  ensureDir(layout.watchersRoot);
   writeJson(layout.configPath, createDefaultConfig());
   return layout;
 }
@@ -75,9 +74,9 @@ export function createDefaultConfig() {
   return {
     version: CURRENT_CONFIG_VERSION,
     defaults: {
-      historyWindow: DEFAULT_HISTORY_WINDOW,
       dashboardRefreshMs: DEFAULT_DASHBOARD_REFRESH_MS,
     },
+    sharedEnv: {},
     agents: {},
     channels: {},
     dashboards: {},
@@ -98,9 +97,11 @@ export function loadConfig(projectRoot) {
     `Unsupported config version "${config.version}".`,
   );
   assert(isPlainObject(config.defaults), 'Config defaults must be an object.');
+  assert(isPlainObject(config.sharedEnv), 'Config sharedEnv must be an object.');
   assert(isPlainObject(config.agents), 'Config agents must be an object.');
   assert(isPlainObject(config.channels), 'Config channels must be an object.');
   assert(isPlainObject(config.dashboards), 'Config dashboards must be an object.');
+  validateConfigReferences(projectRoot, config);
 
   return config;
 }
@@ -111,50 +112,72 @@ function normalizeConfig(rawConfig) {
   }
 
   if (rawConfig.version === CURRENT_CONFIG_VERSION) {
+    const rawAgents = rawConfig.agents ?? {};
     return {
       ...rawConfig,
       defaults: {
-        historyWindow:
-          rawConfig.defaults?.historyWindow ?? DEFAULT_HISTORY_WINDOW,
         dashboardRefreshMs:
           rawConfig.defaults?.dashboardRefreshMs ?? DEFAULT_DASHBOARD_REFRESH_MS,
       },
-      agents: rawConfig.agents ?? {},
-      channels: rawConfig.channels ?? {},
-      dashboards: rawConfig.dashboards ?? {},
+      sharedEnv: rawConfig.sharedEnv ?? {},
+      agents: normalizeLegacyAgentRecords(rawAgents),
+      channels: normalizeLegacyChannelRecords(rawConfig.channels ?? {}, rawAgents),
+      dashboards: normalizeLegacyDashboardRecords(rawConfig.dashboards ?? {}),
     };
   }
 
   if (rawConfig.version === 2 && isPlainObject(rawConfig.agents)) {
+    const rawAgents = rawConfig.agents ?? {};
     return {
       version: CURRENT_CONFIG_VERSION,
       defaults: {
-        historyWindow:
-          rawConfig.defaults?.historyWindow ?? DEFAULT_HISTORY_WINDOW,
         dashboardRefreshMs:
           rawConfig.defaults?.dashboardRefreshMs ?? DEFAULT_DASHBOARD_REFRESH_MS,
       },
-      agents: rawConfig.agents ?? {},
-      channels: {},
-      dashboards: rawConfig.dashboards ?? {},
+      sharedEnv: rawConfig.sharedEnv ?? {},
+      agents: normalizeLegacyAgentRecords(rawAgents),
+      channels: normalizeLegacyChannelRecords(rawConfig.channels ?? {}, rawAgents),
+      dashboards: normalizeLegacyDashboardRecords(rawConfig.dashboards ?? {}),
     };
   }
 
   if (rawConfig.version === 1 && isPlainObject(rawConfig.services)) {
+    const rawAgents = rawConfig.services;
     return {
       version: CURRENT_CONFIG_VERSION,
       defaults: {
-        historyWindow:
-          rawConfig.defaults?.historyWindow ?? DEFAULT_HISTORY_WINDOW,
         dashboardRefreshMs: DEFAULT_DASHBOARD_REFRESH_MS,
       },
-      agents: rawConfig.services,
+      sharedEnv: rawConfig.sharedEnv ?? {},
+      agents: normalizeLegacyAgentRecords(rawAgents),
       channels: {},
       dashboards: {},
     };
   }
 
   return rawConfig;
+}
+
+function validateConfigReferences(projectRoot, config) {
+  validateEnvObject(config.sharedEnv, 'sharedEnv');
+
+  for (const [name, agent] of Object.entries(config.agents)) {
+    validateAgentDefinition(projectRoot, { name, ...agent });
+    if (agent.fallbackAgent) {
+      assert(
+        config.agents[agent.fallbackAgent],
+        `Agent "${name}" references unknown fallback agent "${agent.fallbackAgent}".`,
+      );
+    }
+  }
+
+  for (const channel of Object.values(config.channels)) {
+    validateChannelDefinition(projectRoot, config, channel);
+  }
+
+  for (const dashboard of Object.values(config.dashboards)) {
+    validateDashboardDefinition(config, dashboard);
+  }
 }
 
 export function saveConfig(projectRoot, config) {
@@ -223,7 +246,9 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   const merged = {
     ...stripManagedFields(existing),
     agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
-    workdir: input.workdir ?? existing.workdir ?? '.',
+    fallbackAgent: normalizeOptionalString(
+      input.fallbackAgent ?? input['fallback-agent'] ?? existing.fallbackAgent,
+    ),
     model: normalizeOptionalString(input.model ?? existing.model),
     effort: normalizeOptionalString(input.effort ?? existing.effort),
     systemPrompt: normalizeOptionalString(
@@ -232,8 +257,6 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
     systemPromptFile: normalizeOptionalString(
       input.systemPromptFile ?? input['system-file'] ?? existing.systemPromptFile,
     ),
-    historyWindow:
-      input.historyWindow ?? input['history-window'] ?? existing.historyWindow,
     timeoutMs: input.timeoutMs ?? input['timeout-ms'] ?? existing.timeoutMs,
     sandbox: normalizeOptionalString(input.sandbox ?? existing.sandbox),
     permissionMode: normalizeOptionalString(
@@ -242,12 +265,15 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
     dangerous: resolveBooleanValue(input.dangerous, existing.dangerous ?? false),
     baseUrl: normalizeOptionalString(input.baseUrl ?? input['base-url'] ?? existing.baseUrl),
     command: normalizeOptionalString(input.command ?? existing.command),
+    skills: normalizePathEntries(
+      input.skills ?? input['skill-file'] ?? existing.skills,
+    ),
+    contextFiles: normalizePathEntries(
+      input.contextFiles ?? input['context-file'] ?? existing.contextFiles,
+    ),
     env: input.env ?? existing.env ?? {},
   };
 
-  if (merged.historyWindow !== undefined) {
-    merged.historyWindow = parseInteger(merged.historyWindow, 'historyWindow');
-  }
   if (merged.timeoutMs !== undefined) {
     merged.timeoutMs = parseOptionalInteger(merged.timeoutMs, 'timeoutMs');
   }
@@ -274,7 +300,7 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   return sortObjectKeys(merged);
 }
 
-export function buildChannelDefinition(config, name, input, existing = {}) {
+export function buildChannelDefinition(projectRoot, config, name, input, existing = {}) {
   assert(name, 'Channel name is required.');
   assert(
     /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name),
@@ -288,11 +314,19 @@ export function buildChannelDefinition(config, name, input, existing = {}) {
       'discordChannelId',
     ),
     guildId: normalizeOptionalString(input.guildId ?? input['guild-id'] ?? existing.guildId),
+    workdir: input.workdir ?? existing.workdir ?? '.',
     agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
+    reviewer: normalizeOptionalString(input.reviewer ?? existing.reviewer),
+    arbiter: normalizeOptionalString(input.arbiter ?? existing.arbiter),
+    reviewRounds:
+      input.reviewRounds ?? input['review-rounds'] ?? existing.reviewRounds,
     description: normalizeOptionalString(input.description ?? existing.description),
   };
 
-  validateChannelDefinition(config, merged);
+  if (merged.reviewRounds !== undefined) {
+    merged.reviewRounds = parseOptionalInteger(merged.reviewRounds, 'reviewRounds');
+  }
+  validateChannelDefinition(projectRoot, config, merged);
   return sortObjectKeys(merged);
 }
 
@@ -318,10 +352,6 @@ export function buildDashboardDefinition(
       existing.refreshMs ??
       config.defaults.dashboardRefreshMs ??
       DEFAULT_DASHBOARD_REFRESH_MS,
-    showSessions: resolveBooleanValue(
-      input.showSessions ?? input['show-sessions'],
-      existing.showSessions ?? true,
-    ),
     showDetails: resolveBooleanValue(
       input.showDetails ?? input['show-details'],
       existing.showDetails ?? true,
@@ -339,12 +369,9 @@ function validateAgentDefinition(projectRoot, agent) {
     `Unsupported agent "${agent.agent}". Supported: ${SUPPORTED_AGENTS.join(', ')}.`,
   );
 
-  assert(
-    typeof agent.workdir === 'string' && agent.workdir.trim().length > 0,
-    'workdir is required.',
-  );
-  const resolvedWorkdir = resolveProjectPath(projectRoot, agent.workdir);
-  assert(fs.existsSync(resolvedWorkdir), `Workdir does not exist: ${resolvedWorkdir}`);
+  if (agent.fallbackAgent) {
+    assert(agent.fallbackAgent !== agent.name, 'fallbackAgent must be different from the agent.');
+  }
 
   if (agent.systemPromptFile) {
     const resolvedPromptFile = resolveProjectPath(projectRoot, agent.systemPromptFile);
@@ -354,10 +381,27 @@ function validateAgentDefinition(projectRoot, agent) {
     );
   }
 
-  if (agent.historyWindow !== undefined) {
+  for (const skillPath of agent.skills ?? []) {
+    const resolvedSkillPath = resolveProjectPath(projectRoot, skillPath);
+    assert(fs.existsSync(resolvedSkillPath), `Skill path does not exist: ${resolvedSkillPath}`);
+    if (fs.statSync(resolvedSkillPath).isDirectory()) {
+      const skillFilePath = path.join(resolvedSkillPath, 'SKILL.md');
+      assert(
+        fs.existsSync(skillFilePath),
+        `Skill directory does not contain SKILL.md: ${skillFilePath}`,
+      );
+    }
+  }
+
+  for (const contextFile of agent.contextFiles ?? []) {
+    const resolvedContextFile = resolveProjectPath(projectRoot, contextFile);
     assert(
-      Number.isInteger(agent.historyWindow) && agent.historyWindow > 0,
-      'historyWindow must be a positive integer.',
+      fs.existsSync(resolvedContextFile),
+      `Context file does not exist: ${resolvedContextFile}`,
+    );
+    assert(
+      !fs.statSync(resolvedContextFile).isDirectory(),
+      `Context file must be a file: ${resolvedContextFile}`,
     );
   }
 
@@ -381,15 +425,51 @@ function validateAgentDefinition(projectRoot, agent) {
       'command agents require a command.',
     );
   }
+
+  validateEnvObject(agent.env ?? {}, `Agent "${agent.name}" env`);
 }
 
-function validateChannelDefinition(config, channel) {
+function validateChannelDefinition(projectRoot, config, channel) {
   assert(
     typeof channel.discordChannelId === 'string' &&
       channel.discordChannelId.trim().length > 0,
     'discordChannelId is required.',
   );
+  assert(
+    typeof channel.workdir === 'string' && channel.workdir.trim().length > 0,
+    'workdir is required.',
+  );
+  const resolvedWorkdir = resolveProjectPath(projectRoot, channel.workdir);
+  assert(fs.existsSync(resolvedWorkdir), `Workdir does not exist: ${resolvedWorkdir}`);
+  assert(
+    fs.statSync(resolvedWorkdir).isDirectory(),
+    `Workdir must be a directory: ${resolvedWorkdir}`,
+  );
   assert(config.agents[channel.agent], `Channel references unknown agent "${channel.agent}".`);
+  const hasTribunal = Boolean(channel.reviewer || channel.arbiter);
+  if (hasTribunal) {
+    assert(channel.reviewer, 'Tribunal channel requires a reviewer.');
+    assert(channel.arbiter, 'Tribunal channel requires an arbiter.');
+  }
+  if (channel.reviewer) {
+    assert(config.agents[channel.reviewer], `Channel references unknown reviewer "${channel.reviewer}".`);
+    assert(channel.reviewer !== channel.agent, 'Reviewer must be different from the owner agent.');
+  }
+  if (channel.arbiter) {
+    assert(config.agents[channel.arbiter], `Channel references unknown arbiter "${channel.arbiter}".`);
+    assert(channel.arbiter !== channel.agent, 'Arbiter must be different from the owner agent.');
+    assert(
+      channel.arbiter !== channel.reviewer,
+      'Arbiter must be different from the reviewer agent.',
+    );
+  }
+  if (channel.reviewRounds !== undefined) {
+    assert(
+      Number.isInteger(channel.reviewRounds) && channel.reviewRounds > 0,
+      'reviewRounds must be a positive integer.',
+    );
+    assert(hasTribunal, 'reviewRounds requires a tribunal channel.');
+  }
 }
 
 function validateDashboardDefinition(config, dashboard) {
@@ -465,6 +545,80 @@ function normalizeDashboardMonitors(value) {
     return [DASHBOARD_ALL_AGENTS];
   }
   return unique;
+}
+
+function normalizeLegacyAgentRecords(agents) {
+  if (!isPlainObject(agents)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(agents).map(([name, agent]) => {
+      if (!isPlainObject(agent)) {
+        return [name, agent];
+      }
+      const next = { ...agent };
+      delete next.historyWindow;
+      delete next.workdir;
+      return [name, next];
+    }),
+  );
+}
+
+function normalizeLegacyChannelRecords(channels, rawAgents) {
+  if (!isPlainObject(channels)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(channels).map(([name, channel]) => {
+      if (!isPlainObject(channel)) {
+        return [name, channel];
+      }
+      const next = { ...channel };
+      if (!next.workdir) {
+        const ownerAgent =
+          isPlainObject(rawAgents) && isPlainObject(rawAgents[next.agent])
+            ? rawAgents[next.agent]
+            : null;
+        next.workdir = ownerAgent?.workdir || '.';
+      }
+      return [name, next];
+    }),
+  );
+}
+
+function normalizeLegacyDashboardRecords(dashboards) {
+  if (!isPlainObject(dashboards)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(dashboards).map(([name, dashboard]) => {
+      if (!isPlainObject(dashboard)) {
+        return [name, dashboard];
+      }
+      const next = { ...dashboard };
+      delete next.showSessions;
+      return [name, next];
+    }),
+  );
+}
+
+function normalizePathEntries(value) {
+  const entries = Array.isArray(value)
+    ? value.flatMap((entry) => normalizePathEntries(entry) ?? [])
+    : parseCommaSeparatedList(value);
+  const unique = [...new Set(entries)];
+  return unique.length > 0 ? unique : undefined;
+}
+
+function validateEnvObject(value, fieldName) {
+  assert(isPlainObject(value), `${fieldName} must be an object.`);
+  for (const [key, entryValue] of Object.entries(value)) {
+    assert(key.trim().length > 0, `${fieldName} keys cannot be empty.`);
+    assert(
+      typeof entryValue === 'string',
+      `${fieldName} values must be strings.`,
+    );
+  }
 }
 
 function sortObjectKeys(value) {

@@ -9,5 +9,5 @@ const match = input.match(/User request:\n([\s\S]*)$/u);
 const request = match ? match[1].trim() : input.trim();
 
 process.stdout.write(
-  `session=${process.env.HKCLAW_LITE_SESSION_ID || 'none'}\nresponse=${request.toUpperCase()}\n`,
+  `response=${request.toUpperCase()}\n`,
 );

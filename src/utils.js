@@ -18,7 +18,9 @@ export function readJson(filePath, fallbackValue = undefined) {
 
 export function writeJson(filePath, value) {
   ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + '\n');
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(value, null, 2) + '\n');
+  fs.renameSync(tempPath, filePath);
 }
 
 export function toErrorMessage(error) {

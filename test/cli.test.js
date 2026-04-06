@@ -5,9 +5,26 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+import { buildPromptEnvelope } from '../src/prompt.js';
+
 const repoRoot = process.cwd();
 const cliPath = path.join(repoRoot, 'bin', 'hkclaw-lite.js');
 const fixturePath = path.join(repoRoot, 'test', 'fixtures', 'echo-assistant.mjs');
+const failFixturePath = path.join(repoRoot, 'test', 'fixtures', 'fail-agent.mjs');
+const inspectFixturePath = path.join(repoRoot, 'test', 'fixtures', 'inspect-agent.mjs');
+const blockingReviewerFixturePath = path.join(
+  repoRoot,
+  'test',
+  'fixtures',
+  'blocking-reviewer.mjs',
+);
+const arbiterFixturePath = path.join(repoRoot, 'test', 'fixtures', 'arbiter-agent.mjs');
+const invalidReviewerFixturePath = path.join(
+  repoRoot,
+  'test',
+  'fixtures',
+  'invalid-reviewer.mjs',
+);
 
 function createProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-test-'));
@@ -23,19 +40,23 @@ function runCli(cwd, args, options = {}) {
 
 function buildCommandAgentAnswers({
   name = 'worker',
+  skills = '',
+  contextFiles = '',
+  fallbackAgent = '',
   env = '',
   command = `node ${fixturePath}`,
 } = {}) {
   return [
     name,
     '5',
-    '.',
     '',
     '',
     '',
     '',
     '',
-    '',
+    skills,
+    contextFiles,
+    fallbackAgent,
     env,
     command,
     '',
@@ -51,7 +72,7 @@ function buildDashboardAnswers({
   if (scope === '2') {
     answers.push(monitors);
   }
-  answers.push('', '', '');
+  answers.push('', '');
   return answers.join('\n');
 }
 
@@ -59,10 +80,20 @@ function buildChannelAnswers({
   name = 'discord-main',
   discordChannelId = '123456789012345678',
   guildId = '987654321098765432',
+  workdir = '.',
+  channelMode = '1',
   agentChoice = '1',
+  reviewer = '',
+  arbiter = '',
+  reviewRounds = '',
   description = '',
 } = {}) {
-  return [name, discordChannelId, guildId, agentChoice, description].join('\n');
+  const answers = [name, discordChannelId, guildId, workdir, channelMode, agentChoice];
+  if (channelMode === '2' || channelMode === 'tribunal') {
+    answers.push(reviewer, arbiter, reviewRounds);
+  }
+  answers.push(description);
+  return answers.join('\n');
 }
 
 test('init creates v3 project metadata', () => {
@@ -79,7 +110,7 @@ test('init creates v3 project metadata', () => {
   assert.deepEqual(config.dashboards, {});
 });
 
-test('add agent and channel use question flow and channel chat persists transcript', () => {
+test('add agent and channel use question flow and store mapping', () => {
   const cwd = createProject();
   assert.equal(runCli(cwd, ['init']).status, 0);
 
@@ -97,6 +128,7 @@ test('add agent and channel use question flow and channel chat persists transcri
   const agent = JSON.parse(showAgent.stdout);
   assert.equal(agent.agent, 'command');
   assert.equal(agent.env.FOO, 'bar');
+  assert.equal('workdir' in agent, false);
 
   const addChannel = runCli(cwd, ['add', 'channel'], {
     input: buildChannelAnswers({
@@ -113,19 +145,7 @@ test('add agent and channel use question flow and channel chat persists transcri
   const channel = JSON.parse(showChannel.stdout);
   assert.equal(channel.agent, 'worker');
   assert.equal(channel.discordChannelId, '123456789012345678');
-
-  const first = runCli(cwd, ['chat', '--channel', 'discord-main', '--message', 'first turn']);
-  assert.equal(first.status, 0, first.stderr);
-  assert.match(first.stdout, /response=FIRST TURN/u);
-
-  const second = runCli(cwd, ['chat', '--channel', 'discord-main', '--message', 'second turn']);
-  assert.equal(second.status, 0, second.stderr);
-
-  const sessionShow = runCli(cwd, ['session', 'show', 'worker', 'channel-discord-main']);
-  assert.equal(sessionShow.status, 0, sessionShow.stderr);
-  assert.match(sessionShow.stdout, /agent=worker/u);
-  assert.match(sessionShow.stdout, /first turn/u);
-  assert.match(sessionShow.stdout, /second turn/u);
+  assert.equal(channel.workdir, '.');
 });
 
 test('add dashboard and edit agent keep dashboard references aligned', () => {
@@ -167,6 +187,9 @@ test('add dashboard and edit agent keep dashboard references aligned', () => {
       '',
       '',
       '',
+      '',
+      '',
+      '',
     ].join('\n'),
   });
   assert.equal(editAgent.status, 0, editAgent.stderr);
@@ -187,7 +210,7 @@ test('add dashboard and edit agent keep dashboard references aligned', () => {
   assert.match(renderDashboard.stdout, /discord-main/u);
 });
 
-test('run command is removed and status renders agents and channels', () => {
+test('run command executes a mapped channel and status renders agents and channels', () => {
   const cwd = createProject();
   assert.equal(runCli(cwd, ['init']).status, 0);
   assert.equal(
@@ -203,9 +226,9 @@ test('run command is removed and status renders agents and channels', () => {
     0,
   );
 
-  const removedRun = runCli(cwd, ['run', 'worker', 'hello']);
-  assert.notEqual(removedRun.status, 0);
-  assert.match(removedRun.stderr, /run command was removed/u);
+  const run = runCli(cwd, ['run', '--channel', 'discord-main', '--message', 'hello']);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /response=HELLO/u);
 
   const status = runCli(cwd, ['status']);
   assert.equal(status.status, 0, status.stderr);
@@ -213,10 +236,429 @@ test('run command is removed and status renders agents and channels', () => {
   assert.match(status.stdout, /channels=1/u);
   assert.match(status.stdout, /worker/u);
   assert.match(status.stdout, /mapped=discord-main/u);
+  assert.match(status.stdout, /workdirs=\./u);
   assert.match(status.stdout, /type=command/u);
 
   const channelStatus = runCli(cwd, ['status', 'channel', 'discord-main']);
   assert.equal(channelStatus.status, 0, channelStatus.stderr);
   assert.match(channelStatus.stdout, /agent=worker/u);
   assert.match(channelStatus.stdout, /discordChannelId=123456789012345678/u);
+  assert.match(channelStatus.stdout, /workdir=\./u);
+});
+
+test('help omits chat and session commands', () => {
+  const cwd = createProject();
+  const help = runCli(cwd, ['help']);
+
+  assert.equal(help.status, 0, help.stderr);
+  assert.doesNotMatch(help.stdout, /hkclaw-lite chat /u);
+  assert.doesNotMatch(help.stdout, /hkclaw-lite session /u);
+  assert.match(help.stdout, /hkclaw-lite run /u);
+});
+
+test('run command injects prompt envelope, raw prompt, and channel workdir', () => {
+  const cwd = createProject();
+  const skillDir = path.join(cwd, 'skills', 'reviewer');
+  const contextDir = path.join(cwd, 'context');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.mkdirSync(contextDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# Reviewer Skill\n');
+  fs.writeFileSync(path.join(contextDir, 'workspace.md'), 'workspace context\n');
+
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'worker',
+        skills: 'skills/reviewer',
+        contextFiles: 'context/workspace.md',
+        command: `node ${inspectFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'channel'], {
+      input: buildChannelAnswers({
+        name: 'discord-main',
+        agentChoice: '1',
+      }),
+    }).status,
+    0,
+  );
+
+  const result = runCli(cwd, ['run', '--channel', 'discord-main', '--message', 'inspect me']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /hasSkills=true/u);
+  assert.match(result.stdout, /hasContext=true/u);
+  assert.match(result.stdout, /hasRuntime=true/u);
+  assert.match(result.stdout, /hasChannel=true/u);
+  assert.match(result.stdout, /raw=inspect me/u);
+  assert.match(
+    result.stdout,
+    new RegExp(`workdir=${cwd.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),
+  );
+});
+
+test('run command falls back to fallbackAgent when the primary agent fails', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'backup',
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'primary',
+        fallbackAgent: 'backup',
+        command: `node ${failFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'channel'], {
+      input: buildChannelAnswers({
+        name: 'discord-main',
+        agentChoice: 'primary',
+      }),
+    }).status,
+    0,
+  );
+
+  const result = runCli(cwd, ['run', '--channel', 'discord-main', '--message', 'fallback please']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /response=FALLBACK PLEASE/u);
+});
+
+test('run command routes direct owner execution through tribunal channel policy', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'owner',
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'reviewer',
+        command: `node ${blockingReviewerFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'arbiter',
+        command: `node ${arbiterFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'channel'], {
+      input: buildChannelAnswers({
+        name: 'tribunal-main',
+        channelMode: '2',
+        agentChoice: 'owner',
+        reviewer: 'reviewer',
+        arbiter: 'arbiter',
+        reviewRounds: '1',
+      }),
+    }).status,
+    0,
+  );
+
+  const result = runCli(cwd, ['run', 'owner', '--message', 'decide now']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /arbiter-final/u);
+});
+
+test('run command routes invalid reviewer verdicts to the arbiter', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'owner',
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'reviewer',
+        command: `node ${invalidReviewerFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'arbiter',
+        command: `node ${arbiterFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'channel'], {
+      input: buildChannelAnswers({
+        name: 'tribunal-main',
+        channelMode: '2',
+        agentChoice: 'owner',
+        reviewer: 'reviewer',
+        arbiter: 'arbiter',
+        reviewRounds: '2',
+      }),
+    }).status,
+    0,
+  );
+
+  const result = runCli(cwd, ['run', '--channel', 'tribunal-main', '--message', 'decide now']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /arbiter-final/u);
+});
+
+test('legacy agent workdir migrates to channel workdir on load', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+
+  const legacyWorkdir = path.join(cwd, 'legacy-space');
+  fs.mkdirSync(legacyWorkdir, { recursive: true });
+
+  const configPath = path.join(cwd, '.hkclaw-lite', 'config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.agents.worker = {
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    workdir: 'legacy-space',
+  };
+  config.channels.main = {
+    discordChannelId: '123456789012345678',
+    agent: 'worker',
+  };
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+  const showAgent = runCli(cwd, ['show', 'agent', 'worker']);
+  assert.equal(showAgent.status, 0, showAgent.stderr);
+  assert.equal('workdir' in JSON.parse(showAgent.stdout), false);
+
+  const showChannel = runCli(cwd, ['show', 'channel', 'main']);
+  assert.equal(showChannel.status, 0, showChannel.stderr);
+  assert.equal(JSON.parse(showChannel.stdout).workdir, 'legacy-space');
+});
+
+test('shared env can be managed from CLI', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['env', 'set', 'GITHUB_TOKEN=global-gh', 'GITLAB_TOKEN=global-gl']).status,
+    0,
+  );
+
+  const envList = runCli(cwd, ['env', 'list']);
+  assert.equal(envList.status, 0, envList.stderr);
+  assert.match(envList.stdout, /GITHUB_TOKEN=global-gh/u);
+  assert.match(envList.stdout, /GITLAB_TOKEN=global-gl/u);
+
+  const unset = runCli(cwd, ['env', 'unset', 'GITLAB_TOKEN']);
+  assert.equal(unset.status, 0, unset.stderr);
+  const envListAfterUnset = runCli(cwd, ['env', 'list']);
+  assert.equal(envListAfterUnset.status, 0, envListAfterUnset.stderr);
+  assert.doesNotMatch(envListAfterUnset.stdout, /GITLAB_TOKEN=/u);
+});
+
+test('agent fallback is stored and shown in status', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'backup',
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'primary',
+        fallbackAgent: 'backup',
+        command: `node ${failFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+
+  const showAgent = runCli(cwd, ['show', 'agent', 'primary']);
+  assert.equal(showAgent.status, 0, showAgent.stderr);
+  const agent = JSON.parse(showAgent.stdout);
+  assert.equal(agent.fallbackAgent, 'backup');
+
+  const status = runCli(cwd, ['status', 'agent', 'primary']);
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /fallback=backup/u);
+});
+
+test('remove agent blocks fallback references', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'backup',
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'primary',
+        fallbackAgent: 'backup',
+        command: `node ${failFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+
+  const remove = runCli(cwd, ['remove', 'agent', 'backup', '--yes']);
+  assert.notEqual(remove.status, 0);
+  assert.match(remove.stderr, /fallback agents: primary/u);
+});
+
+test('tribunal channel stores reviewer and arbiter config', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'owner',
+        command: `node ${fixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'reviewer',
+        command: `node ${fixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'arbiter',
+        command: `node ${fixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'channel'], {
+      input: buildChannelAnswers({
+        name: 'tribunal-main',
+        channelMode: '2',
+        agentChoice: 'owner',
+        reviewer: 'reviewer',
+        arbiter: 'arbiter',
+        reviewRounds: '2',
+      }),
+    }).status,
+    0,
+  );
+
+  const channelStatus = runCli(cwd, ['status', 'channel', 'tribunal-main']);
+  assert.equal(channelStatus.status, 0, channelStatus.stderr);
+  assert.match(channelStatus.stdout, /reviewer=reviewer/u);
+  assert.match(channelStatus.stdout, /reviewRounds=2/u);
+});
+
+test('add agent stores skill paths and context files', () => {
+  const cwd = createProject();
+  const skillDir = path.join(cwd, 'skills', 'reviewer');
+  const contextDir = path.join(cwd, 'context');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.mkdirSync(contextDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, 'SKILL.md'),
+    '# Reviewer Skill\n\nAlways explain the relevant tradeoff.\n',
+  );
+  fs.writeFileSync(
+    path.join(contextDir, 'workspace.md'),
+    'Monorepo layout:\n- apps/web\n- packages/api\n',
+  );
+
+  assert.equal(runCli(cwd, ['init']).status, 0);
+
+  const addAgent = runCli(cwd, ['add', 'agent'], {
+    input: buildCommandAgentAnswers({
+      name: 'worker',
+      skills: 'skills/reviewer',
+      contextFiles: 'context/workspace.md',
+    }),
+  });
+  assert.equal(addAgent.status, 0, addAgent.stderr);
+
+  const showAgent = runCli(cwd, ['show', 'agent', 'worker']);
+  assert.equal(showAgent.status, 0, showAgent.stderr);
+  const agent = JSON.parse(showAgent.stdout);
+  assert.deepEqual(agent.skills, ['skills/reviewer']);
+  assert.deepEqual(agent.contextFiles, ['context/workspace.md']);
+});
+
+test('prompt envelope injects skills and baseline context separately', () => {
+  const cwd = createProject();
+  const skillDir = path.join(cwd, 'skills', 'reviewer');
+  const contextDir = path.join(cwd, 'context');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.mkdirSync(contextDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, 'SKILL.md'),
+    '# Reviewer Skill\n\nAlways explain the relevant tradeoff.\n',
+  );
+  fs.writeFileSync(
+    path.join(contextDir, 'workspace.md'),
+    'Monorepo layout:\n- apps/web\n- packages/api\n',
+  );
+
+  const prompt = buildPromptEnvelope({
+    projectRoot: cwd,
+    agent: {
+      name: 'worker',
+      agent: 'command',
+      skills: ['skills/reviewer'],
+      contextFiles: ['context/workspace.md'],
+    },
+    channel: {
+      name: 'discord-main',
+      discordChannelId: '123',
+      workdir: '.',
+    },
+    userPrompt: 'review the API package',
+  });
+
+  assert.match(prompt, /Installed skills:/u);
+  assert.match(prompt, /Reviewer Skill/u);
+  assert.match(prompt, /Always explain the relevant tradeoff\./u);
+  assert.match(prompt, /Baseline context:/u);
+  assert.match(prompt, /Monorepo layout:/u);
+  assert.match(prompt, /packages\/api/u);
+  assert.match(prompt, /workdir:/u);
 });

@@ -16,26 +16,62 @@ export async function runAgentTurn({
   agent,
   prompt,
   rawPrompt,
-  sessionId,
+  workdir,
+  sharedEnv = {},
 }) {
   switch (agent.agent) {
     case 'codex':
-      return runCodex({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
+      return runCodex({
+        projectRoot,
+        service: agent,
+        prompt,
+        rawPrompt,
+        workdir,
+        sharedEnv,
+      });
     case 'claude-code':
-      return runClaude({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
+      return runClaude({
+        projectRoot,
+        service: agent,
+        prompt,
+        rawPrompt,
+        workdir,
+        sharedEnv,
+      });
     case 'gemini-cli':
-      return runGeminiCli({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
+      return runGeminiCli({
+        projectRoot,
+        service: agent,
+        prompt,
+        rawPrompt,
+        workdir,
+        sharedEnv,
+      });
     case 'local-llm':
-      return runLocalLlm({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
+      return runLocalLlm({
+        projectRoot,
+        service: agent,
+        prompt,
+        rawPrompt,
+        workdir,
+        sharedEnv,
+      });
     case 'command':
-      return runCommand({ projectRoot, service: agent, prompt, rawPrompt, sessionId });
+      return runCommand({
+        projectRoot,
+        service: agent,
+        prompt,
+        rawPrompt,
+        workdir,
+        sharedEnv,
+      });
     default:
       throw new Error(`Unsupported agent "${agent.agent}".`);
   }
 }
 
-export function inspectAgentRuntime(projectRoot, agent) {
-  const workdir = resolveProjectPath(projectRoot, agent.workdir);
+export function inspectAgentRuntime(projectRoot, agent, workdirOverride = null) {
+  const workdir = resolveExecutionWorkdir(projectRoot, agent, workdirOverride);
   switch (agent.agent) {
     case 'codex':
       return {
@@ -79,9 +115,16 @@ export function inspectAgentRuntime(projectRoot, agent) {
 export const runServiceTurn = runAgentTurn;
 export const inspectServiceRuntime = inspectAgentRuntime;
 
-async function runCodex({ projectRoot, service, prompt, rawPrompt, sessionId }) {
+async function runCodex({
+  projectRoot,
+  service,
+  prompt,
+  rawPrompt,
+  workdir,
+  sharedEnv,
+}) {
   assert(resolveExecutable('codex'), 'codex executable was not found in PATH.');
-  const workdir = resolveProjectPath(projectRoot, service.workdir);
+  const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-codex-'));
   const lastMessageFile = path.join(tempDir, 'last-message.txt');
   const sandbox = service.sandbox || DEFAULT_CODEX_SANDBOX;
@@ -91,7 +134,7 @@ async function runCodex({ projectRoot, service, prompt, rawPrompt, sessionId }) 
     '--color',
     'never',
     '-C',
-    workdir,
+    executionWorkdir,
     '-o',
     lastMessageFile,
     '-',
@@ -110,11 +153,11 @@ async function runCodex({ projectRoot, service, prompt, rawPrompt, sessionId }) 
 
   const env = buildChildEnv({
     projectRoot,
-    workdir,
+    workdir: executionWorkdir,
     service,
     rawPrompt,
     fullPrompt: prompt,
-    sessionId,
+    sharedEnv,
   });
   if (service.effort) {
     env.CODEX_EFFORT = service.effort;
@@ -124,7 +167,7 @@ async function runCodex({ projectRoot, service, prompt, rawPrompt, sessionId }) 
     const result = await runChildProcess({
       command: 'codex',
       args,
-      cwd: workdir,
+      cwd: executionWorkdir,
       env,
       input: prompt,
       timeoutMs: service.timeoutMs,
@@ -138,9 +181,16 @@ async function runCodex({ projectRoot, service, prompt, rawPrompt, sessionId }) 
   }
 }
 
-async function runClaude({ projectRoot, service, prompt, rawPrompt, sessionId }) {
+async function runClaude({
+  projectRoot,
+  service,
+  prompt,
+  rawPrompt,
+  workdir,
+  sharedEnv,
+}) {
   assert(resolveExecutable('claude'), 'claude executable was not found in PATH.');
-  const workdir = resolveProjectPath(projectRoot, service.workdir);
+  const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const args = ['-p', '--output-format', 'text'];
 
   if (service.model) {
@@ -162,14 +212,14 @@ async function runClaude({ projectRoot, service, prompt, rawPrompt, sessionId })
   const result = await runChildProcess({
     command: 'claude',
     args,
-    cwd: workdir,
+    cwd: executionWorkdir,
     env: buildChildEnv({
       projectRoot,
-      workdir,
+      workdir: executionWorkdir,
       service,
       rawPrompt,
       fullPrompt: prompt,
-      sessionId,
+      sharedEnv,
     }),
     timeoutMs: service.timeoutMs,
   });
@@ -181,10 +231,11 @@ async function runGeminiCli({
   service,
   prompt,
   rawPrompt,
-  sessionId,
+  workdir,
+  sharedEnv,
 }) {
   assert(resolveExecutable('gemini'), 'gemini executable was not found in PATH.');
-  const workdir = resolveProjectPath(projectRoot, service.workdir);
+  const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const args = ['-p', prompt, '--output-format', 'json'];
   if (service.model) {
     args.push('-m', service.model);
@@ -193,14 +244,14 @@ async function runGeminiCli({
   const result = await runChildProcess({
     command: 'gemini',
     args,
-    cwd: workdir,
+    cwd: executionWorkdir,
     env: buildChildEnv({
       projectRoot,
-      workdir,
+      workdir: executionWorkdir,
       service,
       rawPrompt,
       fullPrompt: prompt,
-      sessionId,
+      sharedEnv,
     }),
     timeoutMs: service.timeoutMs,
   });
@@ -224,15 +275,21 @@ async function runLocalLlm({
   service,
   prompt,
   rawPrompt,
-  sessionId,
+  workdir,
+  sharedEnv,
 }) {
-  const workdir = resolveProjectPath(projectRoot, service.workdir);
+  void rawPrompt;
+  const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
+  const effectiveEnv = {
+    ...sharedEnv,
+    ...service.env,
+  };
   const baseUrl = (service.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL).replace(/\/$/, '');
   const headers = {
     'content-type': 'application/json',
   };
-  if (service.env?.LOCAL_LLM_API_KEY) {
-    headers.authorization = `Bearer ${service.env.LOCAL_LLM_API_KEY}`;
+  if (effectiveEnv.LOCAL_LLM_API_KEY) {
+    headers.authorization = `Bearer ${effectiveEnv.LOCAL_LLM_API_KEY}`;
   }
 
   const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -267,19 +324,26 @@ async function runLocalLlm({
   return trimTrailingWhitespace(content).trim();
 }
 
-async function runCommand({ projectRoot, service, prompt, rawPrompt, sessionId }) {
-  const workdir = resolveProjectPath(projectRoot, service.workdir);
+async function runCommand({
+  projectRoot,
+  service,
+  prompt,
+  rawPrompt,
+  workdir,
+  sharedEnv,
+}) {
+  const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const result = await runChildProcess({
     command: '/bin/bash',
     args: ['-lc', service.command],
-    cwd: workdir,
+    cwd: executionWorkdir,
     env: buildChildEnv({
       projectRoot,
-      workdir,
+      workdir: executionWorkdir,
       service,
       rawPrompt,
       fullPrompt: prompt,
-      sessionId,
+      sharedEnv,
     }),
     input: prompt,
     timeoutMs: service.timeoutMs,
@@ -293,20 +357,36 @@ function buildChildEnv({
   service,
   rawPrompt,
   fullPrompt,
-  sessionId,
+  sharedEnv,
 }) {
   return {
     ...process.env,
+    ...sharedEnv,
     ...service.env,
     HKCLAW_LITE_PROJECT_ROOT: projectRoot,
     HKCLAW_LITE_AGENT_NAME: service.name,
     HKCLAW_LITE_SERVICE_NAME: service.name,
     HKCLAW_LITE_AGENT: service.agent,
     HKCLAW_LITE_WORKDIR: workdir,
-    HKCLAW_LITE_SESSION_ID: sessionId || '',
     HKCLAW_LITE_RAW_PROMPT: rawPrompt,
     HKCLAW_LITE_FULL_PROMPT: fullPrompt,
+    HKCLAW_LITE_SKILLS: (service.skills || []).join(','),
+    HKCLAW_LITE_CONTEXT_FILES: (service.contextFiles || []).join(','),
   };
+}
+
+function resolveExecutionWorkdir(projectRoot, service, workdirOverride = null) {
+  const selectedWorkdir = workdirOverride || service.workdir;
+  if (!selectedWorkdir) {
+    return null;
+  }
+  return resolveProjectPath(projectRoot, selectedWorkdir);
+}
+
+function requireExecutionWorkdir(projectRoot, service, workdirOverride = null) {
+  const workdir = resolveExecutionWorkdir(projectRoot, service, workdirOverride);
+  assert(workdir, 'A workdir must be provided by the channel or agent configuration.');
+  return workdir;
 }
 
 function runChildProcess({

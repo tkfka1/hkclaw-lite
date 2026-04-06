@@ -1,7 +1,6 @@
 export const TOOL_DIRNAME = '.hkclaw-lite';
 export const CONFIG_FILENAME = 'config.json';
 export const CURRENT_CONFIG_VERSION = 3;
-export const DEFAULT_HISTORY_WINDOW = 12;
 export const DEFAULT_DASHBOARD_REFRESH_MS = 5000;
 export const DEFAULT_CODEX_SANDBOX = 'workspace-write';
 export const DEFAULT_CLAUDE_PERMISSION_MODE = 'bypassPermissions';
