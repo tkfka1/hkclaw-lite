@@ -3,6 +3,12 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { serveAdmin } from './admin.js';
+import {
+  createProjectBackup,
+  restoreProjectBackup,
+  writeProjectBackup,
+} from './backup.js';
 import {
   buildCiRequest,
   checkGitHubActionsRun,
@@ -94,6 +100,16 @@ export async function main(argv) {
       return;
     }
 
+    if (command === 'backup') {
+      await handleBackupCommand(rootOverride, tail);
+      return;
+    }
+
+    if (command === 'migrate') {
+      await handleMigrateCommand(rootOverride, tail);
+      return;
+    }
+
     const projectRoot = resolveProjectRoot(process.cwd(), rootOverride);
 
     switch (command) {
@@ -123,6 +139,9 @@ export async function main(argv) {
         return;
       case 'env':
         await handleEnvCommand(projectRoot, tail);
+        return;
+      case 'admin':
+        await handleAdminCommand(projectRoot, tail);
         return;
       case 'service':
         throw new Error(
@@ -979,6 +998,62 @@ async function handleEnvCommand(projectRoot, argv) {
   throw new Error('Usage: hkclaw-lite env <list|set|unset> ...');
 }
 
+async function handleAdminCommand(projectRoot, argv) {
+  const { flags } = parseArgs(argv);
+  const host = getFlagValue(flags, 'host', '127.0.0.1');
+  const port = getFlagValue(flags, 'port', '3580');
+  await serveAdmin(projectRoot, {
+    host,
+    port,
+  });
+}
+
+async function handleBackupCommand(rootOverride, argv) {
+  const [subcommand, ...tail] = argv;
+  const { positionals, flags } = parseArgs(tail);
+
+  if (subcommand === 'export') {
+    const outputPath = positionals[0];
+    assert(outputPath, 'Usage: hkclaw-lite backup export <file> [--no-watchers] [--no-logs]');
+    const projectRoot = resolveProjectRoot(process.cwd(), rootOverride);
+    const backup = createProjectBackup(projectRoot, {
+      includeWatchers: !getBooleanFlag(flags, 'no-watchers'),
+      includeLogs: !getBooleanFlag(flags, 'no-logs'),
+    });
+    writeProjectBackup(outputPath, backup);
+    console.log(
+      `Exported backup to ${path.resolve(outputPath)} (agents=${Object.keys(backup.config.agents || {}).length}, channels=${Object.keys(backup.config.channels || {}).length}, dashboards=${Object.keys(backup.config.dashboards || {}).length}, watchers=${backup.watchers.length})`,
+    );
+    if (backup.externalRefs.length > 0) {
+      console.log(
+        `External paths not bundled: ${backup.externalRefs.map((entry) => entry.field).join(', ')}`,
+      );
+    }
+    return;
+  }
+
+  if (subcommand === 'import') {
+    const inputPath = positionals[0];
+    assert(inputPath, 'Usage: hkclaw-lite backup import <file> [--force]');
+    const projectRoot = rootOverride ? path.resolve(rootOverride) : process.cwd();
+    const backup = JSON.parse(fs.readFileSync(path.resolve(inputPath), 'utf8'));
+    const summary = restoreProjectBackup(projectRoot, backup, {
+      force: getBooleanFlag(flags, 'force'),
+    });
+    console.log(
+      `Imported backup into ${projectRoot} (agents=${summary.agents}, channels=${summary.channels}, dashboards=${summary.dashboards}, watchers=${summary.watchers})`,
+    );
+    if (summary.externalRefs > 0) {
+      console.log(`Reused external paths: ${summary.externalRefs}`);
+    }
+    return;
+  }
+
+  throw new Error(
+    'Usage: hkclaw-lite backup <export|import> ...',
+  );
+}
+
 async function handleCiCommand(rootOverride, argv) {
   const [subcommand, secondArg, ...tail] = argv;
 
@@ -1090,6 +1165,30 @@ async function handleCiCommand(rootOverride, argv) {
 
   if (result.completionMessage !== result.resultSummary) {
     console.log(result.completionMessage);
+  }
+}
+
+async function handleMigrateCommand(rootOverride, argv) {
+  const { flags } = parseArgs(argv);
+  const sourceRoot = getFlagValue(flags, 'from');
+  assert(
+    sourceRoot,
+    'Usage: hkclaw-lite migrate --from <project-root> [--force] [--no-watchers] [--no-logs]',
+  );
+  const resolvedSourceRoot = resolveProjectRoot(process.cwd(), sourceRoot);
+  const destinationRoot = rootOverride ? path.resolve(rootOverride) : process.cwd();
+  const backup = createProjectBackup(resolvedSourceRoot, {
+    includeWatchers: !getBooleanFlag(flags, 'no-watchers'),
+    includeLogs: !getBooleanFlag(flags, 'no-logs'),
+  });
+  const summary = restoreProjectBackup(destinationRoot, backup, {
+    force: getBooleanFlag(flags, 'force'),
+  });
+  console.log(
+    `Migrated hkclaw-lite state from ${resolvedSourceRoot} to ${destinationRoot} (agents=${summary.agents}, channels=${summary.channels}, dashboards=${summary.dashboards}, watchers=${summary.watchers})`,
+  );
+  if (summary.externalRefs > 0) {
+    console.log(`Reused external paths: ${summary.externalRefs}`);
   }
 }
 
@@ -2067,6 +2166,10 @@ Agents intentionally run with the full permissions of the host account that laun
 
 Usage:
   hkclaw-lite init [--root DIR] [--force]
+  hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port 3580]
+  hkclaw-lite backup export <file> [--root DIR] [--no-watchers] [--no-logs]
+  hkclaw-lite backup import <file> [--root DIR] [--force]
+  hkclaw-lite migrate --from <project-root> [--root DIR] [--force]
   hkclaw-lite add agent
   hkclaw-lite add channel
   hkclaw-lite add dashboard
@@ -2100,6 +2203,11 @@ Usage:
   hkclaw-lite status dashboard <name>
 
 Examples:
+  hkclaw-lite admin
+  hkclaw-lite admin --host 0.0.0.0 --port 8080
+  hkclaw-lite backup export ./backups/project.json
+  hkclaw-lite backup import ./backups/project.json --root ./restored
+  hkclaw-lite migrate --from ../old-project --root ./new-project
   hkclaw-lite add agent
   hkclaw-lite add channel
   hkclaw-lite add dashboard

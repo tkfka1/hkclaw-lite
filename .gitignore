@@ -1,4 +1,5 @@
 node_modules/
 .hkclaw-lite/
+.admin-password
 npm-debug.log*
 *.tgz

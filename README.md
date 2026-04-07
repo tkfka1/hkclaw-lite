@@ -1,6 +1,6 @@
 # hkclaw-lite
 
-`hkclaw-lite`는 디스코드 전용 AI 에이전트를 CLI로만 운영하기 위해 다시 정리한 경량 런타임이다.
+`hkclaw-lite`는 디스코드 전용 AI 에이전트를 CLI 중심으로 운영하기 위해 다시 정리한 경량 런타임이다.
 
 핵심 전제는 다음과 같다.
 
@@ -22,6 +22,7 @@
 - 선택적 owner/reviewer/arbiter tribunal 채널
 - agent-level automatic failover
 - CLI 상태 뷰와 라이브 대시보드
+- 선택적 로컬 웹 어드민
 - 에이전트별 skill/context 파일 주입
 - project-level shared env
 - GitHub / GitLab CI check/watch
@@ -29,7 +30,7 @@
 
 ## 제외 범위
 
-- 웹 UI
+- 공개용 멀티유저 웹 제품
 - systemd/launchd 서비스 관리자
 - 복잡한 권한 승인 계층
 - HKClaw 원본의 디스코드/웹/DB 전부
@@ -100,6 +101,14 @@ hkclaw-lite init
 ```
 
 이후 기본 흐름은 `init -> add agent -> add channel -> run` 순서다.
+
+CLI 대신 브라우저에서 관리하고 싶으면 로컬 웹 어드민을 바로 띄울 수도 있다.
+
+```bash
+hkclaw-lite admin
+```
+
+기본 주소는 `http://127.0.0.1:3580` 이다.
 
 ## 기본 흐름
 
@@ -347,10 +356,78 @@ hkclaw-lite ci stop <watcher-id>
 - GitHub: `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_PAT`
 - GitLab: `GITLAB_TOKEN`, `GITLAB_PAT`, `GITLAB_PRIVATE_TOKEN`, `CI_JOB_TOKEN`
 
+### 7. 백업 / 복원 / 마이그레이션
+
+프로젝트 메타데이터를 한 파일로 내보내거나 다른 루트로 옮길 수 있다.
+
+```bash
+hkclaw-lite backup export ./backups/project.json
+hkclaw-lite backup import ./backups/project.json --root ./restored-project
+hkclaw-lite migrate --from ../old-project --root ./new-project
+```
+
+백업에는 아래 내용이 포함된다.
+
+- `.hkclaw-lite/config.json`
+- `.hkclaw-lite/watchers/` 아래 watcher 상태 JSON과 로그
+- 프로젝트 내부 상대경로로 지정된 `systemPromptFile`, `skills`, `contextFiles`
+- 프로젝트 내부 상대경로인 channel `workdir` 디렉터리 생성 정보
+
+포함되지 않는 내용:
+
+- `workdir` 내부 실제 저장소/산출물 내용
+- 프로젝트 바깥 경로를 가리키는 skill/context/prompt/workdir
+
+즉 설정값과 hkclaw-lite가 직접 관리하는 상태 파일은 옮기되, 실제 작업 저장소 자체는 별도로 복사해야 한다.
+
+### 8. 로컬 웹 어드민
+
+브라우저에서 agent/channel/dashboard/shared env 를 수정하고 one-shot `run` 을 실행하려면:
+
+```bash
+hkclaw-lite admin
+```
+
+옵션:
+
+- `--host`: 바인딩 주소. 기본값은 `127.0.0.1`
+- `--port`: 리슨 포트. 기본값은 `3580`
+
+예시:
+
+```bash
+hkclaw-lite admin --host 0.0.0.0 --port 8080
+```
+
+가벼운 로그인 비밀번호를 걸고 싶으면 환경 변수로 설정한다.
+
+```bash
+HKCLAW_LITE_ADMIN_PASSWORD='change-me' hkclaw-lite admin
+```
+
+이 모드에서는:
+
+- 단일 비밀번호만 사용한다.
+- 세션은 프로세스 메모리에만 유지된다.
+- 브라우저에는 `HttpOnly` 쿠키만 남고, 서버 재시작 시 세션은 사라진다.
+
+웹 어드민이 하는 일:
+
+- agent / channel / dashboard 조회 및 수정
+- shared env 편집
+- CI watcher 목록과 로그 확인
+- 기존 CLI `run` 흐름을 그대로 타는 one-shot 실행
+
+즉 웹에서 별도 런타임을 새로 구현한 것이 아니라, 기존 프로젝트 설정과 CLI 동작을 브라우저에서 조작할 수 있게 감싼 관리자다.
+
 ## 주요 명령
 
 ```bash
 hkclaw-lite init
+hkclaw-lite admin
+hkclaw-lite backup export ./backups/project.json
+hkclaw-lite backup import ./backups/project.json --root ./restored-project
+hkclaw-lite migrate --from ../old-project --root ./new-project
 hkclaw-lite add agent
 hkclaw-lite add channel
 hkclaw-lite add dashboard
@@ -398,7 +475,49 @@ hkclaw-lite status dashboard <name>
 - `ci check/watch`는 GitHub/GitLab API 접근이 가능해야 하고, private 리포지토리는 토큰이 필요하다.
 - background CI watcher 상태와 로그는 `.hkclaw-lite/watchers/` 아래에 저장된다.
 - background CI watcher는 명시적 `--token` 값을 watcher JSON에 저장하지 않고, 분리된 worker 프로세스 env로만 전달한다.
-- 예전 `chat`/`session` 스타일 명령은 제거됐다. 실행은 `run`, 관리는 `add/edit/remove`, `show`, `status`, `dashboard`, `ci` 중심으로 쓴다.
+- 웹 어드민의 one-shot 실행은 내부적으로 기존 CLI `run` 경로를 호출한다.
+- 예전 `chat`/`session` 스타일 명령은 제거됐다. 실행은 `run`, 관리는 `add/edit/remove`, `show`, `status`, `dashboard`, `ci`, `admin` 중심으로 쓴다.
+
+## 컨테이너 / Helm 배포
+
+이 프로젝트는 기본적으로 HTTP 서버가 아니라 CLI 런타임이다. `admin` 명령으로 로컬 웹 어드민을 띄울 수는 있지만, 기본 Helm chart는 여전히 상태 볼륨을 가진 toolbox pod 배포를 기준으로 한다.
+
+기본 이미지는 이 저장소의 `Dockerfile`로 만들 수 있다.
+
+```bash
+docker build -t ghcr.io/tkfka1/hkclaw-lite:0.1.0 .
+```
+
+Helm chart는 `charts/hkclaw-lite` 아래에 있다.
+
+```bash
+helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
+  --set image.repository=ghcr.io/tkfka1/hkclaw-lite \
+  --set image.tag=0.1.0
+```
+
+기본 pod는 별도 명령을 주지 않으면 `sleep infinity` 상태로 떠 있고, 운영자는 `kubectl exec`로 들어가서 `hkclaw-lite` 명령을 실행하는 방식으로 쓴다.
+
+```bash
+kubectl exec -it deploy/hkclaw-lite -- /bin/bash
+node /app/bin/hkclaw-lite.js status --root /data
+```
+
+백업 파일로 초기 상태를 넣고 싶으면:
+
+```bash
+helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
+  --set image.repository=ghcr.io/tkfka1/hkclaw-lite \
+  --set image.tag=0.1.0 \
+  --set bootstrapBackup.enabled=true \
+  --set-file bootstrapBackup.data=./backups/project.json
+```
+
+중요한 제약:
+
+- 차트는 기본적으로 Kubernetes Service를 만들지 않는다. 노출할 네트워크 포트가 없기 때문이다.
+- `codex`, `claude-code`, `gemini-cli` 같은 외부 provider CLI를 쓰려면, 그 바이너리와 인증 파일을 포함한 파생 이미지를 직접 만들어야 한다.
+- chart는 `.hkclaw-lite` 상태와 프로젝트 내부 상대경로 자산을 유지하는 용도이고, 실제 작업 저장소는 별도 PVC나 추가 volume mount로 붙이는 식으로 운영해야 한다.
 
 ## 배포
 

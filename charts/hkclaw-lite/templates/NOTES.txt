@@ -1,0 +1,21 @@
+hkclaw-lite was installed as a CLI toolbox Deployment.
+
+This chart does not expose a Service by default because hkclaw-lite is not an HTTP server.
+The main project root is mounted at {{ .Values.state.mountPath }}.
+
+Useful commands:
+
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl exec -it deploy/{{ include "hkclaw-lite.fullname" . }} -- /bin/bash
+  kubectl exec -it deploy/{{ include "hkclaw-lite.fullname" . }} -- node /app/bin/hkclaw-lite.js status --root {{ .Values.state.mountPath }}
+
+If you need Codex, Claude Code, Gemini CLI, or other provider binaries, build a derived image and set:
+
+  --set image.repository=<your-image>
+  --set image.tag=<your-tag>
+
+To seed the pod state from a backup file:
+
+  helm upgrade --install {{ .Release.Name }} ./charts/hkclaw-lite \
+    --set bootstrapBackup.enabled=true \
+    --set-file bootstrapBackup.data=./backups/project.json

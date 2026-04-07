@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+import { saveCiWatcher } from '../src/ci-watch-store.js';
 import { buildPromptEnvelope } from '../src/prompt.js';
 
 const repoRoot = process.cwd();
@@ -661,4 +662,141 @@ test('prompt envelope injects skills and baseline context separately', () => {
   assert.match(prompt, /Monorepo layout:/u);
   assert.match(prompt, /packages\/api/u);
   assert.match(prompt, /workdir:/u);
+});
+
+test('backup export and import restore config, project assets, and watcher state', () => {
+  const source = createProject();
+  const destination = createProject();
+  const skillDir = path.join(source, 'skills', 'reviewer');
+  const contextDir = path.join(source, 'context');
+  const workdir = path.join(source, 'workspace');
+  const backupPath = path.join(source, 'backups', 'project.json');
+
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.mkdirSync(contextDir, { recursive: true });
+  fs.mkdirSync(workdir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# Reviewer Skill\n');
+  fs.writeFileSync(path.join(contextDir, 'workspace.md'), 'workspace context\n');
+
+  assert.equal(runCli(source, ['init']).status, 0);
+  assert.equal(
+    runCli(source, ['env', 'set', 'GITHUB_TOKEN=backup-gh']).status,
+    0,
+  );
+  assert.equal(
+    runCli(source, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'worker',
+        skills: 'skills/reviewer',
+        contextFiles: 'context/workspace.md',
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(source, ['add', 'channel'], {
+      input: buildChannelAnswers({
+        name: 'discord-main',
+        agentChoice: '1',
+        workdir: 'workspace',
+      }),
+    }).status,
+    0,
+  );
+
+  saveCiWatcher(source, {
+    id: 'ci-demo',
+    provider: 'github',
+    label: 'owner/repo#1',
+    request: {
+      repo: 'owner/repo',
+      runId: '1',
+    },
+    status: 'completed',
+    updatedAt: '2026-04-06T00:00:00.000Z',
+    resultSummary: 'completed',
+    completionMessage: 'completed',
+  });
+  fs.writeFileSync(
+    path.join(source, '.hkclaw-lite', 'watchers', 'ci-demo.log'),
+    'watch log\n',
+  );
+
+  const exportResult = runCli(source, ['backup', 'export', backupPath]);
+  assert.equal(exportResult.status, 0, exportResult.stderr);
+  assert.equal(fs.existsSync(backupPath), true);
+
+  const importResult = runCli(destination, ['backup', 'import', backupPath]);
+  assert.equal(importResult.status, 0, importResult.stderr);
+
+  const showAgent = runCli(destination, ['show', 'agent', 'worker']);
+  assert.equal(showAgent.status, 0, showAgent.stderr);
+  const importedAgent = JSON.parse(showAgent.stdout);
+  assert.deepEqual(importedAgent.skills, ['skills/reviewer']);
+  assert.deepEqual(importedAgent.contextFiles, ['context/workspace.md']);
+
+  const envList = runCli(destination, ['env', 'list']);
+  assert.equal(envList.status, 0, envList.stderr);
+  assert.match(envList.stdout, /GITHUB_TOKEN=backup-gh/u);
+
+  assert.equal(
+    fs.readFileSync(path.join(destination, 'skills', 'reviewer', 'SKILL.md'), 'utf8'),
+    '# Reviewer Skill\n',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(destination, 'context', 'workspace.md'), 'utf8'),
+    'workspace context\n',
+  );
+  assert.equal(fs.statSync(path.join(destination, 'workspace')).isDirectory(), true);
+  assert.equal(
+    fs.readFileSync(path.join(destination, '.hkclaw-lite', 'watchers', 'ci-demo.log'), 'utf8'),
+    'watch log\n',
+  );
+
+  const watcherList = runCli(destination, ['ci', 'list']);
+  assert.equal(watcherList.status, 0, watcherList.stderr);
+  assert.match(watcherList.stdout, /ci-demo/u);
+});
+
+test('migrate copies hkclaw-lite state from another project root', () => {
+  const source = createProject();
+  const destination = createProject();
+  const workdir = path.join(source, 'workspace');
+  fs.mkdirSync(workdir, { recursive: true });
+
+  assert.equal(runCli(source, ['init']).status, 0);
+  assert.equal(
+    runCli(source, ['env', 'set', 'GITLAB_TOKEN=migrate-gl']).status,
+    0,
+  );
+  assert.equal(
+    runCli(source, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'worker',
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(source, ['add', 'channel'], {
+      input: buildChannelAnswers({
+        name: 'discord-main',
+        agentChoice: '1',
+        workdir: 'workspace',
+      }),
+    }).status,
+    0,
+  );
+
+  const migrateResult = runCli(destination, ['migrate', '--from', source]);
+  assert.equal(migrateResult.status, 0, migrateResult.stderr);
+
+  const showChannel = runCli(destination, ['show', 'channel', 'discord-main']);
+  assert.equal(showChannel.status, 0, showChannel.stderr);
+  assert.equal(JSON.parse(showChannel.stdout).workdir, 'workspace');
+
+  const envList = runCli(destination, ['env', 'list']);
+  assert.equal(envList.status, 0, envList.stderr);
+  assert.match(envList.stdout, /GITLAB_TOKEN=migrate-gl/u);
+  assert.equal(fs.statSync(path.join(destination, 'workspace')).isDirectory(), true);
 });

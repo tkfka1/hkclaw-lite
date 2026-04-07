@@ -1,0 +1,17 @@
+{{- if and .Values.workspace.enabled .Values.workspace.persistence.enabled (not .Values.workspace.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "hkclaw-lite.workspacePvcName" . }}
+  labels:
+    {{- include "hkclaw-lite.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.workspace.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.workspace.persistence.size }}
+  {{- with .Values.workspace.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

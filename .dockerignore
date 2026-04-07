@@ -1,0 +1,10 @@
+.git
+.gitignore
+.hkclaw-lite
+coverage
+node_modules
+npm-debug.log
+tmp
+backups
+charts
+test

@@ -1,0 +1,76 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/tkfka1/hkclaw-lite
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 10001
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+state:
+  mountPath: /data
+  persistence:
+    enabled: true
+    existingClaim: ""
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+
+workspace:
+  enabled: true
+  mountPath: /workspace
+  persistence:
+    enabled: false
+    existingClaim: ""
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 20Gi
+
+bootstrapBackup:
+  enabled: false
+  existingSecret: ""
+  secretKey: backup.json
+  data: ""
+  force: false
+
+command: []
+args: []
+
+env: {}
+extraEnv: []
+envFrom: []
+
+extraVolumes: []
+extraVolumeMounts: []
+extraInitContainers: []
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
