@@ -1,6 +1,5 @@
-hkclaw-lite was installed as a CLI toolbox Deployment.
+hkclaw-lite was installed as a Deployment with persistent state.
 
-This chart does not expose a Service by default because hkclaw-lite is not an HTTP server.
 The main project root is mounted at {{ .Values.state.mountPath }}.
 
 Useful commands:
@@ -8,6 +7,15 @@ Useful commands:
   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
   kubectl exec -it deploy/{{ include "hkclaw-lite.fullname" . }} -- /bin/bash
   kubectl exec -it deploy/{{ include "hkclaw-lite.fullname" . }} -- node /app/bin/hkclaw-lite.js status --root {{ .Values.state.mountPath }}
+{{- if .Values.service.enabled }}
+  kubectl port-forward svc/{{ include "hkclaw-lite.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.targetPort }}
+
+The web admin is exposed through a {{ .Values.service.type }} Service on port {{ .Values.service.port }}.
+Default args: {{ join " " .Values.args }}
+{{- else }}
+
+No Kubernetes Service is created because service.enabled=false.
+{{- end }}
 
 If you need Codex, Claude Code, Gemini CLI, or other provider binaries, build a derived image and set:
 

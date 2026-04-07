@@ -92,6 +92,12 @@ spec:
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.service.enabled }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          {{- end }}
           volumeMounts:
             - name: state
               mountPath: {{ .Values.state.mountPath }}

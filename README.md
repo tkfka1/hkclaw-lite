@@ -108,7 +108,7 @@ CLI 대신 브라우저에서 관리하고 싶으면 로컬 웹 어드민을 바
 hkclaw-lite admin
 ```
 
-기본 주소는 `http://127.0.0.1:3580` 이다.
+기본 주소는 `http://127.0.0.1:4622` 이다.
 
 ## 기본 흐름
 
@@ -213,7 +213,10 @@ hkclaw-lite env unset GITLAB_TOKEN
 
 ### Tribunal Channel
 
-채널은 기본적으로 하나의 owner agent에 매핑되지만, 필요하면 reviewer와 arbiter를 추가해서 tribunal 흐름으로 돌릴 수 있다.
+채널은 `mode`를 기준으로 동작한다.
+
+- `single`: owner만 사용
+- `tribunal`: owner + reviewer + arbiter 사용
 
 - owner: 실제 초안 생성
 - reviewer: owner 결과를 자동 검토
@@ -221,14 +224,15 @@ hkclaw-lite env unset GITLAB_TOKEN
 
 질문형 `add channel`에서는 먼저 일반 채널인지 tribunal 채널인지 물어본 다음, tribunal을 고르면 owner/reviewer/arbiter 세 에이전트를 순서대로 선택하게 된다.
 
-채널의 `workdir`가 실제 workspace이고, tribunal이어도 owner/reviewer/arbiter는 같은 채널 `workdir`를 공유한다.
+채널의 `workspace`가 실제 작업 공간이고, tribunal이어도 owner/reviewer/arbiter는 같은 채널 `workspace`를 공유한다.
 
 채널 설정 예시:
 
 ```json
 {
+  "mode": "tribunal",
   "discordChannelId": "123456789012345678",
-  "workdir": "./workspaces/discord-main",
+  "workspace": "./workspaces/discord-main",
   "agent": "owner",
   "reviewer": "reviewer",
   "arbiter": "arbiter",
@@ -249,13 +253,14 @@ hkclaw-lite add channel
 질문 예시는 다음과 같다.
 
 - 채널 이름
+- 채널 모드 (`single` 또는 `tribunal`)
 - Discord channel ID
 - Discord guild ID
-- 채널 workdir
+- 채널 workspace
 - 어떤 에이전트에 연결할지
 - 설명
 
-`workdir`는 미리 존재하는 디렉터리여야 한다.
+`workspace`는 미리 존재하는 디렉터리여야 한다.
 
 추가 직후 설정을 확인하려면:
 
@@ -280,7 +285,7 @@ agent 기준 실행:
 hkclaw-lite run dev-codex --workdir ./workspaces/dev --message "README를 정리해라"
 ```
 
-`agent`만 주고 `--workdir`를 생략하면, 그 agent가 연결된 채널이 정확히 하나일 때만 그 채널 컨텍스트와 workdir을 자동으로 사용한다. 여러 채널에 물려 있으면 `--channel` 또는 `--workdir`를 명시해야 한다.
+`agent`만 주고 `--workdir`를 생략하면, 그 agent가 연결된 채널이 정확히 하나일 때만 그 채널 컨텍스트와 workspace를 자동으로 사용한다. 여러 채널에 물려 있으면 `--channel` 또는 `--workdir`를 명시해야 한다.
 
 tribunal 채널은 `run --channel ...` 시 아래 순서로 동작한다.
 
@@ -290,7 +295,29 @@ tribunal 채널은 `run --channel ...` 시 아래 순서로 동작한다.
 
 각 단계의 agent는 자기 `fallbackAgent`가 있으면 실패 시 fallback으로 재시도한다.
 
-### 4. 대시보드 추가
+### 4. Discord 서비스
+
+실제 Discord 채널과 연결해서 쓰려면 역할별 봇 토큰을 준비한 뒤 서비스 프로세스를 띄우면 된다.
+
+```bash
+hkclaw-lite discord serve --env-file .env
+```
+
+`.env` 예시:
+
+```dotenv
+OWNER_BOT_TOKEN=discord-owner-token
+REVIEWER_BOT_TOKEN=discord-reviewer-token
+ARBITER_BOT_TOKEN=discord-arbiter-token
+```
+
+- owner bot: 유저 입력을 받고 owner 응답을 보낸다.
+- reviewer bot: tribunal 채널에서 reviewer 결과를 보낸다.
+- arbiter bot: tribunal 채널에서 최종 중재 응답을 보낸다.
+
+역할별 봇 아이덴티티는 전역이고, 어떤 agent/model이 해당 역할을 맡을지는 채널 설정의 owner/reviewer/arbiter가 결정한다.
+
+### 5. 대시보드 추가
 
 ```bash
 hkclaw-lite add dashboard
@@ -303,7 +330,7 @@ hkclaw-lite add dashboard
 - refresh interval
 - runtime detail 표시 여부
 
-### 5. 대시보드 보기
+### 6. 대시보드 보기
 
 ```bash
 hkclaw-lite dashboard ops
@@ -391,12 +418,12 @@ hkclaw-lite admin
 옵션:
 
 - `--host`: 바인딩 주소. 기본값은 `127.0.0.1`
-- `--port`: 리슨 포트. 기본값은 `3580`
+- `--port`: 리슨 포트. 기본값은 `4622`
 
 예시:
 
 ```bash
-hkclaw-lite admin --host 0.0.0.0 --port 8080
+hkclaw-lite admin --host 0.0.0.0 --port 4622
 ```
 
 가벼운 로그인 비밀번호를 걸고 싶으면 환경 변수로 설정한다.
@@ -480,7 +507,7 @@ hkclaw-lite status dashboard <name>
 
 ## 컨테이너 / Helm 배포
 
-이 프로젝트는 기본적으로 HTTP 서버가 아니라 CLI 런타임이다. `admin` 명령으로 로컬 웹 어드민을 띄울 수는 있지만, 기본 Helm chart는 여전히 상태 볼륨을 가진 toolbox pod 배포를 기준으로 한다.
+이 프로젝트는 기본적으로 HTTP 서버가 아니라 CLI 런타임이지만, 기본 Helm chart는 운영 편의를 위해 웹 어드민을 바로 띄우도록 구성돼 있다. 기본값은 `0.0.0.0:4622` 이고 `ClusterIP` Service도 함께 생성된다.
 
 기본 이미지는 이 저장소의 `Dockerfile`로 만들 수 있다.
 
@@ -496,7 +523,15 @@ helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
   --set image.tag=0.1.0
 ```
 
-기본 pod는 별도 명령을 주지 않으면 `sleep infinity` 상태로 떠 있고, 운영자는 `kubectl exec`로 들어가서 `hkclaw-lite` 명령을 실행하는 방식으로 쓴다.
+설치 후 로컬에서는 아래처럼 포트 포워딩해서 웹 어드민에 붙으면 된다.
+
+```bash
+kubectl port-forward svc/hkclaw-lite 4622:4622
+```
+
+기본 차트는 `node /app/bin/hkclaw-lite.js admin --host 0.0.0.0 --port 4622` 를 실행한다. CLI toolbox 모드가 필요하면 `args`를 비우거나 원하는 명령으로 override 하면 된다.
+
+웹 어드민 대신 직접 pod 안에서 CLI를 쓰고 싶으면:
 
 ```bash
 kubectl exec -it deploy/hkclaw-lite -- /bin/bash
@@ -515,7 +550,6 @@ helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
 
 중요한 제약:
 
-- 차트는 기본적으로 Kubernetes Service를 만들지 않는다. 노출할 네트워크 포트가 없기 때문이다.
 - `codex`, `claude-code`, `gemini-cli` 같은 외부 provider CLI를 쓰려면, 그 바이너리와 인증 파일을 포함한 파생 이미지를 직접 만들어야 한다.
 - chart는 `.hkclaw-lite` 상태와 프로젝트 내부 상대경로 자산을 유지하는 용도이고, 실제 작업 저장소는 별도 PVC나 추가 volume mount로 붙이는 식으로 운영해야 한다.
 

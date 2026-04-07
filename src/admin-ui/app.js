@@ -1,4 +1,5 @@
 const app = document.getElementById('app');
+const DEFAULT_CHANNEL_WORKSPACE = '~';
 
 const state = {
   data: null,
@@ -10,21 +11,24 @@ const state = {
     authenticated: true,
     passwordEnv: 'HKCLAW_LITE_ADMIN_PASSWORD',
   },
-  activeEditor: 'agent',
-  selectedAgent: null,
-  selectedChannel: null,
-  selectedDashboard: null,
-  agentAuth: null,
-  watcherLogs: {},
-  runOutput: '',
-  lastRunCommand: '',
+  activeView: 'home',
+  agentModalOpen: false,
+  channelModalOpen: false,
+  adminPasswordModalOpen: false,
+  channelDraft: null,
+  agentWizard: null,
+  aiManager: null,
+  aiStatuses: {},
 };
 
 app.addEventListener('click', handleClick);
+app.addEventListener('keydown', handleKeydown);
 app.addEventListener('submit', handleSubmit);
+app.addEventListener('input', handleInput);
+app.addEventListener('change', handleInput);
 
 boot().catch((error) => {
-  setNotice('error', error.message);
+  setNotice('error', localizeErrorMessage(error.message));
   render();
 });
 
@@ -36,34 +40,21 @@ async function boot() {
     return;
   }
   await refreshState();
-  window.setInterval(() => {
-    if (state.auth.enabled && !state.auth.authenticated) {
-      return;
-    }
-    void refreshState({ quiet: true, preserveNotice: true });
-  }, 15000);
+  void refreshAiStatuses();
 }
 
-async function refreshState({ quiet = false, preserveNotice = false } = {}) {
-  if (!quiet) {
-    state.loading = true;
-    render();
-  }
+async function refreshState() {
+  state.loading = true;
+  render();
 
   try {
     state.data = await requestJson('/api/state');
-    state.auth.authenticated = true;
-    syncSelections();
-    if (!preserveNotice) {
-      state.notice = null;
-    }
+    state.notice = null;
   } catch (error) {
     if (handleAuthError(error)) {
-      if (!preserveNotice) {
-        setNotice('info', 'Login required.');
-      }
+      setNotice('info', '로그인이 필요합니다.');
     } else {
-      setNotice('error', error.message);
+      setNotice('error', localizeErrorMessage(error.message));
     }
   } finally {
     state.loading = false;
@@ -71,39 +62,15 @@ async function refreshState({ quiet = false, preserveNotice = false } = {}) {
   }
 }
 
-function syncSelections() {
-  if (!state.data) {
-    return;
-  }
-
-  const agentNames = state.data.agents.map((agent) => agent.name);
-  const channelNames = state.data.channels.map((channel) => channel.name);
-  const dashboardNames = state.data.dashboards.map((dashboard) => dashboard.name);
-
-  if (!agentNames.includes(state.selectedAgent)) {
-    state.selectedAgent = agentNames[0] || null;
-  }
-  if (!channelNames.includes(state.selectedChannel)) {
-    state.selectedChannel = channelNames[0] || null;
-  }
-  if (!dashboardNames.includes(state.selectedDashboard)) {
-    state.selectedDashboard = dashboardNames[0] || null;
-  }
-}
-
-function setActiveEditor(kind, name = null) {
-  state.activeEditor = kind;
-  if (kind === 'agent') {
-    state.selectedAgent = name;
-    if (!state.agentAuth || state.agentAuth.agentName !== name) {
-      state.agentAuth = null;
+async function refreshAiStatuses() {
+  try {
+    const payload = await requestJson('/api/ai-statuses');
+    state.aiStatuses = mergeAiStatuses(state.aiStatuses, payload.statuses || {});
+    render();
+  } catch (error) {
+    if (handleAuthError(error)) {
+      render();
     }
-  }
-  if (kind === 'channel') {
-    state.selectedChannel = name;
-  }
-  if (kind === 'dashboard') {
-    state.selectedDashboard = name;
   }
 }
 
@@ -115,59 +82,130 @@ function handleClick(event) {
 
   const action = button.dataset.action;
 
-  if (action === 'refresh') {
-    void refreshState();
+  if (state.busy && ['open-ai-modal', 'open-admin-password-modal', 'logout'].includes(action)) {
     return;
   }
 
-  if (action === 'logout') {
-    void logout();
-    return;
-  }
-
-  if (action === 'new-agent') {
-    setActiveEditor('agent', null);
+  if (action === 'switch-view') {
+    state.activeView = button.dataset.view || 'home';
     render();
     return;
   }
 
-  if (action === 'select-agent') {
-    setActiveEditor('agent', button.dataset.name || null);
-    render();
-    void runAgentAuth('status', { silent: true, useBusy: false });
-    return;
-  }
-
-  if (action === 'new-channel') {
-    setActiveEditor('channel', null);
+  if (action === 'open-ai-modal') {
+    state.aiManager = createAiManager(button.dataset.agentType || '');
     render();
     return;
   }
 
-  if (action === 'select-channel') {
-    setActiveEditor('channel', button.dataset.name || null);
+  if (action === 'close-ai-modal') {
+    state.aiManager = null;
     render();
     return;
   }
 
-  if (action === 'new-dashboard') {
-    setActiveEditor('dashboard', null);
+  if (action === 'open-admin-password-modal') {
+    state.adminPasswordModalOpen = true;
     render();
     return;
   }
 
-  if (action === 'select-dashboard') {
-    setActiveEditor('dashboard', button.dataset.name || null);
+  if (action === 'close-admin-password-modal') {
+    state.adminPasswordModalOpen = false;
     render();
     return;
   }
 
-  if (action === 'switch-editor') {
-    state.activeEditor = button.dataset.kind || 'agent';
-    render();
-    if (state.activeEditor === 'agent' && state.selectedAgent) {
-      void runAgentAuth('status', { silent: true, useBusy: false });
+  if (action === 'logout' && !state.auth.enabled) {
+    return;
+  }
+
+  if (action === 'open-agent-modal') {
+    const selectableAgentTypes = getSelectableAgentTypes();
+    if (!selectableAgentTypes.length) {
+      setNotice('error', '사용 가능한 AI가 없습니다.');
+      render();
+      return;
     }
+    state.agentModalOpen = true;
+    state.agentWizard = {
+      step: 0,
+      draft: createBlankAgent(),
+      authResult: null,
+      testResult: null,
+    };
+    render();
+    return;
+  }
+
+  if (action === 'ai-auth-status') {
+    void runAiManagerAction('status');
+    render();
+    return;
+  }
+
+  if (action === 'ai-auth-login') {
+    void runAiManagerAction('login');
+    return;
+  }
+
+  if (action === 'ai-auth-logout') {
+    void runAiManagerAction('logout');
+    return;
+  }
+
+  if (action === 'ai-auth-test') {
+    void runAiManagerAction('test');
+    return;
+  }
+
+  if (action === 'close-agent-modal') {
+    state.agentModalOpen = false;
+    state.agentWizard = null;
+    render();
+    return;
+  }
+
+  if (action === 'open-channel-modal') {
+    state.channelModalOpen = true;
+    state.channelDraft = createBlankChannel();
+    render();
+    return;
+  }
+
+  if (action === 'close-channel-modal') {
+    state.channelModalOpen = false;
+    state.channelDraft = null;
+    render();
+    return;
+  }
+
+  if (action === 'prev-agent-step') {
+    if (state.agentWizard) {
+      state.agentWizard.step = Math.max(0, state.agentWizard.step - 1);
+      state.notice = null;
+      render();
+    }
+    return;
+  }
+
+  if (action === 'agent-auth-status') {
+    void runAgentWizardAuth('status');
+    return;
+  }
+
+  if (action === 'agent-auth-login') {
+    void runAgentWizardAuth('login');
+    return;
+  }
+
+  if (action === 'agent-auth-logout') {
+    void runAgentWizardAuth('logout');
+    return;
+  }
+
+  if (action === 'agent-auth-test') {
+    void runAgentWizardAuth('test');
     return;
   }
 
@@ -181,19 +219,95 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'delete-dashboard') {
-    void deleteEntity('dashboard', button.dataset.name);
+  if (action === 'logout') {
+    void logout();
+  }
+}
+
+function handleKeydown(event) {
+  const target = event.target.closest('[data-action][data-clickable="true"]');
+  if (!target) {
     return;
   }
 
-  if (action === 'load-watcher-log') {
-    void loadWatcherLog(button.dataset.id);
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    target.click();
+  }
+}
+
+function handleInput(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) {
     return;
   }
 
-  if (action === 'agent-auth-status' || action === 'agent-auth-login' || action === 'agent-auth-logout') {
-    void runAgentAuth(action.replace('agent-auth-', ''));
+  if (!state.agentWizard || !target.closest('[data-form="agent-wizard"]') || !target.name) {
+    if (
+      state.aiManager &&
+      target.closest('[data-form="ai-manager"]') &&
+      target.name
+    ) {
+      state.aiManager.testConfig[target.name] =
+        target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+      if (target.name === 'modelMode') {
+        if (state.aiManager.testConfig.modelMode !== 'custom') {
+          state.aiManager.testConfig.model = '';
+        }
+        render();
+      }
+    }
+    if (
+      state.channelDraft &&
+      target.closest('[data-form="channel"]') &&
+      target.name
+    ) {
+      state.channelDraft[target.name] =
+        target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+      if (target.name === 'mode' && state.channelDraft.mode !== 'tribunal') {
+        state.channelDraft.reviewer = '';
+        state.channelDraft.arbiter = '';
+        state.channelDraft.reviewRounds = '';
+      }
+      if (target.name === 'mode') {
+        render();
+      }
+    }
     return;
+  }
+
+  state.agentWizard.draft[target.name] =
+    target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+
+  if (target.name === 'agent') {
+    state.agentWizard.authResult = null;
+    state.agentWizard.testResult = null;
+    state.agentWizard.draft.modelMode = defaultModelModeForAgent(state.agentWizard.draft.agent);
+    state.agentWizard.draft.model = '';
+    state.agentWizard.draft.effort = '';
+    render();
+    return;
+  }
+
+  if (target.name === 'modelMode') {
+    if (state.agentWizard.draft.modelMode !== 'custom') {
+      state.agentWizard.draft.model = '';
+    }
+    state.agentWizard.draft.effort = normalizeEffortValue(
+      state.agentWizard.draft.agent,
+      state.agentWizard.draft.model,
+      state.agentWizard.draft.effort,
+    );
+    render();
+    return;
+  }
+
+  if (target.name === 'model') {
+    state.agentWizard.draft.effort = normalizeEffortValue(
+      state.agentWizard.draft.agent,
+      state.agentWizard.draft.model,
+      state.agentWizard.draft.effort,
+    );
   }
 }
 
@@ -208,8 +322,18 @@ async function handleSubmit(event) {
       return;
     }
 
-    if (kind === 'agent') {
-      await saveAgent(form);
+    if (kind === 'agent-wizard') {
+      if (!state.agentWizard) {
+        return;
+      }
+      if (state.agentWizard.step < getAgentWizardSteps(state.agentWizard.draft).length - 1) {
+        validateAgentWizardStep();
+        state.agentWizard.step += 1;
+        state.notice = null;
+        render();
+        return;
+      }
+      await saveAgentWizard();
       return;
     }
 
@@ -218,146 +342,37 @@ async function handleSubmit(event) {
       return;
     }
 
-    if (kind === 'dashboard') {
-      await saveDashboard(form);
-      return;
-    }
-
-    if (kind === 'shared-env') {
-      await saveSharedEnv(form);
-      return;
-    }
-
     if (kind === 'admin-password') {
       await changeAdminPassword(form);
-      return;
-    }
-
-    if (kind === 'run') {
-      await runOneShot(form);
     }
   } catch (error) {
-    setNotice('error', error.message);
+    setNotice('error', localizeErrorMessage(error.message));
     render();
   }
 }
 
-async function saveAgent(form) {
+async function login(form) {
   const values = new FormData(form);
-  const definition = {
-    name: requiredText(values, 'name'),
-    agent: requiredText(values, 'agent'),
-    fallbackAgent: optionalText(values, 'fallbackAgent'),
-    model: optionalText(values, 'model'),
-    effort: optionalText(values, 'effort'),
-    timeoutMs: optionalText(values, 'timeoutMs'),
-    systemPrompt: optionalText(values, 'systemPrompt'),
-    systemPromptFile: optionalText(values, 'systemPromptFile'),
-    skills: parseListText(values.get('skillsText')),
-    contextFiles: parseListText(values.get('contextFilesText')),
-    env: parseEnvText(values.get('envText')),
-    sandbox: optionalText(values, 'sandbox'),
-    permissionMode: optionalText(values, 'permissionMode'),
-    dangerous: values.get('dangerous') === 'on',
-    baseUrl: optionalText(values, 'baseUrl'),
-    command: optionalText(values, 'command'),
-  };
-
-  const currentName = optionalText(values, 'currentName');
-  const response = await mutateJson('/api/agents', {
+  const response = await mutateJson('/api/login', {
     method: 'POST',
     body: {
-      currentName,
-      definition,
+      password: requiredText(values, 'password'),
     },
   });
 
-  state.data = response.state;
-  state.selectedAgent = definition.name;
-  syncSelections();
-  setNotice('info', currentName ? `Updated agent "${definition.name}".` : `Added agent "${definition.name}".`);
-  render();
-  if (isAuthSupportedAgent(definition.agent)) {
-    void runAgentAuth('status', { silent: true, useBusy: false });
-  }
+  state.auth = response;
+  state.loading = false;
+  setNotice('info', '로그인했습니다.');
+  await refreshState();
 }
 
-async function saveChannel(form) {
-  const values = new FormData(form);
-  const definition = {
-    name: requiredText(values, 'name'),
-    discordChannelId: requiredText(values, 'discordChannelId'),
-    guildId: optionalText(values, 'guildId'),
-    workdir: requiredText(values, 'workdir'),
-    agent: requiredText(values, 'agent'),
-    reviewer: optionalText(values, 'reviewer'),
-    arbiter: optionalText(values, 'arbiter'),
-    reviewRounds: optionalText(values, 'reviewRounds'),
-    description: optionalText(values, 'description'),
-  };
-
-  const currentName = optionalText(values, 'currentName');
-  const response = await mutateJson('/api/channels', {
+async function logout() {
+  const response = await mutateJson('/api/logout', {
     method: 'POST',
-    body: {
-      currentName,
-      definition,
-    },
   });
-
-  state.data = response.state;
-  state.selectedChannel = definition.name;
-  syncSelections();
-  setNotice(
-    'info',
-    currentName ? `Updated channel "${definition.name}".` : `Added channel "${definition.name}".`,
-  );
-  render();
-}
-
-async function saveDashboard(form) {
-  const values = new FormData(form);
-  const definition = {
-    name: requiredText(values, 'name'),
-    monitors: parseListText(values.get('monitorsText')),
-    refreshMs: requiredText(values, 'refreshMs'),
-    showDetails: values.get('showDetails') === 'on',
-  };
-
-  const currentName = optionalText(values, 'currentName');
-  const response = await mutateJson('/api/dashboards', {
-    method: 'POST',
-    body: {
-      currentName,
-      definition,
-    },
-  });
-
-  state.data = response.state;
-  state.selectedDashboard = definition.name;
-  syncSelections();
-  setNotice(
-    'info',
-    currentName
-      ? `Updated dashboard "${definition.name}".`
-      : `Added dashboard "${definition.name}".`,
-  );
-  render();
-}
-
-async function saveSharedEnv(form) {
-  const values = new FormData(form);
-  const sharedEnv = parseEnvText(values.get('sharedEnvText'));
-  const response = await mutateJson('/api/shared-env', {
-    method: 'PUT',
-    body: {
-      sharedEnv,
-    },
-  });
-
-  state.data = response.state;
-  syncSelections();
-  setNotice('info', 'Updated shared env.');
+  state.auth = response;
+  state.data = null;
+  setNotice('info', '로그아웃했습니다.');
   render();
 }
 
@@ -368,7 +383,7 @@ async function changeAdminPassword(form) {
   const confirmPassword = requiredText(values, 'confirmPassword');
 
   if (newPassword !== confirmPassword) {
-    throw new Error('New password does not match.');
+    throw new Error('비밀번호 확인이 일치하지 않습니다.');
   }
 
   const response = await mutateJson('/api/admin-password', {
@@ -380,90 +395,136 @@ async function changeAdminPassword(form) {
   });
 
   state.auth = response.auth || state.auth;
-  setNotice('info', 'Password updated.');
-  form.reset();
+  state.adminPasswordModalOpen = false;
+  state.notice = null;
   render();
 }
 
-async function login(form) {
-  const values = new FormData(form);
-  const password = requiredText(values, 'password');
-  const response = await mutateJson('/api/login', {
+async function saveAgentWizard() {
+  validateAgentWizardStep();
+  const values = state.agentWizard?.draft || createBlankAgent();
+  const definition = {
+    name: requiredDraftText(values.name, 'name'),
+    agent: requiredDraftText(values.agent, 'agent'),
+    fallbackAgent: optionalDraftText(values.fallbackAgent),
+    model: resolveConfiguredModel(values.agent, values),
+    effort: optionalDraftText(values.effort),
+    timeoutMs: optionalDraftText(values.timeoutMs),
+    systemPrompt: optionalDraftText(values.systemPrompt),
+    systemPromptFile: optionalDraftText(values.systemPromptFile),
+    skills: parseListText(values.skillsText),
+    contextFiles: parseListText(values.contextFilesText),
+    env: parseEnvText(values.envText),
+    sandbox: optionalDraftText(values.sandbox),
+    permissionMode: optionalDraftText(values.permissionMode),
+    dangerous: Boolean(values.dangerous),
+    baseUrl: optionalDraftText(values.baseUrl),
+    command: optionalDraftText(values.command),
+  };
+
+  const response = await mutateJson('/api/agents', {
     method: 'POST',
     body: {
-      password,
+      definition,
     },
   });
 
-  state.auth = response;
-  state.loading = false;
-  setNotice('info', 'Signed in.');
-  await refreshState({ quiet: true, preserveNotice: true });
-}
-
-async function logout() {
-  const response = await mutateJson('/api/logout', {
-    method: 'POST',
-  });
-  state.auth = response;
-  state.data = null;
-  state.runOutput = '';
-  state.lastRunCommand = '';
-  setNotice('info', 'Signed out.');
+  state.data = response.state;
+  state.agentModalOpen = false;
+  state.agentWizard = null;
+  setNotice('info', `에이전트 "${definition.name}"을 추가했습니다.`);
   render();
 }
 
-async function runAgentAuth(action, options = {}) {
-  const agent = state.data?.agents.find((entry) => entry.name === state.selectedAgent);
-  if (!agent) {
-    throw new Error('Select an agent first.');
-  }
-  if (!isAuthSupportedAgent(agent.agent)) {
-    throw new Error(`Auth actions are not supported for ${agent.agent}.`);
+async function runAgentWizardAuth(action) {
+  if (!state.agentWizard) {
+    return;
   }
 
-  const request = options.useBusy === false ? requestJson : mutateJson;
-  const response = await request('/api/agent-auth', {
+  const draft = state.agentWizard.draft;
+  const agentType = optionalDraftText(draft.agent);
+  if (!isAuthRequiredAgent(agentType)) {
+    throw new Error('이 유형은 인증이 필요하지 않습니다.');
+  }
+
+  const body = {
+    agentType,
+    action,
+  };
+
+  if (action === 'test') {
+    body.definition = {
+      name: optionalDraftText(draft.name) || 'wizard-agent',
+      agent: agentType,
+      fallbackAgent: optionalDraftText(draft.fallbackAgent),
+      model: resolveConfiguredModel(agentType, draft),
+      effort: optionalDraftText(draft.effort),
+      timeoutMs: optionalDraftText(draft.timeoutMs),
+      systemPrompt: optionalDraftText(draft.systemPrompt),
+      systemPromptFile: optionalDraftText(draft.systemPromptFile),
+      skills: parseListText(draft.skillsText),
+      contextFiles: parseListText(draft.contextFilesText),
+      env: parseEnvText(draft.envText),
+      sandbox: optionalDraftText(draft.sandbox),
+      permissionMode: optionalDraftText(draft.permissionMode),
+      dangerous: Boolean(draft.dangerous),
+      baseUrl: optionalDraftText(draft.baseUrl),
+      command: optionalDraftText(draft.command),
+    };
+    body.workdir = '.';
+  }
+
+  const response = await mutateJson('/api/agent-auth', {
     method: 'POST',
-    body: {
-      agentName: agent.name,
-      agentType: agent.agent,
-      action,
-    },
+    body,
   });
 
-  state.agentAuth = {
-    ...response.result,
-    agentName: agent.name,
-  };
-  if (!options.silent) {
-    setNotice('info', `${action} finished for ${agent.name}.`);
+  if (!state.agentWizard) {
+    return;
   }
-  render();
-}
 
-async function runOneShot(form) {
-  const values = new FormData(form);
-  const mode = requiredText(values, 'mode');
-  const payload = {
-    prompt: requiredText(values, 'prompt'),
-  };
-
-  if (mode === 'channel') {
-    payload.channelName = requiredText(values, 'channelName');
+  if (action === 'test') {
+    state.agentWizard.testResult = response.result;
   } else {
-    payload.agentName = requiredText(values, 'agentName');
-    payload.workdir = optionalText(values, 'workdir');
+    state.agentWizard.authResult = response.result;
+    if (action === 'logout') {
+      state.agentWizard.testResult = null;
+    }
+    if (action === 'status' && !response.result?.details?.loggedIn) {
+      state.agentWizard.testResult = null;
+    }
   }
 
-  const response = await mutateJson('/api/run', {
+  state.notice = null;
+  render();
+}
+
+async function saveChannel(form) {
+  const values = new FormData(form);
+  const definition = {
+    name: requiredText(values, 'name'),
+    mode: requiredText(values, 'mode'),
+    discordChannelId: requiredText(values, 'discordChannelId'),
+    guildId: optionalText(values, 'guildId'),
+    workspace: requiredText(values, 'workspace'),
+    agent: requiredText(values, 'agent'),
+    reviewer: optionalText(values, 'reviewer'),
+    arbiter: optionalText(values, 'arbiter'),
+    reviewRounds: optionalText(values, 'reviewRounds'),
+    description: optionalText(values, 'description'),
+  };
+
+  const response = await mutateJson('/api/channels', {
     method: 'POST',
-    body: payload,
+    body: {
+      definition,
+    },
   });
 
-  state.runOutput = response.result.output || '(no output)';
-  state.lastRunCommand = response.result.command || '';
-  setNotice('info', 'Completed one-shot run.');
+  state.data = response.state;
+  state.channelModalOpen = false;
+  state.channelDraft = null;
+  setNotice('info', `채널 "${definition.name}"을 추가했습니다.`);
   render();
 }
 
@@ -472,7 +533,7 @@ async function deleteEntity(kind, name) {
     return;
   }
 
-  const confirmed = window.confirm(`Delete ${kind} "${name}"?`);
+  const confirmed = window.confirm(`${localizeKind(kind)} "${name}"을(를) 삭제할까요?`);
   if (!confirmed) {
     return;
   }
@@ -482,40 +543,7 @@ async function deleteEntity(kind, name) {
   });
 
   state.data = response.state;
-  if (kind === 'agent' && state.selectedAgent === name) {
-    state.selectedAgent = null;
-  }
-  if (kind === 'channel' && state.selectedChannel === name) {
-    state.selectedChannel = null;
-  }
-  if (kind === 'dashboard' && state.selectedDashboard === name) {
-    state.selectedDashboard = null;
-  }
-  syncSelections();
-  setNotice('info', `Deleted ${kind} "${name}".`);
-  render();
-}
-
-async function loadWatcherLog(watcherId) {
-  if (!watcherId) {
-    return;
-  }
-
-  const response = await fetch(`/api/watchers/${encodeURIComponent(watcherId)}/log`, {
-    cache: 'no-store',
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    if (response.status === 401) {
-      handleAuthPayload(payload.auth);
-      setNotice('info', 'Login required.');
-      render();
-      return;
-    }
-    throw new Error(payload.error || `Failed to load watcher log (${response.status}).`);
-  }
-
-  state.watcherLogs[watcherId] = await response.text();
+  setNotice('info', `${localizeKind(kind)} "${name}"을(를) 삭제했습니다.`);
   render();
 }
 
@@ -543,741 +571,294 @@ async function requestJson(url, options = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) {
-      const error = new Error(payload.error || 'Authentication required.');
+      const error = new Error(localizeErrorMessage(payload.error || '인증이 필요합니다.'));
       error.code = 'AUTH_REQUIRED';
       error.auth = payload.auth || null;
       throw error;
     }
-    throw new Error(payload.error || `Request failed (${response.status}).`);
+    throw new Error(localizeErrorMessage(payload.error || `요청에 실패했습니다. (${response.status})`));
   }
   return payload;
-}
-
-function setNotice(type, text) {
-  state.notice = { type, text };
 }
 
 function handleAuthError(error) {
   if (error?.code !== 'AUTH_REQUIRED') {
     return false;
   }
-  handleAuthPayload(error.auth);
+  state.auth = {
+    ...state.auth,
+    ...(error.auth || {}),
+    authenticated: false,
+  };
   state.data = null;
-  state.runOutput = '';
-  state.lastRunCommand = '';
   return true;
 }
 
-function handleAuthPayload(authPayload) {
-  state.auth = {
-    ...state.auth,
-    ...(authPayload || {}),
-    authenticated: false,
-  };
+function setNotice(type, text) {
+  state.notice = { type, text };
 }
 
 function render() {
   if (!state.data && state.loading) {
-    app.innerHTML = '<div class="shell"><div class="empty-state">Loading...</div></div>';
+    app.innerHTML = renderFrame(renderEmptyState('불러오는 중', true));
     return;
   }
 
   if (state.auth.enabled && !state.auth.authenticated) {
-    app.innerHTML = `
-      <div class="shell auth-shell">
-        ${renderNotice()}
-        <section class="panel">
-          <div class="section-title">
-            <div>
-              <h1>Admin</h1>
-            </div>
-          </div>
-          <form data-form="login" class="stack">
-            <div class="field">
-              <label for="login-password">Password</label>
-              <input id="login-password" name="password" type="password" autocomplete="current-password" />
-            </div>
-            <div class="form-actions">
-              <button class="btn-primary" type="submit" ${state.busy ? 'disabled' : ''}>Login</button>
-            </div>
-          </form>
-        </section>
-      </div>
-    `;
+    app.innerHTML = renderFrame(renderLoginScreen(), 'app-shell--auth');
     return;
   }
 
   if (!state.data) {
-    app.innerHTML = '<div class="shell"><div class="empty-state">No data.</div></div>';
+    app.innerHTML = renderFrame(renderEmptyState('데이터 없음'));
     return;
   }
 
-  const { data } = state;
-  const selectedAgent = data.agents.find((agent) => agent.name === state.selectedAgent) || null;
-  const selectedChannel =
-    data.channels.find((channel) => channel.name === state.selectedChannel) || null;
-  const selectedDashboard =
-    data.dashboards.find((dashboard) => dashboard.name === state.selectedDashboard) || null;
+  app.innerHTML = renderFrame(`
+    ${renderTopBar()}
+    ${renderActiveView()}
+    ${state.agentModalOpen ? renderAgentModal() : ''}
+    ${state.channelModalOpen ? renderChannelModal() : ''}
+    ${state.aiManager ? renderAiModal() : ''}
+    ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
+  `);
+}
 
-  app.innerHTML = `
-    <div class="shell">
-      ${renderNotice()}
-      <div class="layout">
-        <section class="selector-grid">
-          ${renderSelectorPanel({
-            kind: 'agent',
-            title: 'Agents',
-            count: data.agents.length,
-            newAction: 'new-agent',
-            listHtml: renderAgentList(data.agents),
-          })}
-          ${renderSelectorPanel({
-            kind: 'channel',
-            title: 'Channels',
-            count: data.channels.length,
-            newAction: 'new-channel',
-            listHtml: renderChannelList(data.channels, data.agents),
-          })}
-          ${renderSelectorPanel({
-            kind: 'dashboard',
-            title: 'Dashboards',
-            count: data.dashboards.length,
-            newAction: 'new-dashboard',
-            listHtml: renderDashboardList(data.dashboards),
-          })}
-        </section>
-
-        ${renderEditorPanel(data, selectedAgent, selectedChannel, selectedDashboard)}
-
-        <section class="two-up two-up--ops">
-          <div class="panel">
-            <div class="section-title">
-              <div>
-                <h2>Env</h2>
-              </div>
-              <div class="toolbar">
-                <button class="btn-secondary" data-action="refresh" ${state.busy ? 'disabled' : ''}>Refresh</button>
-                ${
-                  state.auth.enabled
-                    ? `<button class="btn-secondary" data-action="logout" ${state.busy ? 'disabled' : ''}>Logout</button>`
-                    : ''
-                }
-              </div>
-            </div>
-            ${renderSharedEnvForm(data.sharedEnv)}
-            <div class="run-output-block">
-              <div class="line-row line-row--split">
-                <h3>Password</h3>
-              </div>
-              ${renderAdminPasswordForm()}
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="section-title">
-              <div>
-                <h2>Run</h2>
-              </div>
-            </div>
-            ${renderRunForm(data)}
-            <div class="run-output-block">
-              <div class="line-row line-row--split">
-                <h3>Output</h3>
-              </div>
-              <div class="run-output">${state.runOutput ? escapeHtml(state.runOutput) : 'No output.'}</div>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="section-title">
-            <div>
-              <h2>Watchers</h2>
-            </div>
-          </div>
-          ${renderWatcherList(data.watchers)}
-        </section>
+function renderFrame(content, className = '') {
+  return `
+    <div class="app-shell ${escapeAttr(className)}">
+      <div class="shell">
+        ${renderNotice()}
+        ${content}
       </div>
     </div>
   `;
 }
 
-function renderNotice() {
-  if (!state.notice) {
-    return '';
-  }
-  return `<div class="notice ${state.notice.type === 'error' ? 'is-error' : 'is-info'}">${escapeHtml(state.notice.text)}</div>`;
-}
-
-function renderSelectorPanel({ kind, title, count, newAction, listHtml }) {
-  return `
-    <section class="panel selector-panel ${state.activeEditor === kind ? 'selector-panel--active' : ''}">
-      <div class="section-title">
-        <div>
-          <h2>${escapeHtml(title)}</h2>
-        </div>
-        <div class="toolbar">
-          <span class="list-count">${escapeHtml(String(count))}</span>
-          <button class="btn-secondary" data-action="${escapeAttr(newAction)}" ${state.busy ? 'disabled' : ''}>New</button>
-        </div>
-      </div>
-      <div class="list list--compact">${listHtml}</div>
-    </section>
-  `;
-}
-
-function renderEditorPanel(data, selectedAgent, selectedChannel, selectedDashboard) {
-  if (state.activeEditor === 'channel') {
-    return `
-      <section class="panel editor-panel">
-        <div class="section-title editor-title">
-          <div>
-            <h2>Channel</h2>
-          </div>
-          <div class="editor-tabs">
-            ${renderEditorTabs()}
-          </div>
-        </div>
-        <div class="editor-shell">
-          ${renderChannelEditorSummary(selectedChannel)}
-          <div class="editor-form-shell">
-            <div class="editor-form-head">
-              <h3>${selectedChannel ? escapeHtml(selectedChannel.name) : 'New'}</h3>
-            </div>
-            ${renderChannelForm(selectedChannel, data)}
-          </div>
-        </div>
-      </section>
-    `;
-  }
-
-  if (state.activeEditor === 'dashboard') {
-    return `
-      <section class="panel editor-panel">
-        <div class="section-title editor-title">
-          <div>
-            <h2>Dashboard</h2>
-          </div>
-          <div class="editor-tabs">
-            ${renderEditorTabs()}
-          </div>
-        </div>
-        <div class="editor-shell">
-          ${renderDashboardEditorSummary(selectedDashboard)}
-          <div class="editor-form-shell">
-            <div class="editor-form-head">
-              <h3>${selectedDashboard ? escapeHtml(selectedDashboard.name) : 'New'}</h3>
-            </div>
-            ${renderDashboardForm(selectedDashboard, data)}
-          </div>
-        </div>
-      </section>
-    `;
-  }
+function renderTopBar() {
+  const tabs = [
+    { view: 'home', label: '홈', icon: '⌂' },
+    { view: 'bots', label: '봇', icon: '◎' },
+    { view: 'channels', label: '채널', icon: '≡' },
+    { view: 'ai', label: 'AI', icon: '◌' },
+    { view: 'all', label: '전체', icon: '▦' },
+  ];
 
   return `
-    <section class="panel editor-panel">
-      <div class="section-title editor-title">
-        <div>
-          <h2>Agent</h2>
-        </div>
-        <div class="editor-tabs">
-          ${renderEditorTabs()}
-        </div>
-      </div>
-      <div class="editor-shell">
-        ${renderAgentEditorSummary(selectedAgent)}
-        <div class="editor-form-shell">
-          <div class="editor-form-head">
-            <h3>${selectedAgent ? escapeHtml(selectedAgent.name) : 'New'}</h3>
-          </div>
-          ${renderAgentForm(selectedAgent, data)}
-        </div>
+    <section class="panel topbar">
+      <div class="tabs" role="tablist" aria-label="관리 메뉴">
+        ${tabs
+          .map(
+            (tab) => `
+              <button
+                type="button"
+                class="tab ${state.activeView === tab.view ? 'is-active' : ''}"
+                data-action="switch-view"
+                data-view="${escapeAttr(tab.view)}"
+                role="tab"
+                aria-selected="${state.activeView === tab.view ? 'true' : 'false'}"
+                ${state.busy ? 'disabled' : ''}
+              >
+                <span class="tab-icon" aria-hidden="true">${escapeHtml(tab.icon)}</span>
+                <span>${escapeHtml(tab.label)}</span>
+              </button>
+            `,
+          )
+          .join('')}
       </div>
     </section>
   `;
 }
 
-function renderEditorTabs() {
-  return ['agent', 'channel', 'dashboard']
-    .map(
-      (kind) => `
-        <button
-          class="tab-chip ${state.activeEditor === kind ? 'is-active' : ''}"
-          data-action="switch-editor"
-          data-kind="${escapeAttr(kind)}"
-          ${state.busy ? 'disabled' : ''}
+function renderActiveView() {
+  if (state.activeView === 'home') {
+    return renderHomeView();
+  }
+  if (state.activeView === 'bots') {
+    return renderBotsView();
+  }
+  if (state.activeView === 'channels') {
+    return renderChannelsView();
+  }
+  if (state.activeView === 'ai') {
+    return renderAiView();
+  }
+  return renderAllView();
+}
+
+function renderHomeView() {
+  return `
+    <section class="metrics">
+      <article class="metric">
+        <span class="metric-label">에이전트 수</span>
+        <strong class="metric-value">${escapeHtml(String(state.data.agents.length))}</strong>
+      </article>
+      <article class="metric">
+        <span class="metric-label">채널 수</span>
+        <strong class="metric-value">${escapeHtml(String(state.data.channels.length))}</strong>
+      </article>
+    </section>
+  `;
+}
+
+function renderBotsView() {
+  return `
+    <section class="panel section-panel">
+      <div class="section-head">
+        <h2>에이전트 목록</h2>
+        <button type="button" class="btn-primary" data-action="open-agent-modal" ${state.busy ? 'disabled' : ''}>추가</button>
+      </div>
+      ${renderAgentList(state.data.agents)}
+    </section>
+  `;
+}
+
+function renderChannelsView() {
+  return `
+    <section class="panel section-panel">
+      <div class="section-head">
+        <h2>채널 목록</h2>
+        <button type="button" class="btn-primary" data-action="open-channel-modal" ${state.busy ? 'disabled' : ''}>추가</button>
+      </div>
+      ${renderChannelList(state.data.channels, state.data.agents)}
+    </section>
+  `;
+}
+
+function renderAllView() {
+  return `
+    <section class="panel section-panel">
+      <div class="section-head">
+        <h2>관리</h2>
+      </div>
+      <div class="card-list">
+        <article
+          class="card card--clickable"
+          data-action="open-admin-password-modal"
+          data-clickable="true"
+          role="button"
+          tabindex="${state.busy ? '-1' : '0'}"
+          aria-disabled="${state.busy ? 'true' : 'false'}"
         >
-          ${escapeHtml(kind)}
-        </button>
-      `,
-    )
-    .join('');
-}
-
-function renderAgentEditorSummary(agent) {
-  return `
-    <aside class="editor-summary">
-      <h3>${escapeHtml(agent?.name || 'New agent')}</h3>
-      ${agent ? `<p class="list-meta">${escapeHtml(agent.agent)}${agent.model ? ` @ ${escapeHtml(agent.model)}` : ''}</p>` : ''}
-      <div class="summary-grid">
-        ${renderSummaryItem('Runtime', agent ? (agent.runtime.ready ? 'Ready' : 'Missing') : 'Pending')}
-        ${renderSummaryItem('Fallback', agent?.fallbackAgent || 'None')}
-        ${renderSummaryItem('Channels', String(agent?.mappedChannelNames?.length || 0))}
-        ${renderSummaryItem('Workdirs', String(agent?.workdirs?.length || 0))}
+          <div class="card-main">
+            <strong class="card-title">관리자 비밀번호</strong>
+            <span class="card-meta">${escapeHtml(state.auth.enabled ? '설정됨' : '미설정')}</span>
+          </div>
+        </article>
+        <article
+          class="card card--clickable card--danger"
+          ${state.auth.enabled ? 'data-action="logout" data-clickable="true"' : ''}
+          role="button"
+          tabindex="${state.busy || !state.auth.enabled ? '-1' : '0'}"
+          aria-disabled="${state.busy || !state.auth.enabled ? 'true' : 'false'}"
+        >
+          <div class="card-main">
+            <strong class="card-title">로그아웃</strong>
+            <span class="card-meta">${escapeHtml(state.auth.enabled ? '현재 세션 종료' : '비활성화됨')}</span>
+          </div>
+        </article>
       </div>
-      ${renderAgentAuthBox(agent)}
-    </aside>
+    </section>
   `;
 }
 
-function renderChannelEditorSummary(channel) {
-  const tribunalEnabled = Boolean(channel?.reviewer && channel?.arbiter);
+function renderAiView() {
   return `
-    <aside class="editor-summary">
-      <h3>${escapeHtml(channel?.name || 'New channel')}</h3>
-      ${channel ? `<p class="list-meta">discord ${escapeHtml(channel.discordChannelId)}</p>` : ''}
-      <div class="summary-grid">
-        ${renderSummaryItem('Owner', channel?.agent || 'Unset')}
-        ${renderSummaryItem('Mode', tribunalEnabled ? 'Tribunal' : 'Single')}
-        ${renderSummaryItem('Workdir', channel?.workdir || 'Unset')}
-        ${renderSummaryItem('Rounds', channel?.reviewRounds || 'Default')}
+    <section class="panel section-panel">
+      <div class="section-head">
+        <h2>AI 관리</h2>
       </div>
-    </aside>
-  `;
-}
-
-function renderDashboardEditorSummary(dashboard) {
-  return `
-    <aside class="editor-summary">
-      <h3>${escapeHtml(dashboard?.name || 'New dashboard')}</h3>
-      ${dashboard ? `<p class="list-meta">${escapeHtml(formatDashboardMonitorText(dashboard.monitors || []))}</p>` : ''}
-      <div class="summary-grid">
-        ${renderSummaryItem('Monitors', dashboard ? String(resolveMonitorCount(dashboard.monitors)) : '0')}
-        ${renderSummaryItem('Refresh', dashboard?.refreshMs ? `${dashboard.refreshMs} ms` : 'Default')}
-        ${renderSummaryItem('Details', dashboard?.showDetails ? 'Shown' : 'Hidden')}
-        ${renderSummaryItem('Scope', dashboard?.monitors?.includes('all') || dashboard?.monitors?.includes('*') ? 'All agents' : 'Selected')}
-      </div>
-    </aside>
-  `;
-}
-
-function renderSummaryItem(label, value) {
-  return `
-    <div class="summary-item">
-      <span class="summary-label">${escapeHtml(label)}</span>
-      <strong class="summary-value">${escapeHtml(String(value))}</strong>
-    </div>
-  `;
-}
-
-function renderAgentAuthBox(agent) {
-  if (!agent || !isAuthSupportedAgent(agent.agent)) {
-    return '';
-  }
-
-  const result =
-    state.agentAuth && state.agentAuth.agentName === agent.name ? state.agentAuth : null;
-
-  return `
-    <div class="auth-box">
-      <div class="line-row line-row--split">
-        <h4>Auth</h4>
-        <span class="pill">${escapeHtml(agent.agent)}</span>
-      </div>
-      <div class="toolbar" style="margin-top:12px">
-        <button class="btn-secondary" data-action="agent-auth-status" ${state.busy ? 'disabled' : ''}>Status</button>
-        <button class="btn-secondary" data-action="agent-auth-login" ${state.busy ? 'disabled' : ''}>Login</button>
-        <button class="btn-secondary" data-action="agent-auth-logout" ${state.busy ? 'disabled' : ''}>Logout</button>
-      </div>
-      ${renderAgentAuthResult(result)}
-    </div>
-  `;
-}
-
-function renderAgentAuthResult(result) {
-  if (!result) {
-    return '';
-  }
-
-  const details = result.details || {};
-  return `
-    <div class="auth-result">
-      <p class="mini-note">${escapeHtml(details.summary || result.output || 'Done')}</p>
-      ${
-        details.url
-          ? `<a class="auth-link mono" href="${escapeAttr(details.url)}" target="_blank" rel="noreferrer">${escapeHtml(details.url)}</a>`
-          : ''
-      }
-      ${
-        details.code
-          ? `<div class="auth-code">${escapeHtml(details.code)}</div>`
-          : ''
-      }
-      ${!details.url && !details.code ? `<pre class="watcher-log">${escapeHtml(result.output)}</pre>` : ''}
-    </div>
+      ${renderAiList()}
+    </section>
   `;
 }
 
 function renderAgentList(agents) {
-  if (agents.length === 0) {
-    return '<div class="empty-state">No agents.</div>';
+  if (!agents.length) {
+    return '<div class="empty-inline">에이전트가 없습니다.</div>';
   }
 
-  return agents
-    .map((agent) => {
-      const selected = agent.name === state.selectedAgent;
-      return `
-        <article class="list-item ${selected ? 'is-selected' : ''}">
-          <div class="section-title">
-            <div>
-              <h3>${escapeHtml(agent.name)}</h3>
-              <p class="list-meta">${escapeHtml(agent.agent)}${agent.model ? ` @ ${escapeHtml(agent.model)}` : ''}</p>
-            </div>
-            <div class="toolbar">
-              <button class="btn-secondary" data-action="select-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>Edit</button>
-              <button class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>Delete</button>
-            </div>
-          </div>
-          <p class="mini-note">
-            <span class="status-dot ${agent.runtime.ready ? 'is-ok' : ''}"></span>
-            ${escapeHtml(agent.runtime.ready ? 'ready' : 'missing')}
-          </p>
-        </article>
-      `;
-    })
-    .join('');
+  return `
+    <div class="card-list">
+      ${agents
+        .map(
+          (agent) => `
+            <article class="card">
+              <div class="card-main">
+                <strong class="card-title">${escapeHtml(agent.name)}</strong>
+                <span class="card-meta">${escapeHtml(localizeAgentTypeValue(agent.agent))}${agent.model ? ` · ${escapeHtml(agent.model)}` : ''}</span>
+              </div>
+              <button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>삭제</button>
+            </article>
+          `,
+        )
+        .join('')}
+    </div>
+  `;
 }
 
 function renderChannelList(channels, agents) {
-  if (channels.length === 0) {
-    return '<div class="empty-state">No channels.</div>';
+  if (!channels.length) {
+    return '<div class="empty-inline">채널이 없습니다.</div>';
   }
 
   const agentMap = new Map(agents.map((agent) => [agent.name, agent]));
-  return channels
-    .map((channel) => {
-      const selected = channel.name === state.selectedChannel;
-      const owner = agentMap.get(channel.agent);
-      return `
-        <article class="list-item ${selected ? 'is-selected' : ''}">
-          <div class="section-title">
-            <div>
-              <h3>${escapeHtml(channel.name)}</h3>
-              <p class="list-meta">discord ${escapeHtml(channel.discordChannelId)}</p>
-            </div>
-            <div class="toolbar">
-              <button class="btn-secondary" data-action="select-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>Edit</button>
-              <button class="btn-danger" data-action="delete-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>Delete</button>
-            </div>
-          </div>
-          <p class="mini-note">${escapeHtml(channel.agent)}${owner ? ` (${escapeHtml(owner.agent)})` : ''}</p>
-          <p class="mini-note">${escapeHtml(channel.workdir)}</p>
-        </article>
-      `;
-    })
-    .join('');
-}
-
-function renderDashboardList(dashboards) {
-  if (dashboards.length === 0) {
-    return '<div class="empty-state">No dashboards.</div>';
-  }
-
-  return dashboards
-    .map((dashboard) => {
-      const selected = dashboard.name === state.selectedDashboard;
-      return `
-        <article class="list-item ${selected ? 'is-selected' : ''}">
-          <div class="section-title">
-            <div>
-              <h3>${escapeHtml(dashboard.name)}</h3>
-              <p class="list-meta">${escapeHtml(formatDashboardMonitorText(dashboard.monitors || []))}</p>
-            </div>
-            <div class="toolbar">
-              <button class="btn-secondary" data-action="select-dashboard" data-name="${escapeAttr(dashboard.name)}" ${state.busy ? 'disabled' : ''}>Edit</button>
-              <button class="btn-danger" data-action="delete-dashboard" data-name="${escapeAttr(dashboard.name)}" ${state.busy ? 'disabled' : ''}>Delete</button>
-            </div>
-          </div>
-        </article>
-      `;
-    })
-    .join('');
-}
-
-function renderAgentForm(agent, data) {
-  const current = agent || createBlankAgent(data);
   return `
-    <form data-form="agent">
-      <input type="hidden" name="currentName" value="${escapeAttr(agent?.name || '')}" />
-      <div class="field-grid">
-        <div class="field">
-          <label for="agent-name">Name</label>
-          <input id="agent-name" name="name" value="${escapeAttr(current.name)}" />
-        </div>
-        <div class="field">
-          <label for="agent-type">Type</label>
-          <select id="agent-type" name="agent">${renderOptions(data.choices.agentTypes, current.agent)}</select>
-        </div>
-        <div class="field">
-          <label for="agent-model">Model</label>
-          <input id="agent-model" name="model" value="${escapeAttr(current.model)}" />
-        </div>
-        <div class="field">
-          <label for="agent-effort">Effort</label>
-          <input id="agent-effort" name="effort" value="${escapeAttr(current.effort)}" />
-        </div>
-        <div class="field">
-          <label for="agent-timeout">Timeout ms</label>
-          <input id="agent-timeout" name="timeoutMs" value="${escapeAttr(current.timeoutMs)}" />
-        </div>
-        <div class="field">
-          <label for="agent-fallback">Fallback agent</label>
-          <select id="agent-fallback" name="fallbackAgent">
-            ${renderNameOptions(data.agents.map((entry) => entry.name), current.fallbackAgent, true)}
-          </select>
-        </div>
-        <div class="field">
-          <label for="agent-sandbox">Codex sandbox</label>
-          <select id="agent-sandbox" name="sandbox">${renderOptions(data.choices.codexSandboxes, current.sandbox, true)}</select>
-        </div>
-        <div class="field">
-          <label for="agent-permission">Claude permission mode</label>
-          <select id="agent-permission" name="permissionMode">${renderOptions(data.choices.claudePermissionModes, current.permissionMode, true)}</select>
-        </div>
-        <div class="field">
-          <label for="agent-base-url">Local LLM base URL</label>
-          <input id="agent-base-url" name="baseUrl" value="${escapeAttr(current.baseUrl)}" />
-        </div>
-        <div class="field">
-          <label for="agent-command">Command</label>
-          <input id="agent-command" name="command" value="${escapeAttr(current.command)}" />
-        </div>
-        <div class="field is-full">
-          <label for="agent-system">System prompt</label>
-          <textarea id="agent-system" name="systemPrompt">${escapeHtml(current.systemPrompt)}</textarea>
-        </div>
-        <div class="field is-full">
-          <label for="agent-system-file">System prompt file</label>
-          <input id="agent-system-file" name="systemPromptFile" value="${escapeAttr(current.systemPromptFile)}" />
-        </div>
-        <div class="field is-full">
-          <label for="agent-skills">Skills</label>
-          <textarea id="agent-skills" name="skillsText">${escapeHtml(joinList(current.skills))}</textarea>
-        </div>
-        <div class="field is-full">
-          <label for="agent-context">Context files</label>
-          <textarea id="agent-context" name="contextFilesText">${escapeHtml(joinList(current.contextFiles))}</textarea>
-        </div>
-        <div class="field is-full">
-          <label for="agent-env">Env</label>
-          <textarea id="agent-env" name="envText">${escapeHtml(joinEnv(current.env))}</textarea>
-        </div>
-        <div class="field is-full">
-          <label>Dangerous</label>
-          <div class="checkbox-row">
-            <input id="agent-dangerous" type="checkbox" name="dangerous" ${current.dangerous ? 'checked' : ''} />
-            <label for="agent-dangerous" style="text-transform:none;letter-spacing:0;color:inherit;font-size:0.96rem">
-              Enabled
-            </label>
-          </div>
-        </div>
-      </div>
-      <div class="form-actions">
-        <button class="btn-primary" type="submit" ${state.busy ? 'disabled' : ''}>Save agent</button>
-      </div>
-    </form>
-  `;
-}
-
-function renderChannelForm(channel, data) {
-  const current = channel || createBlankChannel(data);
-  return `
-    <form data-form="channel">
-      <input type="hidden" name="currentName" value="${escapeAttr(channel?.name || '')}" />
-      <div class="field-grid">
-        <div class="field">
-          <label for="channel-name">Name</label>
-          <input id="channel-name" name="name" value="${escapeAttr(current.name)}" />
-        </div>
-        <div class="field">
-          <label for="channel-discord">Discord channel ID</label>
-          <input id="channel-discord" name="discordChannelId" value="${escapeAttr(current.discordChannelId)}" />
-        </div>
-        <div class="field">
-          <label for="channel-guild">Guild ID</label>
-          <input id="channel-guild" name="guildId" value="${escapeAttr(current.guildId)}" />
-        </div>
-        <div class="field">
-          <label for="channel-workdir">Workdir</label>
-          <input id="channel-workdir" name="workdir" value="${escapeAttr(current.workdir)}" />
-        </div>
-        <div class="field">
-          <label for="channel-agent">Owner agent</label>
-          <select id="channel-agent" name="agent">${renderNameOptions(data.agents.map((entry) => entry.name), current.agent)}</select>
-        </div>
-        <div class="field">
-          <label for="channel-reviewer">Reviewer</label>
-          <select id="channel-reviewer" name="reviewer">${renderNameOptions(data.agents.map((entry) => entry.name), current.reviewer, true)}</select>
-        </div>
-        <div class="field">
-          <label for="channel-arbiter">Arbiter</label>
-          <select id="channel-arbiter" name="arbiter">${renderNameOptions(data.agents.map((entry) => entry.name), current.arbiter, true)}</select>
-        </div>
-        <div class="field">
-          <label for="channel-rounds">Review rounds</label>
-          <input id="channel-rounds" name="reviewRounds" value="${escapeAttr(current.reviewRounds)}" />
-        </div>
-        <div class="field is-full">
-          <label for="channel-description">Description</label>
-          <textarea id="channel-description" name="description">${escapeHtml(current.description)}</textarea>
-        </div>
-      </div>
-      <div class="form-actions">
-        <button class="btn-primary" type="submit" ${state.busy ? 'disabled' : ''}>Save channel</button>
-      </div>
-    </form>
-  `;
-}
-
-function renderDashboardForm(dashboard, data) {
-  const current = dashboard || createBlankDashboard();
-  return `
-    <form data-form="dashboard">
-      <input type="hidden" name="currentName" value="${escapeAttr(dashboard?.name || '')}" />
-      <div class="field-grid">
-        <div class="field">
-          <label for="dashboard-name">Name</label>
-          <input id="dashboard-name" name="name" value="${escapeAttr(current.name)}" />
-        </div>
-        <div class="field">
-          <label for="dashboard-refresh">Refresh ms</label>
-          <input id="dashboard-refresh" name="refreshMs" value="${escapeAttr(current.refreshMs)}" />
-        </div>
-        <div class="field is-full">
-          <label for="dashboard-monitors">Monitors</label>
-          <textarea id="dashboard-monitors" name="monitorsText">${escapeHtml(joinList(current.monitors))}</textarea>
-        </div>
-        <div class="field is-full">
-          <label>Details</label>
-          <div class="checkbox-row">
-            <input id="dashboard-details" type="checkbox" name="showDetails" ${current.showDetails ? 'checked' : ''} />
-            <label for="dashboard-details" style="text-transform:none;letter-spacing:0;color:inherit;font-size:0.96rem">
-              Show
-            </label>
-          </div>
-        </div>
-      </div>
-      <div class="form-actions">
-        <button class="btn-primary" type="submit" ${state.busy ? 'disabled' : ''}>Save dashboard</button>
-      </div>
-    </form>
-  `;
-}
-
-function renderSharedEnvForm(sharedEnv) {
-  return `
-    <form data-form="shared-env">
-      <div class="field">
-        <label for="shared-env-text">Shared env</label>
-        <textarea id="shared-env-text" name="sharedEnvText">${escapeHtml(joinEnv(sharedEnv))}</textarea>
-      </div>
-      <div class="form-actions">
-        <button class="btn-primary" type="submit" ${state.busy ? 'disabled' : ''}>Save shared env</button>
-      </div>
-    </form>
-  `;
-}
-
-function renderAdminPasswordForm() {
-  return `
-    <form data-form="admin-password">
-      <div class="field-grid">
-        <div class="field">
-          <label for="admin-current-password">Current</label>
-          <input id="admin-current-password" name="currentPassword" type="password" autocomplete="current-password" />
-        </div>
-        <div class="field">
-          <label for="admin-new-password">New</label>
-          <input id="admin-new-password" name="newPassword" type="password" autocomplete="new-password" />
-        </div>
-        <div class="field is-full">
-          <label for="admin-confirm-password">Confirm</label>
-          <input id="admin-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" />
-        </div>
-      </div>
-      <div class="form-actions">
-        <button class="btn-primary" type="submit" ${state.busy ? 'disabled' : ''}>Change password</button>
-      </div>
-    </form>
-  `;
-}
-
-function renderRunForm(data) {
-  const defaultChannel = data.channels[0]?.name || '';
-  const defaultAgent = data.agents[0]?.name || '';
-  return `
-    <form data-form="run">
-      <div class="field-grid">
-        <div class="field">
-          <label for="run-mode">Mode</label>
-          <select id="run-mode" name="mode">
-            <option value="channel">Channel</option>
-            <option value="agent">Agent</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="run-channel">Channel</label>
-          <select id="run-channel" name="channelName">${renderNameOptions(data.channels.map((entry) => entry.name), defaultChannel, true)}</select>
-        </div>
-        <div class="field">
-          <label for="run-agent">Agent</label>
-          <select id="run-agent" name="agentName">${renderNameOptions(data.agents.map((entry) => entry.name), defaultAgent, true)}</select>
-        </div>
-        <div class="field">
-          <label for="run-workdir">Workdir</label>
-          <input id="run-workdir" name="workdir" placeholder="./workspace" />
-        </div>
-        <div class="field is-full">
-          <label for="run-prompt">Prompt</label>
-          <textarea id="run-prompt" name="prompt"></textarea>
-        </div>
-      </div>
-      <div class="form-actions">
-        <button class="btn-primary" type="submit" ${state.busy ? 'disabled' : ''}>Run now</button>
-      </div>
-    </form>
-  `;
-}
-
-function renderWatcherList(watchers) {
-  if (watchers.length === 0) {
-    return '<div class="empty-state">No watchers.</div>';
-  }
-
-  return `
-    <div class="watchers">
-      ${watchers
-        .map((watcher) => {
-          const log = state.watcherLogs[watcher.id];
+    <div class="card-list">
+      ${channels
+        .map((channel) => {
+          const owner = agentMap.get(channel.agent);
+          const mode = channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single');
+          const runtime = channel.runtime || {};
+          const lastRun = runtime.lastRun || null;
           return `
-            <article class="watcher-card">
-              <div class="watcher-head">
-                <h3>${escapeHtml(watcher.id)}</h3>
-                <span class="pill">${escapeHtml(watcher.provider)}</span>
-                <span class="pill">${escapeHtml(watcher.status)}</span>
+            <article class="card card--stack">
+              <div class="card-main">
+                <strong class="card-title">${escapeHtml(channel.name)}</strong>
+                <span class="card-meta">${escapeHtml(localizeChannelMode(mode))} · ${escapeHtml(channel.discordChannelId)} · ${escapeHtml(channel.workspace || DEFAULT_CHANNEL_WORKSPACE)}</span>
+                <div class="role-list">
+                  <span class="role-item"><strong>owner</strong><span>${escapeHtml(channel.agent)}</span></span>
+                  ${
+                    mode === 'tribunal' && channel.reviewer
+                      ? `<span class="role-item"><strong>reviewer</strong><span>${escapeHtml(channel.reviewer)}</span></span>`
+                      : ''
+                  }
+                  ${
+                    mode === 'tribunal' && channel.arbiter
+                      ? `<span class="role-item"><strong>arbiter</strong><span>${escapeHtml(channel.arbiter)}</span></span>`
+                      : ''
+                  }
+                  ${
+                    owner
+                      ? `<span class="mini-chip">${escapeHtml(localizeAgentTypeValue(owner.agent))}</span>`
+                      : ''
+                  }
+                </div>
+                ${
+                  lastRun || runtime.pendingOutboxCount
+                    ? `
+                      <div class="card-tags">
+                        ${
+                          lastRun
+                            ? `<span class="mini-chip ${escapeAttr(resolveRuntimeChipClass(lastRun.status))}">${escapeHtml(localizeRuntimeStatus(lastRun.status))}</span>`
+                            : ''
+                        }
+                        ${
+                          lastRun?.reviewerVerdict
+                            ? `<span class="mini-chip">${escapeHtml(localizeReviewerVerdict(lastRun.reviewerVerdict))}</span>`
+                            : ''
+                        }
+                        ${
+                          runtime.pendingOutboxCount
+                            ? `<span class="mini-chip">${escapeHtml(`발송 대기 ${runtime.pendingOutboxCount}`)}</span>`
+                            : ''
+                        }
+                      </div>
+                    `
+                    : ''
+                }
               </div>
-              <p class="watcher-meta">${escapeHtml(watcher.label || watcher.provider)}</p>
-              <p class="watcher-meta">updated: ${escapeHtml(watcher.updatedAt)}</p>
-              <p class="watcher-meta">result: ${escapeHtml(watcher.resultSummary || watcher.lastSummary || 'n/a')}</p>
-              ${
-                watcher.hasLog
-                  ? `<div class="form-actions" style="margin-top:12px">
-                      <button class="btn-secondary" data-action="load-watcher-log" data-id="${escapeAttr(watcher.id)}" ${state.busy ? 'disabled' : ''}>Load log</button>
-                    </div>`
-                  : ''
-              }
-              ${log !== undefined ? `<pre class="watcher-log">${escapeHtml(log || '(empty log)')}</pre>` : ''}
+              <button type="button" class="btn-danger" data-action="delete-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>삭제</button>
             </article>
           `;
         })
@@ -1286,68 +867,844 @@ function renderWatcherList(watchers) {
   `;
 }
 
-function createBlankAgent(data) {
+function renderAiList() {
+  const entries = (state.data.choices.agentTypes || []).filter((entry) => entry.value !== 'command');
+  if (!entries.length) {
+    return '<div class="empty-inline">AI가 없습니다.</div>';
+  }
+
+  return `
+    <div class="card-list">
+      ${entries
+        .map((entry) => {
+          const status = state.aiStatuses[entry.value] || {};
+          const ready = isAiReady(entry.value, status);
+          return `
+            <article
+              class="card card--clickable"
+              data-action="open-ai-modal"
+              data-agent-type="${escapeAttr(entry.value)}"
+              data-clickable="true"
+              role="button"
+              tabindex="${state.busy ? '-1' : '0'}"
+              aria-disabled="${state.busy ? 'true' : 'false'}"
+            >
+              <div class="card-main">
+                <strong class="card-title">${escapeHtml(localizeOptionLabel(entry))}</strong>
+                <span class="card-meta">${escapeHtml(localizeAiMeta(entry.value))}</span>
+                ${
+                  ready
+                    ? `<div class="card-tags"><span class="mini-chip mini-chip--ok">사용 가능</span></div>`
+                    : ''
+                }
+              </div>
+            </article>
+          `;
+        })
+        .join('')}
+    </div>
+  `;
+}
+
+function renderAgentModal() {
+  const steps = getAgentWizardSteps(state.agentWizard?.draft || createBlankAgent());
+  const currentStep = state.agentWizard?.step || 0;
+  const step = steps[currentStep];
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="에이전트 추가">
+      <div class="modal-backdrop" data-action="close-agent-modal"></div>
+      <div class="panel modal-card">
+        <div class="section-head">
+          <h2>에이전트 추가</h2>
+          <button type="button" class="btn-secondary" data-action="close-agent-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
+        </div>
+        <form data-form="agent-wizard" class="form wizard-form">
+          <div class="wizard-head">
+            <span class="wizard-count">${escapeHtml(`${currentStep + 1}/${steps.length}`)}</span>
+            <h3 class="wizard-question">${escapeHtml(step.question)}</h3>
+          </div>
+          <div class="wizard-body">
+            ${step.body}
+          </div>
+          <div class="actions wizard-actions">
+            ${
+              currentStep > 0
+                ? `<button type="button" class="btn-secondary" data-action="prev-agent-step" ${state.busy ? 'disabled' : ''}>이전</button>`
+                : ''
+            }
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>
+              ${currentStep === steps.length - 1 ? '추가' : '다음'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderAiModal() {
+  const entry = getAgentTypeChoice(state.aiManager?.type);
+  if (!entry) {
+    return '';
+  }
+
+  const authSupported = isAiAuthSupported(entry.value);
+  const testSupported = isAiTestSupported(entry.value);
+  const authResult = state.aiManager?.authResult;
+  const testResult = state.aiManager?.testResult;
+  const loggedIn = Boolean(authResult?.details?.loggedIn);
+  const testOk = Boolean(testResult?.details?.success);
+  const ready = isAiReady(entry.value, {
+    authResult,
+    testResult,
+  });
+
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="AI 관리">
+      <div class="modal-backdrop" data-action="close-ai-modal"></div>
+      <div class="panel modal-card modal-card--small">
+        <div class="section-head">
+          <h2>${escapeHtml(localizeOptionLabel(entry))} 관리</h2>
+          <button type="button" class="btn-secondary" data-action="close-ai-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
+        </div>
+        <form data-form="ai-manager" class="form">
+          <div class="ai-modal-body">
+            <div class="auth-chip ${authSupported && loggedIn ? 'is-ok' : ''}">
+              ${escapeHtml(authSupported ? `인증 ${loggedIn ? '완료' : '미완료'}` : '인증 없음')}
+            </div>
+            <div class="auth-chip ${testOk ? 'is-ok' : ''}">
+              ${escapeHtml(`테스트 ${testOk ? '완료' : '미완료'}`)}
+            </div>
+            ${ready ? '<div class="auth-chip is-ok">사용 가능</div>' : ''}
+          </div>
+          ${
+            authSupported
+              ? `<div class="wizard-auth-action-stack">
+                  <div class="wizard-auth-actions">
+                    <button type="button" class="btn-secondary" data-action="ai-auth-login" ${state.busy ? 'disabled' : ''}>로그인</button>
+                    <button type="button" class="btn-secondary" data-action="ai-auth-logout" ${state.busy ? 'disabled' : ''}>로그아웃</button>
+                  </div>
+                  <div class="wizard-auth-actions">
+                    <button type="button" class="btn-secondary" data-action="ai-auth-status" ${state.busy ? 'disabled' : ''}>상태 확인</button>
+                    <button type="button" class="btn-primary" data-action="ai-auth-test" ${state.busy || !testSupported ? 'disabled' : ''}>테스트 호출</button>
+                  </div>
+                </div>`
+              : ''
+          }
+          ${renderAiTestFields(entry.value)}
+          ${
+            !authSupported
+              ? `<div class="wizard-auth-actions">
+                  <button
+                    type="button"
+                    class="btn-primary"
+                    data-action="ai-auth-test"
+                    ${state.busy || !testSupported ? 'disabled' : ''}
+                  >
+                    테스트 호출
+                  </button>
+                </div>`
+              : ''
+          }
+          ${renderAgentWizardResult(authResult)}
+          ${renderAgentWizardResult(testResult)}
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminPasswordModal() {
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="관리자 비밀번호 설정">
+      <div class="modal-backdrop" data-action="close-admin-password-modal"></div>
+      <div class="panel modal-card modal-card--small">
+        <div class="section-head">
+          <h2>관리자 비밀번호 설정</h2>
+          <button type="button" class="btn-secondary" data-action="close-admin-password-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
+        </div>
+        <form data-form="admin-password" class="form">
+          <div class="form-grid">
+            ${
+              state.auth.enabled
+                ? `
+                    <div class="field field-full">
+                      <label for="admin-current-password">현재 비밀번호</label>
+                      <input id="admin-current-password" type="password" name="currentPassword" />
+                    </div>
+                  `
+                : ''
+            }
+            <div class="field field-full">
+              <label for="admin-new-password">새 비밀번호</label>
+              <input id="admin-new-password" type="password" name="newPassword" />
+            </div>
+            <div class="field field-full">
+              <label for="admin-confirm-password">새 비밀번호 확인</label>
+              <input id="admin-confirm-password" type="password" name="confirmPassword" />
+            </div>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>저장</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderChannelModal() {
+  const current = state.channelDraft || createBlankChannel();
+  const isTribunal = current.mode === 'tribunal';
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="채널 추가">
+      <div class="modal-backdrop" data-action="close-channel-modal"></div>
+      <div class="panel modal-card">
+        <div class="section-head">
+          <h2>채널 추가</h2>
+          <button type="button" class="btn-secondary" data-action="close-channel-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
+        </div>
+        <form data-form="channel" class="form">
+          <div class="form-grid">
+            <div class="field">
+              <label for="channel-name">이름</label>
+              <input id="channel-name" name="name" value="${escapeAttr(current.name)}" />
+            </div>
+            <div class="field">
+              <label for="channel-discord">디스코드 채널 ID</label>
+              <input id="channel-discord" name="discordChannelId" value="${escapeAttr(current.discordChannelId)}" />
+            </div>
+            <div class="field">
+              <label for="channel-guild">길드 ID</label>
+              <input id="channel-guild" name="guildId" value="${escapeAttr(current.guildId)}" />
+            </div>
+            <div class="field">
+              <label for="channel-workspace">워크스페이스</label>
+              <input id="channel-workspace" name="workspace" value="${escapeAttr(current.workspace)}" />
+            </div>
+            <div class="field">
+              <label for="channel-mode">채널 모드</label>
+              <select id="channel-mode" name="mode">${renderOptions(state.data.choices.channelModes, current.mode)}</select>
+            </div>
+            <div class="field">
+              <label for="channel-agent">owner 에이전트</label>
+              <select id="channel-agent" name="agent">${renderNameOptions(state.data.agents.map((entry) => entry.name), current.agent)}</select>
+            </div>
+            ${
+              isTribunal
+                ? `
+                    <div class="field field-full field-roles">
+                      <label>역할 배치</label>
+                      <div class="role-preview">
+                        <span class="mini-chip">owner ${escapeHtml(current.agent || '선택')}</span>
+                        <span class="mini-chip">reviewer ${escapeHtml(current.reviewer || '선택')}</span>
+                        <span class="mini-chip">arbiter ${escapeHtml(current.arbiter || '선택')}</span>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label for="channel-reviewer">reviewer 에이전트</label>
+                      <select id="channel-reviewer" name="reviewer">${renderNameOptions(state.data.agents.map((entry) => entry.name), current.reviewer, true)}</select>
+                    </div>
+                    <div class="field">
+                      <label for="channel-arbiter">arbiter 에이전트</label>
+                      <select id="channel-arbiter" name="arbiter">${renderNameOptions(state.data.agents.map((entry) => entry.name), current.arbiter, true)}</select>
+                    </div>
+                    <div class="field">
+                      <label for="channel-rounds">검토 회차</label>
+                      <input id="channel-rounds" name="reviewRounds" value="${escapeAttr(current.reviewRounds)}" />
+                    </div>
+                  `
+                : ''
+            }
+            <div class="field field-full">
+              <label for="channel-description">설명</label>
+              <textarea id="channel-description" name="description">${escapeHtml(current.description)}</textarea>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>추가</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderLoginScreen() {
+  return `
+    <section class="login-shell">
+      <section class="panel login-panel">
+        <h1>관리 화면</h1>
+        <form data-form="login" class="form">
+          <div class="field">
+            <label for="login-password">비밀번호</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" />
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>로그인</button>
+          </div>
+        </form>
+      </section>
+    </section>
+  `;
+}
+
+function renderEmptyState(title, loading = false) {
+  return `
+    <section class="empty-state ${loading ? 'is-loading' : ''}">
+      <h1>${escapeHtml(title)}</h1>
+    </section>
+  `;
+}
+
+function renderNotice() {
+  if (!state.notice) {
+    return '';
+  }
+  return `
+    <div class="notice ${state.notice.type === 'error' ? 'is-error' : 'is-info'}">
+      ${escapeHtml(state.notice.text)}
+    </div>
+  `;
+}
+
+function getAgentWizardSteps(draft) {
+  const selectableAgentTypes = getSelectableAgentTypes();
+  const steps = [
+    {
+      id: 'name',
+      question: '이름은 뭘로 할까요?',
+      body: `
+        <div class="field">
+          <label for="wizard-agent-name">이름</label>
+          <input id="wizard-agent-name" name="name" value="${escapeAttr(draft.name)}" autofocus />
+        </div>
+      `,
+    },
+    {
+      id: 'agent',
+      question: 'AI 유형은 어떤 걸로 할까요?',
+      body: `
+        <div class="field">
+          <label for="wizard-agent-type">AI 유형</label>
+          <select id="wizard-agent-type" name="agent">${renderOptions(selectableAgentTypes, draft.agent)}</select>
+        </div>
+      `,
+    },
+  ];
+
+  if (isAuthRequiredAgent(draft.agent)) {
+    steps.push({
+      id: 'auth',
+      question: '인증과 테스트 호출을 먼저 진행할까요?',
+      body: renderAgentWizardAuthStep(),
+    });
+  }
+
+  steps.push(
+    {
+      id: 'model',
+      question: '모델은 뭘로 할까요?',
+      body: renderModelField({
+        inputId: 'wizard-agent-model',
+        inputName: 'model',
+        agentType: draft.agent,
+        value: draft.model,
+        modelMode: draft.modelMode,
+        modelModeInputName: 'modelMode',
+      }),
+    },
+    {
+      id: 'fallback',
+      question: '폴백 에이전트를 둘까요?',
+      body: `
+        <div class="field">
+          <label for="wizard-agent-fallback">폴백 에이전트</label>
+          <select id="wizard-agent-fallback" name="fallbackAgent">${renderNameOptions(state.data.agents.map((entry) => entry.name), draft.fallbackAgent, true)}</select>
+        </div>
+      `,
+    },
+    {
+      id: 'execution',
+      question: '실행 옵션을 정할까요?',
+      body: `
+        <div class="form-grid">
+          ${renderEffortField(draft)}
+          <div class="field">
+            <label for="wizard-agent-timeout">제한 시간(ms)</label>
+            <input id="wizard-agent-timeout" name="timeoutMs" value="${escapeAttr(draft.timeoutMs)}" />
+          </div>
+        </div>
+      `,
+    },
+    {
+      id: 'runtime',
+      question: '연결 옵션을 정할까요?',
+      body: renderAgentWizardRuntimeStep(draft),
+    },
+    {
+      id: 'context',
+      question: '프롬프트와 파일, 환경 변수를 넣을까요?',
+      body: `
+        <div class="form-grid">
+          <div class="field field-full">
+            <label for="wizard-agent-system">시스템 프롬프트</label>
+            <textarea id="wizard-agent-system" name="systemPrompt">${escapeHtml(draft.systemPrompt)}</textarea>
+          </div>
+          <div class="field field-full">
+            <label for="wizard-agent-system-file">시스템 프롬프트 파일</label>
+            <input id="wizard-agent-system-file" name="systemPromptFile" value="${escapeAttr(draft.systemPromptFile)}" />
+          </div>
+          <div class="field field-full">
+            <label for="wizard-agent-skills">스킬</label>
+            <textarea id="wizard-agent-skills" name="skillsText">${escapeHtml(draft.skillsText)}</textarea>
+          </div>
+          <div class="field field-full">
+            <label for="wizard-agent-context">컨텍스트 파일</label>
+            <textarea id="wizard-agent-context" name="contextFilesText">${escapeHtml(draft.contextFilesText)}</textarea>
+          </div>
+          <div class="field field-full">
+            <label for="wizard-agent-env">환경 변수</label>
+            <textarea id="wizard-agent-env" name="envText">${escapeHtml(draft.envText)}</textarea>
+          </div>
+        </div>
+      `,
+    },
+  );
+
+  return steps;
+}
+
+function renderAgentWizardRuntimeStep(draft) {
+  const blocks = [];
+
+  if (draft.agent === 'codex') {
+    blocks.push(`
+      <div class="field">
+        <label for="wizard-agent-sandbox">Codex 샌드박스</label>
+        <select id="wizard-agent-sandbox" name="sandbox">${renderOptions(state.data.choices.codexSandboxes, draft.sandbox, true)}</select>
+      </div>
+    `);
+  }
+
+  if (draft.agent === 'claude-code') {
+    blocks.push(`
+      <div class="field">
+        <label for="wizard-agent-permission">Claude 권한 모드</label>
+        <select id="wizard-agent-permission" name="permissionMode">${renderOptions(state.data.choices.claudePermissionModes, draft.permissionMode, true)}</select>
+      </div>
+    `);
+  }
+
+  if (draft.agent === 'local-llm') {
+    blocks.push(`
+      <div class="field">
+        <label for="wizard-agent-base-url">로컬 LLM 주소</label>
+        <input id="wizard-agent-base-url" name="baseUrl" value="${escapeAttr(draft.baseUrl)}" />
+      </div>
+    `);
+  }
+
+  if (draft.agent === 'command') {
+    blocks.push(`
+      <div class="field">
+        <label for="wizard-agent-command">명령어</label>
+        <input id="wizard-agent-command" name="command" value="${escapeAttr(draft.command)}" />
+      </div>
+    `);
+  }
+
+  blocks.push(`
+    <label class="checkbox" for="wizard-agent-dangerous">
+      <input id="wizard-agent-dangerous" type="checkbox" name="dangerous" ${draft.dangerous ? 'checked' : ''} />
+      <span>제한 해제</span>
+    </label>
+  `);
+
+  return `<div class="form-grid">${blocks.join('')}</div>`;
+}
+
+function renderAgentWizardAuthStep() {
+  const authResult = state.agentWizard?.authResult;
+  const testResult = state.agentWizard?.testResult;
+  const loggedIn = Boolean(authResult?.details?.loggedIn);
+  const testOk = Boolean(testResult?.details?.success);
+
+  return `
+    <div class="wizard-auth">
+      <div class="wizard-auth-action-stack">
+        <div class="wizard-auth-actions">
+          <button type="button" class="btn-secondary" data-action="agent-auth-login" ${state.busy ? 'disabled' : ''}>로그인</button>
+          <button type="button" class="btn-secondary" data-action="agent-auth-logout" ${state.busy ? 'disabled' : ''}>로그아웃</button>
+        </div>
+        <div class="wizard-auth-actions">
+          <button type="button" class="btn-secondary" data-action="agent-auth-status" ${state.busy ? 'disabled' : ''}>상태 확인</button>
+          <button type="button" class="btn-primary" data-action="agent-auth-test" ${state.busy ? 'disabled' : ''}>테스트 호출</button>
+        </div>
+      </div>
+      <div class="wizard-auth-state">
+        <div class="auth-chip ${loggedIn ? 'is-ok' : ''}">인증 ${loggedIn ? '완료' : '미완료'}</div>
+        <div class="auth-chip ${testOk ? 'is-ok' : ''}">테스트 ${testOk ? '완료' : '미완료'}</div>
+      </div>
+      ${renderAgentWizardResult(authResult)}
+      ${renderAgentWizardResult(testResult)}
+    </div>
+  `;
+}
+
+function renderAgentWizardResult(result) {
+  if (!result) {
+    return '';
+  }
+
+  const details = result.details || {};
+  return `
+    <div class="wizard-result">
+      <strong>${escapeHtml(details.summary || result.output || '완료')}</strong>
+      ${details.url ? `<a class="result-link" href="${escapeAttr(details.url)}" target="_blank" rel="noreferrer">${escapeHtml(details.url)}</a>` : ''}
+      ${details.code ? `<div class="result-code">${escapeHtml(details.code)}</div>` : ''}
+      ${
+        !details.url && !details.code && result.output
+          ? `<pre class="result-output">${escapeHtml(result.output)}</pre>`
+          : ''
+      }
+    </div>
+  `;
+}
+
+function validateAgentWizardStep() {
+  if (!state.agentWizard) {
+    return true;
+  }
+
+  const { draft, step } = state.agentWizard;
+  const currentStep = getAgentWizardSteps(draft)[step];
+  if (!currentStep) {
+    return true;
+  }
+
+  if (currentStep.id === 'name') {
+    requiredDraftText(draft.name, 'name');
+  }
+
+  if (currentStep.id === 'agent') {
+    requiredDraftText(draft.agent, 'agent');
+    assertSelectableAgentType(draft.agent);
+  }
+
+  if (currentStep.id === 'auth' && isAuthRequiredAgent(draft.agent)) {
+    if (!state.agentWizard.authResult?.details?.loggedIn) {
+      throw new Error('인증을 먼저 완료하세요.');
+    }
+    if (!state.agentWizard.testResult?.details?.success) {
+      throw new Error('테스트 호출을 먼저 완료하세요.');
+    }
+  }
+
+  if (currentStep.id === 'model' && draft.agent === 'local-llm') {
+    requiredDraftText(draft.model, 'model');
+  }
+
+  if (
+    currentStep.id === 'model' &&
+    supportsDefaultModelMode(draft.agent) &&
+    draft.modelMode === 'custom'
+  ) {
+    requiredDraftText(draft.model, 'model');
+  }
+
+  if (
+    currentStep.id === 'fallback' &&
+    optionalDraftText(draft.fallbackAgent) &&
+    optionalDraftText(draft.fallbackAgent) === optionalDraftText(draft.name)
+  ) {
+    throw new Error('폴백 에이전트는 자기 자신과 같을 수 없습니다.');
+  }
+
+  if (currentStep.id === 'execution' && optionalDraftText(draft.timeoutMs)) {
+    const timeout = Number(optionalDraftText(draft.timeoutMs));
+    if (!Number.isInteger(timeout) || timeout <= 0) {
+      throw new Error('제한 시간은 1 이상의 정수여야 합니다.');
+    }
+  }
+
+  if (currentStep.id === 'execution' && optionalDraftText(draft.effort)) {
+    const efforts = getEffortChoices(draft.agent, draft.model);
+    if (efforts.length > 0 && !efforts.includes(optionalDraftText(draft.effort))) {
+      throw new Error('선택한 모델에서 지원하지 않는 추론 강도입니다.');
+    }
+  }
+
+  if (currentStep.id === 'runtime') {
+    if (draft.agent === 'command') {
+      requiredDraftText(draft.command, 'command');
+    }
+    if (draft.agent === 'local-llm' && !optionalDraftText(draft.baseUrl)) {
+      throw new Error('로컬 LLM 주소를 입력하세요.');
+    }
+  }
+
+  if (currentStep.id === 'context') {
+    parseEnvText(draft.envText);
+  }
+
+  return true;
+}
+
+function createBlankAgent(agentType = null) {
+  const selectableAgentTypes = getSelectableAgentTypes();
+  const resolvedAgentType = agentType || selectableAgentTypes[0]?.value || '';
   return {
     name: '',
-    agent: data.choices.agentTypes[0]?.value || 'codex',
+    agent: resolvedAgentType,
     fallbackAgent: '',
+    modelMode: defaultModelModeForAgent(resolvedAgentType),
     model: '',
     effort: '',
     timeoutMs: '',
     systemPrompt: '',
     systemPromptFile: '',
-    skills: [],
-    contextFiles: [],
-    env: {},
-    sandbox: data.choices.codexSandboxes[0]?.value || '',
-    permissionMode: data.choices.claudePermissionModes[0]?.value || '',
+    skillsText: '',
+    contextFilesText: '',
+    envText: '',
+    sandbox: state.data.choices.codexSandboxes[0]?.value || '',
+    permissionMode: state.data.choices.claudePermissionModes[0]?.value || '',
     dangerous: false,
     baseUrl: 'http://127.0.0.1:11434/v1',
     command: '',
   };
 }
 
-function createBlankChannel(data) {
+function getAgentTypeChoice(agentType) {
+  return (state.data?.choices?.agentTypes || []).find((entry) => entry.value === agentType) || null;
+}
+
+function getSelectableAgentTypes() {
+  return (state.data?.choices?.agentTypes || []).filter((entry) => {
+    if (entry.value === 'command') {
+      return false;
+    }
+    if (!isAiAuthSupported(entry.value)) {
+      return true;
+    }
+    return isAiReady(entry.value, state.aiStatuses[entry.value] || {});
+  });
+}
+
+function assertSelectableAgentType(agentType) {
+  const exists = getSelectableAgentTypes().some((entry) => entry.value === agentType);
+  if (!exists) {
+    throw new Error('사용 가능한 AI만 선택할 수 있습니다.');
+  }
+}
+
+function createAiManager(agentType) {
+  const cached = state.aiStatuses[agentType] || {};
+  return {
+    type: agentType,
+    authResult: cached.authResult || null,
+    testResult: cached.testResult || null,
+    testConfig: {
+      modelMode: defaultModelModeForAgent(agentType),
+      model: '',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+    },
+  };
+}
+
+async function runAiManagerAction(action) {
+  if (!state.aiManager) {
+    return;
+  }
+
+  const agentType = optionalDraftText(state.aiManager.type);
+  if (!agentType) {
+    return;
+  }
+
+  if (action === 'test' && !isAiTestSupported(agentType)) {
+    throw new Error('이 AI 유형은 테스트 호출을 지원하지 않습니다.');
+  }
+
+  if (action !== 'test' && !isAiAuthSupported(agentType)) {
+    throw new Error('이 AI 유형은 인증 관리를 지원하지 않습니다.');
+  }
+
+  const body = {
+    agentType,
+    action,
+  };
+
+  if (action === 'test') {
+    body.definition = buildAiManagerTestDefinition(agentType);
+    body.workdir = '.';
+  }
+
+  try {
+    const response = await mutateJson('/api/agent-auth', {
+      method: 'POST',
+      body,
+    });
+
+    if (!state.aiManager || state.aiManager.type !== agentType) {
+      return;
+    }
+
+    if (action === 'test') {
+      state.aiManager.testResult = response.result;
+    } else {
+      state.aiManager.authResult = response.result;
+      if (action === 'logout' || (action === 'status' && !response.result?.details?.loggedIn)) {
+        state.aiManager.testResult = null;
+      }
+    }
+    syncAiStatus(agentType, state.aiManager);
+
+    state.notice = null;
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+function buildAiManagerTestDefinition(agentType) {
+  const config = state.aiManager?.testConfig || {};
+  const definition = {
+    name: 'ai-manager-test',
+    agent: agentType,
+    model: resolveConfiguredModel(agentType, config),
+  };
+
+  if (agentType === 'codex') {
+    definition.sandbox = state.data?.choices?.codexSandboxes?.[0]?.value || 'read-only';
+  }
+
+  if (agentType === 'claude-code') {
+    definition.permissionMode = state.data?.choices?.claudePermissionModes?.[0]?.value || '';
+  }
+
+  if (agentType === 'local-llm') {
+    definition.baseUrl = optionalDraftText(config.baseUrl) || 'http://127.0.0.1:11434/v1';
+  }
+
+  return definition;
+}
+
+function renderAiTestFields(agentType) {
+  if (!isAiTestSupported(agentType)) {
+    return '';
+  }
+
+  const config = state.aiManager?.testConfig || {};
+  const fields = [];
+
+  if (['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType)) {
+    fields.push(
+      renderModelField({
+        inputId: 'ai-manager-model',
+        inputName: 'model',
+        agentType,
+        value: config.model || '',
+        modelMode: config.modelMode,
+        modelModeInputName: 'modelMode',
+      }),
+    );
+  }
+
+  if (agentType === 'local-llm') {
+    fields.push(`
+      <div class="field field-full">
+        <label for="ai-manager-base-url">주소</label>
+        <input id="ai-manager-base-url" name="baseUrl" value="${escapeAttr(config.baseUrl || 'http://127.0.0.1:11434/v1')}" />
+      </div>
+    `);
+  }
+
+  return `<div class="form-grid">${fields.join('')}</div>`;
+}
+
+function renderModelField({
+  inputId,
+  inputName,
+  agentType,
+  value,
+  modelMode = defaultModelModeForAgent(agentType),
+  modelModeInputName = 'modelMode',
+}) {
+  const examples = getModelExamples(agentType);
+  const placeholder = examples[0] || '';
+  const canUseDefault = supportsDefaultModelMode(agentType);
+  return `
+    <div class="field field-full">
+      <label for="${escapeAttr(inputId)}">모델</label>
+      ${
+        canUseDefault
+          ? `
+              <select name="${escapeAttr(modelModeInputName)}">
+                <option value="default" ${modelMode !== 'custom' ? 'selected' : ''}>default</option>
+                <option value="custom" ${modelMode === 'custom' ? 'selected' : ''}>custom</option>
+              </select>
+            `
+          : ''
+      }
+      ${
+        !canUseDefault || modelMode === 'custom'
+          ? `
+              <input
+                id="${escapeAttr(inputId)}"
+                name="${escapeAttr(inputName)}"
+                value="${escapeAttr(value || '')}"
+                placeholder="${escapeAttr(placeholder)}"
+              />
+            `
+          : ''
+      }
+      ${
+        canUseDefault && modelMode !== 'custom'
+          ? '<div class="field-hint">기본 모델 사용</div>'
+          : ''
+      }
+      ${examples.length ? `<div class="field-hint">예: ${escapeHtml(examples.join(', '))}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderEffortField(draft) {
+  const efforts = getEffortChoices(draft.agent, draft.model);
+  if (!efforts.length) {
+    return '';
+  }
+
+  return `
+    <div class="field">
+      <label for="wizard-agent-effort">추론 강도</label>
+      <select id="wizard-agent-effort" name="effort">
+        <option value="">기본값</option>
+        ${efforts
+          .map(
+            (value) =>
+              `<option value="${escapeAttr(value)}" ${value === draft.effort ? 'selected' : ''}>${escapeHtml(localizeEffortLabel(value))}</option>`,
+          )
+          .join('')}
+      </select>
+    </div>
+  `;
+}
+
+function createBlankChannel() {
   return {
     name: '',
+    mode: 'single',
     discordChannelId: '',
     guildId: '',
-    workdir: '.',
-    agent: data.agents[0]?.name || '',
+    workspace: DEFAULT_CHANNEL_WORKSPACE,
+    agent: state.data.agents[0]?.name || '',
     reviewer: '',
     arbiter: '',
     reviewRounds: '',
     description: '',
   };
-}
-
-function createBlankDashboard() {
-  return {
-    name: '',
-    monitors: ['all'],
-    refreshMs: '5000',
-    showDetails: true,
-  };
-}
-
-function isAuthSupportedAgent(agentType) {
-  return ['codex', 'claude-code'].includes(agentType);
-}
-
-function formatDashboardMonitorText(monitors) {
-  const items = Array.isArray(monitors) ? monitors : [];
-  if (items.length === 0 || items.includes('*') || items.includes('all')) {
-    return 'all agents';
-  }
-  return items.join(', ');
-}
-
-function resolveMonitorCount(monitors) {
-  const items = Array.isArray(monitors) ? monitors : [];
-  if (items.length === 0 || items.includes('*') || items.includes('all')) {
-    return 'all';
-  }
-  return items.length;
 }
 
 function parseListText(rawValue) {
@@ -1368,7 +1725,7 @@ function parseEnvText(rawValue) {
   for (const entry of entries) {
     const separatorIndex = entry.indexOf('=');
     if (separatorIndex <= 0) {
-      throw new Error(`Env entries must use KEY=VALUE format: "${entry}"`);
+      throw new Error(`환경 변수는 KEY=VALUE 형식이어야 합니다: "${entry}"`);
     }
     const key = entry.slice(0, separatorIndex).trim();
     const value = entry.slice(separatorIndex + 1);
@@ -1391,9 +1748,24 @@ function joinEnv(env) {
 function requiredText(formData, key) {
   const value = optionalText(formData, key);
   if (!value) {
-    throw new Error(`${key} is required.`);
+    throw new Error(`${localizeFieldName(key)} 항목은 필수입니다.`);
   }
   return value;
+}
+
+function requiredDraftText(value, key) {
+  const normalized = optionalDraftText(value);
+  if (!normalized) {
+    throw new Error(`${localizeFieldName(key)} 항목은 필수입니다.`);
+  }
+  return normalized;
+}
+
+function optionalDraftText(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value).trim();
 }
 
 function optionalText(formData, key) {
@@ -1407,13 +1779,11 @@ function optionalText(formData, key) {
 function renderOptions(options, selectedValue, allowEmpty = false) {
   const entries = [];
   if (allowEmpty) {
-    entries.push('<option value=""></option>');
+    entries.push('<option value="">선택 안 함</option>');
   }
   for (const option of options || []) {
     entries.push(
-      `<option value="${escapeAttr(option.value)}" ${
-        option.value === selectedValue ? 'selected' : ''
-      }>${escapeHtml(option.label)}</option>`,
+      `<option value="${escapeAttr(option.value)}" ${option.value === selectedValue ? 'selected' : ''}>${escapeHtml(localizeOptionLabel(option))}</option>`,
     );
   }
   return entries.join('');
@@ -1422,7 +1792,7 @@ function renderOptions(options, selectedValue, allowEmpty = false) {
 function renderNameOptions(names, selectedValue, allowEmpty = false) {
   const entries = [];
   if (allowEmpty) {
-    entries.push('<option value=""></option>');
+    entries.push('<option value="">선택 안 함</option>');
   }
   for (const name of names) {
     entries.push(
@@ -1431,6 +1801,433 @@ function renderNameOptions(names, selectedValue, allowEmpty = false) {
   }
   return entries.join('');
 }
+
+function localizeKind(kind) {
+  if (kind === 'agent') {
+    return '에이전트';
+  }
+  if (kind === 'channel') {
+    return '채널';
+  }
+  if (kind === 'dashboard') {
+    return '대시보드';
+  }
+  return kind;
+}
+
+function localizeChannelMode(value) {
+  if (value === 'tribunal') {
+    return 'Tribunal';
+  }
+  if (value === 'single') {
+    return '단일';
+  }
+  return value || '';
+}
+
+function localizeRuntimeStatus(value) {
+  if (value === 'completed') {
+    return '최근 완료';
+  }
+  if (value === 'failed') {
+    return '실패';
+  }
+  if (value === 'owner_running') {
+    return 'owner 실행 중';
+  }
+  if (value === 'reviewer_running') {
+    return 'reviewer 실행 중';
+  }
+  if (value === 'arbiter_running') {
+    return 'arbiter 실행 중';
+  }
+  if (value === 'awaiting_revision') {
+    return '수정 대기';
+  }
+  if (value === 'queued') {
+    return '대기';
+  }
+  return value || '';
+}
+
+function localizeReviewerVerdict(value) {
+  if (value === 'approved') {
+    return '승인';
+  }
+  if (value === 'blocked') {
+    return '수정 필요';
+  }
+  if (value === 'invalid') {
+    return '판정 오류';
+  }
+  return value || '';
+}
+
+function resolveRuntimeChipClass(status) {
+  if (status === 'completed') {
+    return 'mini-chip--ok';
+  }
+  if (status === 'failed') {
+    return 'mini-chip--danger';
+  }
+  return '';
+}
+
+function localizeAgentTypeValue(value) {
+  const labels = {
+    codex: 'Codex',
+    'claude-code': 'Claude Code',
+    'gemini-cli': 'Gemini CLI',
+    'local-llm': '로컬 LLM',
+    command: '사용자 명령어',
+  };
+  return labels[value] || value || '';
+}
+
+function localizeEffortLabel(value) {
+  const labels = {
+    none: 'none',
+    minimal: 'minimal',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: 'xhigh',
+    max: 'max',
+  };
+  return labels[value] || value || '';
+}
+
+function localizeAiMeta(value) {
+  const labels = {
+    codex: '로컬 인증 · 테스트',
+    'claude-code': '로컬 인증 · 테스트',
+    'gemini-cli': '테스트',
+    'local-llm': '연결 테스트',
+    command: '명령 테스트',
+  };
+  return labels[value] || '';
+}
+
+function isAuthRequiredAgent(agentType) {
+  return ['codex', 'claude-code'].includes(agentType);
+}
+
+function isAiAuthSupported(agentType) {
+  return ['codex', 'claude-code'].includes(agentType);
+}
+
+function isAiTestSupported(agentType) {
+  return ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
+}
+
+function defaultModelModeForAgent(agentType) {
+  return supportsDefaultModelMode(agentType) ? 'default' : 'custom';
+}
+
+function supportsDefaultModelMode(agentType) {
+  return ['codex', 'claude-code', 'gemini-cli'].includes(agentType);
+}
+
+function resolveConfiguredModel(agentType, config) {
+  if (agentType === 'local-llm') {
+    return requiredDraftText(config?.model, 'model');
+  }
+  if (supportsDefaultModelMode(agentType)) {
+    return optionalDraftText(config?.modelMode) === 'custom'
+      ? requiredDraftText(config?.model, 'model')
+      : '';
+  }
+  return optionalDraftText(config?.model);
+}
+
+function syncAiStatus(agentType, value) {
+  state.aiStatuses[agentType] = {
+    authResult: value?.authResult || null,
+    testResult: value?.testResult || null,
+  };
+}
+
+function mergeAiStatuses(currentStatuses, nextStatuses) {
+  const output = { ...(currentStatuses || {}) };
+  for (const [agentType, status] of Object.entries(nextStatuses || {})) {
+    output[agentType] = {
+      authResult: status?.authResult || null,
+      testResult: output[agentType]?.testResult || null,
+    };
+  }
+  return output;
+}
+
+function isAiReady(agentType, status) {
+  const loggedIn = Boolean(status?.authResult?.details?.loggedIn);
+  const testOk = Boolean(status?.testResult?.details?.success);
+  return isAiAuthSupported(agentType) ? loggedIn : testOk;
+}
+
+function usesModelField(agentType) {
+  return ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
+}
+
+function getEffortChoices(agentType, model) {
+  const id = String(model || '').trim().toLowerCase();
+  if (agentType === 'claude-code') {
+    return ['low', 'medium', 'high', 'max'];
+  }
+  if (agentType === 'codex') {
+    if (!id) {
+      return ['low', 'medium', 'high'];
+    }
+    if (id === 'gpt-5-pro' || id.startsWith('gpt-5-pro-')) {
+      return ['high'];
+    }
+    if (
+      id === 'gpt-5.2-pro' ||
+      id.startsWith('gpt-5.2-pro-') ||
+      id === 'gpt-5.4-pro' ||
+      id.startsWith('gpt-5.4-pro-')
+    ) {
+      return ['medium', 'high', 'xhigh'];
+    }
+    if (id.includes('codex')) {
+      return ['low', 'medium', 'high', 'xhigh'];
+    }
+    if (
+      id.startsWith('gpt-5.2') ||
+      id.startsWith('gpt-5.4') ||
+      id.startsWith('gpt-5.4-mini') ||
+      id.startsWith('gpt-5.4-nano')
+    ) {
+      return ['none', 'low', 'medium', 'high', 'xhigh'];
+    }
+    if (id.startsWith('gpt-5.1')) {
+      return ['none', 'low', 'medium', 'high'];
+    }
+    if (
+      id === 'gpt-5' ||
+      id.startsWith('gpt-5-') ||
+      id.startsWith('gpt-5-mini') ||
+      id.startsWith('gpt-5-nano')
+    ) {
+      return ['minimal', 'low', 'medium', 'high'];
+    }
+    return [];
+  }
+  if (agentType === 'gemini-cli') {
+    if (!id) {
+      return ['minimal', 'low', 'medium', 'high'];
+    }
+    if (id.startsWith('gemini-2.5-pro')) {
+      return ['minimal', 'low', 'medium', 'high'];
+    }
+    if (id.startsWith('gemini-2.5')) {
+      return ['none', 'minimal', 'low', 'medium', 'high'];
+    }
+    if (id.startsWith('gemini-3')) {
+      return ['minimal', 'low', 'medium', 'high'];
+    }
+    return ['minimal', 'low', 'medium', 'high'];
+  }
+  return [];
+}
+
+function getModelExamples(agentType) {
+  if (agentType === 'codex') {
+    return ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.4-mini'];
+  }
+  if (agentType === 'claude-code') {
+    return ['claude-sonnet-4-20250514', 'claude-opus-4-20250514'];
+  }
+  if (agentType === 'gemini-cli') {
+    return ['gemini-2.5-pro', 'gemini-2.5-flash'];
+  }
+  if (agentType === 'local-llm') {
+    return ['qwen2.5-coder:14b', 'llama3.1:8b'];
+  }
+  return [];
+}
+
+function normalizeEffortValue(agentType, model, effort) {
+  const value = optionalDraftText(effort);
+  if (!value) {
+    return '';
+  }
+  const efforts = getEffortChoices(agentType, model);
+  return efforts.includes(value) ? value : '';
+}
+
+function localizeOptionLabel(option) {
+  const labels = {
+    codex: 'Codex',
+    'claude-code': 'Claude Code',
+    'gemini-cli': 'Gemini CLI',
+    'local-llm': '로컬 LLM',
+    command: '사용자 명령어',
+    single: '단일',
+    tribunal: 'Tribunal',
+    'workspace-write': '워크스페이스 쓰기',
+    'read-only': '읽기 전용',
+    'danger-full-access': '전체 접근',
+    bypassPermissions: '권한 확인 없음',
+    default: '기본값',
+    acceptEdits: '수정 허용',
+    dontAsk: '묻지 않음',
+    plan: '계획',
+    auto: '자동',
+  };
+  return labels[option?.value] || option?.label || option?.value || '';
+}
+
+function localizeFieldName(key) {
+  const fields = {
+    password: '비밀번호',
+    currentPassword: '현재 비밀번호',
+    newPassword: '새 비밀번호',
+    confirmPassword: '새 비밀번호 확인',
+    name: '이름',
+    mode: '채널 모드',
+    agent: '에이전트',
+    model: '모델',
+    command: '명령어',
+    discordChannelId: '디스코드 채널 ID',
+    workspace: '워크스페이스',
+    workdir: '작업경로',
+  };
+  return fields[key] || key;
+}
+
+function localizeErrorMessage(message) {
+  const text = String(message || '').trim();
+  if (!text) {
+    return '오류가 발생했습니다.';
+  }
+
+  const duplicateMatch = text.match(/^(Agent|Channel|Dashboard) "(.+)" already exists\.$/u);
+  if (duplicateMatch) {
+    return `${localizeKind(duplicateMatch[1].toLowerCase())} "${duplicateMatch[2]}"이(가) 이미 있습니다.`;
+  }
+
+  const referencedMatch = text.match(/^Agent "(.+)" is referenced by (.+)\.$/u);
+  if (referencedMatch) {
+    return `에이전트 "${referencedMatch[1]}"이(가) 다른 항목에서 사용 중입니다.`;
+  }
+
+  const unknownAgentMatch = text.match(/^Channel references unknown agent "(.+)"\.$/u);
+  if (unknownAgentMatch) {
+    return `없는 에이전트입니다: "${unknownAgentMatch[1]}".`;
+  }
+
+  if (text === 'Password is required.') {
+    return '비밀번호가 필요합니다.';
+  }
+  if (text === 'New password is required.') {
+    return '새 비밀번호가 필요합니다.';
+  }
+  if (text === 'Current password is required.') {
+    return '현재 비밀번호가 필요합니다.';
+  }
+  if (text === 'Current password is invalid.') {
+    return '현재 비밀번호가 올바르지 않습니다.';
+  }
+  if (text === 'New password must be at least 8 characters.') {
+    return '새 비밀번호는 8자 이상이어야 합니다.';
+  }
+  if (text === '비밀번호 확인이 일치하지 않습니다.') {
+    return text;
+  }
+  if (text === 'workspace is required.') {
+    return '워크스페이스 항목은 필수입니다.';
+  }
+  if (text === '사용 가능한 AI만 선택할 수 있습니다.') {
+    return text;
+  }
+  if (/^Unsupported channel mode /u.test(text)) {
+    return '지원하지 않는 채널 모드입니다.';
+  }
+  if (/^Workspace does not exist: /u.test(text)) {
+    return text.replace(/^Workspace does not exist: /u, '없는 워크스페이스입니다: ');
+  }
+  if (/^Workspace must be a directory: /u.test(text)) {
+    return text.replace(/^Workspace must be a directory: /u, '워크스페이스는 디렉터리여야 합니다: ');
+  }
+  if (/^Model listing is not supported for agent type /u.test(text)) {
+    return '이 AI 유형은 모델 목록 조회를 지원하지 않습니다.';
+  }
+  if (text === 'OPENAI_API_KEY is required for codex model listing.') {
+    return 'OPENAI_API_KEY 가 필요합니다.';
+  }
+  if (text === 'ANTHROPIC_API_KEY is required for claude-code model listing.') {
+    return 'ANTHROPIC_API_KEY 가 필요합니다.';
+  }
+  if (text === 'GEMINI_API_KEY is required for gemini-cli model listing.') {
+    return 'GEMINI_API_KEY 또는 GOOGLE_API_KEY 가 필요합니다.';
+  }
+  if (/^Invalid JSON response from /u.test(text)) {
+    return text.replace(/^Invalid JSON response from /u, '모델 목록 응답이 올바르지 않습니다: ');
+  }
+  if (text === 'workdir is required.') {
+    return '작업경로 항목은 필수입니다.';
+  }
+  if (text === 'discordChannelId is required.') {
+    return '디스코드 채널 ID 항목은 필수입니다.';
+  }
+  if (text === 'Reviewer must be different from the owner agent.') {
+    return '검토 에이전트는 소유 에이전트와 달라야 합니다.';
+  }
+  if (text === 'Arbiter must be different from the owner agent.') {
+    return '중재 에이전트는 소유 에이전트와 달라야 합니다.';
+  }
+  if (text === 'Arbiter must be different from the reviewer agent.') {
+    return '중재 에이전트는 검토 에이전트와 달라야 합니다.';
+  }
+  if (text === 'Tribunal channel requires a reviewer.') {
+    return '검토 에이전트가 필요합니다.';
+  }
+  if (text === 'Tribunal channel requires an arbiter.') {
+    return '중재 에이전트가 필요합니다.';
+  }
+  if (text === 'Single channel cannot define a reviewer.') {
+    return '단일 채널에서는 검토 에이전트를 지정할 수 없습니다.';
+  }
+  if (text === 'Single channel cannot define an arbiter.') {
+    return '단일 채널에서는 중재 에이전트를 지정할 수 없습니다.';
+  }
+  if (text === 'reviewRounds must be a positive integer.') {
+    return '검토 회차는 1 이상의 정수여야 합니다.';
+  }
+  if (text === 'reviewRounds requires a tribunal channel.') {
+    return '검토 회차는 검토와 중재가 함께 있을 때만 사용할 수 있습니다.';
+  }
+  if (text === 'fallbackAgent must be different from the agent.') {
+    return '폴백 에이전트는 자기 자신과 같을 수 없습니다.';
+  }
+  if (text === 'timeoutMs must be a positive integer.') {
+    return '제한 시간은 1 이상의 정수여야 합니다.';
+  }
+  if (/^Unsupported effort ".+" for agent ".+" model ".+"\.$/u.test(text)) {
+    return '선택한 모델에서 지원하지 않는 추론 강도입니다.';
+  }
+  if (text === 'local-llm agents require a model.') {
+    return '로컬 LLM은 모델이 필요합니다.';
+  }
+  if (text === 'command agents require a command.') {
+    return '사용자 명령어는 명령어 값이 필요합니다.';
+  }
+  if (/^Auth actions are not supported for agent type ".+"\.$/u.test(text)) {
+    return '이 AI 유형은 인증 관리를 지원하지 않습니다.';
+  }
+  if (text === 'codex executable was not found in PATH.') {
+    return 'codex 실행 파일을 찾을 수 없습니다.';
+  }
+  if (text === 'claude executable was not found in PATH.') {
+    return 'claude 실행 파일을 찾을 수 없습니다.';
+  }
+  if (text === 'gemini executable was not found in PATH.') {
+    return 'gemini 실행 파일을 찾을 수 없습니다.';
+  }
+
+  return text;
+}
+
 
 function escapeHtml(value) {
   return String(value ?? '')

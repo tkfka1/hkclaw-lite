@@ -25,15 +25,18 @@ import {
   listCiWatchers,
   saveCiWatcher,
 } from './ci-watch-store.js';
+import { executeChannelTurn } from './channel-runtime.js';
 import {
   AGENT_TYPE_CHOICES,
   CLAUDE_PERMISSION_MODE_CHOICES,
+  CHANNEL_MODE_CHOICES,
   CODEX_SANDBOX_CHOICES,
   DASHBOARD_ALL_AGENTS,
+  DEFAULT_ADMIN_PORT,
+  DEFAULT_CHANNEL_WORKSPACE,
 } from './constants.js';
 import { withPrompter } from './interactive.js';
-import { buildPromptEnvelope } from './prompt.js';
-import { inspectAgentRuntime, runAgentTurn } from './runners.js';
+import { inspectAgentRuntime } from './runners.js';
 import {
   buildAgentDefinition,
   buildChannelDefinition,
@@ -142,6 +145,9 @@ export async function main(argv) {
         return;
       case 'admin':
         await handleAdminCommand(projectRoot, tail);
+        return;
+      case 'discord':
+        await handleDiscordCommand(projectRoot, tail);
         return;
       case 'service':
         throw new Error(
@@ -543,24 +549,20 @@ async function handleRunCommand(projectRoot, argv) {
   const target = resolveRunTarget(projectRoot, config, positionals, flags);
   const prompt = await resolvePromptText(target.promptPositionals, flags);
 
-  const response = isTribunalChannel(target.channel)
-    ? await executeTribunalTurn({
-        projectRoot,
-        config,
-        channel: target.channel,
-        prompt,
-        workdir: target.workdir,
-      })
-    : await executeSingleTurn({
-        projectRoot,
-        config,
-        agent: target.agent,
-        channel: target.channel,
-        prompt,
-        workdir: target.workdir,
-      });
+  const result = await executeChannelTurn({
+    projectRoot,
+    config,
+    channel:
+      target.channel || {
+        name: target.agent.name,
+        mode: 'single',
+        agent: target.agent.name,
+      },
+    prompt,
+    workdir: target.workdir,
+  });
 
-  console.log(response);
+  console.log(result.content);
 }
 
 function resolveRunTarget(projectRoot, config, positionals, flags) {
@@ -575,7 +577,7 @@ function resolveRunTarget(projectRoot, config, positionals, flags) {
     return {
       agent: getAgent(config, channel.agent),
       channel,
-      workdir: resolveExistingWorkdir(projectRoot, channel.workdir),
+      workdir: resolveExistingWorkdir(projectRoot, channel.workspace || channel.workdir),
       promptPositionals: viaChannelCommand ? positionals.slice(2) : positionals,
     };
   }
@@ -591,7 +593,7 @@ function resolveRunTarget(projectRoot, config, positionals, flags) {
     return {
       agent: getAgent(config, channel.agent),
       channel,
-      workdir: resolveExistingWorkdir(projectRoot, channel.workdir),
+      workdir: resolveExistingWorkdir(projectRoot, channel.workspace || channel.workdir),
       promptPositionals: positionals,
     };
   }
@@ -617,6 +619,7 @@ function resolveRunWorkdir(
   workdirOverride,
   mappedChannels = null,
 ) {
+  void config;
   if (workdirOverride) {
     return resolveExistingWorkdir(projectRoot, workdirOverride);
   }
@@ -630,7 +633,10 @@ function resolveRunWorkdir(
     `Agent "${agent.name}" is mapped to multiple channels (${uniqueChannelNames(mappedChannels).join(', ')}). Pass --channel or --workdir.`,
   );
 
-  return resolveExistingWorkdir(projectRoot, mappedChannels[0].workdir);
+  return resolveExistingWorkdir(
+    projectRoot,
+    mappedChannels[0].workspace || mappedChannels[0].workdir,
+  );
 }
 
 function resolveExistingWorkdir(projectRoot, workdir) {
@@ -656,234 +662,6 @@ async function resolvePromptText(positionals, flags) {
     }
   }
   throw new Error('Prompt is required. Pass text, --message, or pipe stdin.');
-}
-
-async function executeSingleTurn({
-  projectRoot,
-  config,
-  agent,
-  channel,
-  prompt,
-  workdir,
-}) {
-  return executeAgentTurnWithFallback({
-    projectRoot,
-    config,
-    agent,
-    channel,
-    userPrompt: prompt,
-    workdir,
-  });
-}
-
-async function executeTribunalTurn({
-  projectRoot,
-  config,
-  channel,
-  prompt,
-  workdir,
-}) {
-  const owner = getAgent(config, channel.agent);
-  const reviewer = getAgent(config, channel.reviewer);
-  const arbiter = getAgent(config, channel.arbiter);
-  const maxRounds = channel.reviewRounds || 2;
-
-  let ownerPrompt = prompt;
-  let ownerResponse = '';
-  let reviewerResponse = '';
-
-  for (let round = 1; round <= maxRounds; round += 1) {
-    ownerResponse = await executeAgentTurnWithFallback({
-      projectRoot,
-      config,
-      agent: owner,
-      channel,
-      userPrompt: ownerPrompt,
-      workdir,
-    });
-
-    reviewerResponse = await executeAgentTurnWithFallback({
-      projectRoot,
-      config,
-      agent: reviewer,
-      channel,
-      userPrompt: buildReviewerPrompt({
-        prompt,
-        ownerResponse,
-        round,
-        maxRounds,
-      }),
-      workdir,
-    });
-
-    const reviewerVerdict = parseReviewerVerdict(reviewerResponse);
-
-    if (reviewerVerdict === 'approved') {
-      return ownerResponse;
-    }
-
-    if (reviewerVerdict === 'invalid') {
-      return executeAgentTurnWithFallback({
-        projectRoot,
-        config,
-        agent: arbiter,
-        channel,
-        userPrompt: buildArbiterPrompt({
-          prompt,
-          ownerResponse,
-          reviewerResponse,
-          maxRounds,
-          reviewerVerdict,
-        }),
-        workdir,
-      });
-    }
-
-    if (round < maxRounds) {
-      ownerPrompt = buildOwnerRevisionPrompt({
-        prompt,
-        ownerResponse,
-        reviewerResponse,
-        round,
-        maxRounds,
-      });
-    }
-  }
-
-  return executeAgentTurnWithFallback({
-    projectRoot,
-    config,
-    agent: arbiter,
-    channel,
-    userPrompt: buildArbiterPrompt({
-      prompt,
-      ownerResponse,
-      reviewerResponse,
-      maxRounds,
-    }),
-    workdir,
-  });
-}
-
-async function executeAgentTurnWithFallback({
-  projectRoot,
-  config,
-  agent,
-  channel,
-  userPrompt,
-  workdir,
-  visitedAgents = [],
-}) {
-  assert(
-    !visitedAgents.includes(agent.name),
-    `Fallback loop detected: ${[...visitedAgents, agent.name].join(' -> ')}`,
-  );
-
-  const fullPrompt = buildPromptEnvelope({
-    projectRoot,
-    agent,
-    channel,
-    workdirOverride: workdir,
-    userPrompt,
-  });
-
-  try {
-    return await runAgentTurn({
-      projectRoot,
-      agent,
-      prompt: fullPrompt,
-      rawPrompt: userPrompt,
-      workdir,
-      sharedEnv: config.sharedEnv,
-    });
-  } catch (error) {
-    if (!agent.fallbackAgent) {
-      throw error;
-    }
-
-    const fallbackAgent = getAgent(config, agent.fallbackAgent);
-
-    try {
-      return await executeAgentTurnWithFallback({
-        projectRoot,
-        config,
-        agent: fallbackAgent,
-        channel,
-        userPrompt,
-        workdir,
-        visitedAgents: [...visitedAgents, agent.name],
-      });
-    } catch (fallbackError) {
-      throw new Error(
-        [
-          `${agent.name} failed: ${toErrorMessage(error)}`,
-          `${fallbackAgent.name} failed: ${toErrorMessage(fallbackError)}`,
-        ].join('\n'),
-      );
-    }
-  }
-}
-
-function isTribunalChannel(channel) {
-  return Boolean(channel?.reviewer && channel?.arbiter);
-}
-
-function parseReviewerVerdict(reviewText) {
-  const normalized = String(reviewText || '').trim();
-  if (/^APPROVED\b/imu.test(normalized)) {
-    return 'approved';
-  }
-  if (/^BLOCKED\b/imu.test(normalized)) {
-    return 'blocked';
-  }
-  return 'invalid';
-}
-
-function buildReviewerPrompt({ prompt, ownerResponse, round, maxRounds }) {
-  return [
-    `Tribunal review round ${round} of ${maxRounds}.`,
-    'Review the owner draft against the original request.',
-    'Reply with either "APPROVED" or "BLOCKED: <reason>".',
-    `Original user request:\n${prompt}`,
-    `Owner draft:\n${ownerResponse}`,
-  ].join('\n\n');
-}
-
-function buildOwnerRevisionPrompt({
-  prompt,
-  ownerResponse,
-  reviewerResponse,
-  round,
-  maxRounds,
-}) {
-  return [
-    `Revise the draft for tribunal round ${round + 1} of ${maxRounds}.`,
-    'Return only the improved response for the user.',
-    `Original user request:\n${prompt}`,
-    `Current draft:\n${ownerResponse}`,
-    `Reviewer feedback:\n${reviewerResponse}`,
-  ].join('\n\n');
-}
-
-function buildArbiterPrompt({
-  prompt,
-  ownerResponse,
-  reviewerResponse,
-  maxRounds,
-  reviewerVerdict = 'blocked',
-}) {
-  return [
-    `You are the arbiter after ${maxRounds} tribunal round(s).`,
-    'Provide the final response that should be sent to the user.',
-    reviewerVerdict === 'invalid'
-      ? 'The reviewer did not return a valid "APPROVED" or "BLOCKED" verdict. Treat the reviewer output as non-conforming feedback.'
-      : null,
-    `Original user request:\n${prompt}`,
-    `Latest owner draft:\n${ownerResponse}`,
-    `Latest reviewer feedback:\n${reviewerResponse}`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
 }
 
 async function handleDashboardCommand(projectRoot, argv) {
@@ -1001,10 +779,23 @@ async function handleEnvCommand(projectRoot, argv) {
 async function handleAdminCommand(projectRoot, argv) {
   const { flags } = parseArgs(argv);
   const host = getFlagValue(flags, 'host', '127.0.0.1');
-  const port = getFlagValue(flags, 'port', '3580');
+  const port = getFlagValue(flags, 'port', String(DEFAULT_ADMIN_PORT));
   await serveAdmin(projectRoot, {
     host,
     port,
+  });
+}
+
+async function handleDiscordCommand(projectRoot, argv) {
+  const [subcommand = 'serve', ...tail] = argv;
+  if (subcommand !== 'serve') {
+    throw new Error(`Unknown discord subcommand "${subcommand}".`);
+  }
+
+  const { flags } = parseArgs(tail);
+  const { serveDiscord } = await import('./discord-service.js');
+  await serveDiscord(projectRoot, {
+    envFile: getFlagValue(flags, 'env-file'),
   });
 }
 
@@ -1790,8 +1581,8 @@ async function promptForChannelDefinition(prompter, config, options) {
     defaultValue: initial.guildId,
     allowEmpty: true,
   });
-  const workdir = await prompter.askText('Channel working directory', {
-    defaultValue: initial.workdir ?? '.',
+  const workspace = await prompter.askText('Channel workspace directory', {
+    defaultValue: initial.workspace ?? initial.workdir ?? DEFAULT_CHANNEL_WORKSPACE,
     validate: (value) => {
       const resolved = resolveProjectPath(projectRoot, value);
       if (!fs.existsSync(resolved)) {
@@ -1804,21 +1595,10 @@ async function promptForChannelDefinition(prompter, config, options) {
   });
   const channelMode = await prompter.askChoice(
     'What kind of channel do you want to create?',
-    [
-      {
-        value: 'single',
-        label: 'Single Agent',
-        description: 'One owner agent handles the channel',
-      },
-      {
-        value: 'tribunal',
-        label: 'Tribunal',
-        description: 'Owner, reviewer, and arbiter collaborate on each turn',
-      },
-    ],
+    CHANNEL_MODE_CHOICES,
     {
       defaultValue:
-        initial.reviewer || initial.arbiter
+        initial.mode === 'tribunal' || initial.reviewer || initial.arbiter
           ? 'tribunal'
           : 'single',
     },
@@ -1884,9 +1664,10 @@ async function promptForChannelDefinition(prompter, config, options) {
 
   return {
     name,
+    mode: channelMode,
     discordChannelId,
     guildId,
-    workdir,
+    workspace,
     agent,
     reviewer,
     arbiter,
@@ -1927,7 +1708,7 @@ function renderAgentStatusReport(projectRoot, config, agents) {
     const runtime = inspectAgentRuntime(projectRoot, agent);
     const mappedChannels = channelsByAgent[agent.name] || [];
     const channelNames = uniqueChannelNames(mappedChannels);
-    const workdirs = uniqueChannelWorkdirs(mappedChannels);
+    const workspaces = uniqueChannelWorkspaces(mappedChannels);
 
     lines.push('');
     lines.push(agent.name);
@@ -1940,7 +1721,7 @@ function renderAgentStatusReport(projectRoot, config, agents) {
     lines.push(`  channels=${channelNames.length}`);
     if (channelNames.length > 0) {
       lines.push(`  mapped=${channelNames.join(', ')}`);
-      lines.push(`  workdirs=${workdirs.join(', ')}`);
+      lines.push(`  workspaces=${workspaces.join(', ')}`);
     }
   }
 
@@ -1962,7 +1743,7 @@ function renderDashboard(projectRoot, config, dashboard) {
     const runtime = inspectAgentRuntime(projectRoot, agent);
     const mappedChannels = channelsByAgent[agent.name] || [];
     const channelNames = uniqueChannelNames(mappedChannels);
-    const workdirs = uniqueChannelWorkdirs(mappedChannels);
+    const workspaces = uniqueChannelWorkspaces(mappedChannels);
     lines.push('');
     lines.push(agent.name);
     lines.push(`  type=${agent.agent}`);
@@ -1979,7 +1760,7 @@ function renderDashboard(projectRoot, config, dashboard) {
       lines.push(`  channels=${channelNames.length}`);
       if (channelNames.length > 0) {
         lines.push(`  mapped=${channelNames.join(', ')}`);
-        lines.push(`  workdirs=${workdirs.join(', ')}`);
+        lines.push(`  workspaces=${workspaces.join(', ')}`);
       }
     }
 
@@ -1992,9 +1773,10 @@ function renderChannelStatus(config, channel) {
   const agent = getAgent(config, channel.agent);
   return [
     `channel=${channel.name}`,
+    `mode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}`,
     `discordChannelId=${channel.discordChannelId}`,
     channel.guildId ? `guildId=${channel.guildId}` : null,
-    `workdir=${channel.workdir}`,
+    `workspace=${channel.workspace || channel.workdir}`,
     `agent=${channel.agent}`,
     channel.reviewer ? `reviewer=${channel.reviewer}` : null,
     channel.arbiter ? `arbiter=${channel.arbiter}` : null,
@@ -2043,7 +1825,7 @@ function printChannels(channels) {
   }
   for (const channel of channels) {
     console.log(
-      `  ${channel.name}\t${channel.discordChannelId}\tagent=${channel.agent}\tworkdir=${channel.workdir}`,
+      `  ${channel.name}\t${channel.discordChannelId}\tmode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}\tagent=${channel.agent}\tworkspace=${channel.workspace || channel.workdir}`,
     );
   }
 }
@@ -2147,9 +1929,10 @@ function buildDashboardPreset(name, flags) {
 function buildChannelPreset(name, flags) {
   return {
     name,
+    mode: getFlagValue(flags, 'mode') || getFlagValue(flags, 'channel-mode'),
     discordChannelId: getFlagValue(flags, 'discord-channel-id'),
     guildId: getFlagValue(flags, 'guild-id'),
-    workdir: getFlagValue(flags, 'workdir'),
+    workspace: getFlagValue(flags, 'workspace') || getFlagValue(flags, 'workdir'),
     agent: getFlagValue(flags, 'agent'),
     reviewer: getFlagValue(flags, 'reviewer'),
     arbiter: getFlagValue(flags, 'arbiter'),
@@ -2166,7 +1949,8 @@ Agents intentionally run with the full permissions of the host account that laun
 
 Usage:
   hkclaw-lite init [--root DIR] [--force]
-  hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port 3580]
+  hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
+  hkclaw-lite discord serve [--root DIR] [--env-file .env]
   hkclaw-lite backup export <file> [--root DIR] [--no-watchers] [--no-logs]
   hkclaw-lite backup import <file> [--root DIR] [--force]
   hkclaw-lite migrate --from <project-root> [--root DIR] [--force]
@@ -2204,7 +1988,8 @@ Usage:
 
 Examples:
   hkclaw-lite admin
-  hkclaw-lite admin --host 0.0.0.0 --port 8080
+  hkclaw-lite admin --host 0.0.0.0 --port ${DEFAULT_ADMIN_PORT}
+  hkclaw-lite discord serve --env-file .env
   hkclaw-lite backup export ./backups/project.json
   hkclaw-lite backup import ./backups/project.json --root ./restored
   hkclaw-lite migrate --from ../old-project --root ./new-project
@@ -2226,6 +2011,6 @@ function uniqueChannelNames(channels) {
   return [...new Set(channels.map((channel) => channel.name))];
 }
 
-function uniqueChannelWorkdirs(channels) {
-  return [...new Set(channels.map((channel) => channel.workdir).filter(Boolean))];
+function uniqueChannelWorkspaces(channels) {
+  return [...new Set(channels.map((channel) => channel.workspace || channel.workdir).filter(Boolean))];
 }

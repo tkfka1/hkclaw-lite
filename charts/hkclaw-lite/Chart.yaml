@@ -1,6 +1,6 @@
 apiVersion: v2
 name: hkclaw-lite
-description: Helm chart for running hkclaw-lite as a stateful CLI toolbox pod on Kubernetes
+description: Helm chart for running hkclaw-lite admin or toolbox workloads on Kubernetes
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

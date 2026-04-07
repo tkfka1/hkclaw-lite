@@ -4,10 +4,20 @@ import { getCiWatcherLogPath, listCiWatchers, loadCiWatcher } from './ci-watch-s
 import {
   AGENT_TYPE_CHOICES,
   CLAUDE_PERMISSION_MODE_CHOICES,
+  CHANNEL_MODE_CHOICES,
   CODEX_SANDBOX_CHOICES,
   DASHBOARD_ALL_AGENTS,
 } from './constants.js';
+import {
+  buildDiscordServiceSnapshot,
+  inspectDiscordRoleTokens,
+} from './discord-runtime-state.js';
 import { inspectAgentRuntime } from './runners.js';
+import {
+  listPendingRuntimeOutboxEvents,
+  listRecentRuntimeRuns,
+  listRuntimeRoleSessions,
+} from './runtime-db.js';
 import {
   buildAgentDefinition,
   buildChannelDefinition,
@@ -26,17 +36,19 @@ import {
 } from './store.js';
 import { assert, isPlainObject } from './utils.js';
 
-export function buildAdminSnapshot(projectRoot) {
+export async function buildAdminSnapshot(projectRoot) {
   const config = loadConfig(projectRoot);
   const channels = listChannels(config);
   const dashboards = listDashboards(config);
   const agents = buildAgentSummaries(projectRoot, config, channels);
+  const discord = buildDiscordStatus(projectRoot, channels);
   const watchers = listCiWatchers(projectRoot).map((watcher) => ({
     ...watcher,
     hasLog: watcher.logPath
       ? fs.existsSync(getCiWatcherLogPath(projectRoot, watcher.id))
       : false,
   }));
+  const runtime = await buildRuntimeStatus(projectRoot, channels);
 
   return {
     projectRoot,
@@ -44,11 +56,14 @@ export function buildAdminSnapshot(projectRoot) {
     defaults: config.defaults,
     sharedEnv: config.sharedEnv || {},
     agents,
-    channels,
+    channels: runtime.channels,
     dashboards,
+    discord,
     watchers,
+    runtime: runtime.summary,
     choices: {
       agentTypes: AGENT_TYPE_CHOICES,
+      channelModes: CHANNEL_MODE_CHOICES,
       codexSandboxes: CODEX_SANDBOX_CHOICES,
       claudePermissionModes: CLAUDE_PERMISSION_MODE_CHOICES,
       dashboardAllAgents: DASHBOARD_ALL_AGENTS,
@@ -56,7 +71,24 @@ export function buildAdminSnapshot(projectRoot) {
   };
 }
 
-export function upsertAgent(projectRoot, currentName, input) {
+function buildDiscordStatus(projectRoot, channels) {
+  const tribunalChannelCount = channels.filter(isTribunalChannel).length;
+  const service = buildDiscordServiceSnapshot(projectRoot);
+  const tokenStatus = inspectDiscordRoleTokens(projectRoot, {
+    requireReviewerAndArbiter: tribunalChannelCount > 0,
+    runtimeStatus: service,
+  });
+
+  return {
+    envFilePath: tokenStatus.envFilePath,
+    tribunalChannelCount,
+    singleChannelCount: channels.length - tribunalChannelCount,
+    tokens: tokenStatus.roles,
+    service,
+  };
+}
+
+export async function upsertAgent(projectRoot, currentName, input) {
   const config = loadConfig(projectRoot);
   const existing = currentName ? getAgent(config, currentName) : null;
   const nextName = String(input?.name || '').trim();
@@ -80,10 +112,10 @@ export function upsertAgent(projectRoot, currentName, input) {
     config.agents[nextName] || existing || {},
   );
   saveConfig(projectRoot, config);
-  return buildAdminSnapshot(projectRoot);
+  return await buildAdminSnapshot(projectRoot);
 }
 
-export function deleteAgentByName(projectRoot, name) {
+export async function deleteAgentByName(projectRoot, name) {
   const config = loadConfig(projectRoot);
   getAgent(config, name);
 
@@ -123,10 +155,10 @@ export function deleteAgentByName(projectRoot, name) {
 
   removeAgent(config, name);
   saveConfig(projectRoot, config);
-  return buildAdminSnapshot(projectRoot);
+  return await buildAdminSnapshot(projectRoot);
 }
 
-export function upsertChannel(projectRoot, currentName, input) {
+export async function upsertChannel(projectRoot, currentName, input) {
   const config = loadConfig(projectRoot);
   const existing = currentName ? getChannel(config, currentName) : null;
   const nextName = String(input?.name || '').trim();
@@ -150,18 +182,18 @@ export function upsertChannel(projectRoot, currentName, input) {
     config.channels[nextName] || existing || {},
   );
   saveConfig(projectRoot, config);
-  return buildAdminSnapshot(projectRoot);
+  return await buildAdminSnapshot(projectRoot);
 }
 
-export function deleteChannelByName(projectRoot, name) {
+export async function deleteChannelByName(projectRoot, name) {
   const config = loadConfig(projectRoot);
   getChannel(config, name);
   removeChannel(config, name);
   saveConfig(projectRoot, config);
-  return buildAdminSnapshot(projectRoot);
+  return await buildAdminSnapshot(projectRoot);
 }
 
-export function upsertDashboard(projectRoot, currentName, input) {
+export async function upsertDashboard(projectRoot, currentName, input) {
   const config = loadConfig(projectRoot);
   const existing = currentName ? getDashboard(config, currentName) : null;
   const nextName = String(input?.name || '').trim();
@@ -185,23 +217,23 @@ export function upsertDashboard(projectRoot, currentName, input) {
     config.dashboards[nextName] || existing || {},
   );
   saveConfig(projectRoot, config);
-  return buildAdminSnapshot(projectRoot);
+  return await buildAdminSnapshot(projectRoot);
 }
 
-export function deleteDashboardByName(projectRoot, name) {
+export async function deleteDashboardByName(projectRoot, name) {
   const config = loadConfig(projectRoot);
   getDashboard(config, name);
   removeDashboard(config, name);
   saveConfig(projectRoot, config);
-  return buildAdminSnapshot(projectRoot);
+  return await buildAdminSnapshot(projectRoot);
 }
 
-export function replaceSharedEnv(projectRoot, sharedEnv) {
+export async function replaceSharedEnv(projectRoot, sharedEnv) {
   validateSharedEnvInput(sharedEnv);
   const config = loadConfig(projectRoot);
   config.sharedEnv = sortEnvEntries(sharedEnv);
   saveConfig(projectRoot, config);
-  return buildAdminSnapshot(projectRoot);
+  return await buildAdminSnapshot(projectRoot);
 }
 
 export function readWatcherLog(projectRoot, watcherId) {
@@ -223,10 +255,10 @@ function buildAgentSummaries(projectRoot, config, channels) {
       mappedChannels: mappedChannels.map((channel) => ({
         name: channel.name,
         role: resolveAgentRole(channel, agent.name),
-        workdir: channel.workdir,
+        workspace: channel.workspace,
       })),
       mappedChannelNames: unique(mappedChannels.map((channel) => channel.name)),
-      workdirs: unique(mappedChannels.map((channel) => channel.workdir).filter(Boolean)),
+      workspaces: unique(mappedChannels.map((channel) => channel.workspace).filter(Boolean)),
     };
   });
 }
@@ -253,6 +285,78 @@ function resolveAgentRole(channel, agentName) {
     return 'arbiter';
   }
   return 'member';
+}
+
+function isTribunalChannel(channel) {
+  if (!channel) {
+    return false;
+  }
+  return channel.mode === 'tribunal' || Boolean(channel.reviewer && channel.arbiter);
+}
+
+async function buildRuntimeStatus(projectRoot, channels) {
+  const [recentRuns, pendingOutboxEvents, roleSessions] = await Promise.all([
+    listRecentRuntimeRuns(projectRoot, { limit: 100 }),
+    listPendingRuntimeOutboxEvents(projectRoot, { limit: 500 }),
+    listRuntimeRoleSessions(projectRoot, { limit: 500 }),
+  ]);
+
+  const lastRunByChannel = new Map();
+  for (const run of recentRuns) {
+    if (!run.channelName || lastRunByChannel.has(run.channelName)) {
+      continue;
+    }
+    lastRunByChannel.set(run.channelName, {
+      runId: run.runId,
+      status: run.status,
+      activeRole: run.activeRole,
+      currentRound: run.currentRound,
+      maxRounds: run.maxRounds,
+      reviewerVerdict: run.reviewerVerdict,
+      finalDisposition: run.finalDisposition,
+      resultRole: run.resultRole,
+      resultAgent: run.resultAgent,
+      startedAt: run.startedAt,
+      completedAt: run.completedAt,
+      error: run.error,
+    });
+  }
+
+  const outboxCountByChannel = new Map();
+  for (const event of pendingOutboxEvents) {
+    const key = event.channelName || '';
+    outboxCountByChannel.set(key, (outboxCountByChannel.get(key) || 0) + 1);
+  }
+
+  const sessionsByChannel = new Map();
+  for (const session of roleSessions) {
+    const key = session.channelName || '';
+    const list = sessionsByChannel.get(key) || [];
+    list.push({
+      role: session.role,
+      agentName: session.agentName,
+      runCount: session.runCount,
+      sessionPolicy: session.sessionPolicy,
+      lastStatus: session.lastStatus,
+      lastVerdict: session.lastVerdict,
+    });
+    sessionsByChannel.set(key, list);
+  }
+
+  return {
+    channels: channels.map((channel) => ({
+      ...channel,
+      runtime: {
+        lastRun: lastRunByChannel.get(channel.name) || null,
+        pendingOutboxCount: outboxCountByChannel.get(channel.name) || 0,
+        sessions: sessionsByChannel.get(channel.name) || [],
+      },
+    })),
+    summary: {
+      pendingOutboxCount: pendingOutboxEvents.length,
+      recentRuns: recentRuns.slice(0, 20),
+    },
+  };
 }
 
 function renameAgentReferences(config, currentName, nextName) {

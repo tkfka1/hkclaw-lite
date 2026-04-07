@@ -9,6 +9,7 @@ export function buildPromptEnvelope({
   channel,
   workdirOverride,
   userPrompt,
+  sessionHistory = [],
 }) {
   const sections = [];
   const systemPrompt = loadSystemPrompt(projectRoot, agent);
@@ -41,13 +42,17 @@ export function buildPromptEnvelope({
       .join('\n'),
   );
 
+  if (sessionHistory.length > 0) {
+    sections.push(formatSessionHistory(sessionHistory));
+  }
+
   sections.push(`User request:\n${userPrompt.trim()}`);
 
   return sections.join('\n\n---\n\n');
 }
 
 function resolveRuntimeWorkdir(projectRoot, agent, channel, workdirOverride) {
-  const workdir = workdirOverride || channel?.workdir || agent.workdir;
+  const workdir = workdirOverride || channel?.workspace || channel?.workdir || agent.workdir;
   if (!workdir) {
     return null;
   }
@@ -102,4 +107,34 @@ function formatNamedDocuments(title, documents) {
       (document) => `Source: ${document.label}\n${document.content}`,
     ),
   ].join('\n\n');
+}
+
+function formatSessionHistory(entries) {
+  return [
+    'Recent role session history:',
+    ...entries.map((entry, index) => {
+      const lines = [
+        `Session ${index + 1}:`,
+        `- prior user request: ${truncateInline(entry.prompt, 220)}`,
+        `- prior role output: ${truncateInline(entry.content, 320)}`,
+      ];
+      if (entry.reviewerVerdict) {
+        lines.push(`- prior reviewer verdict: ${entry.reviewerVerdict}`);
+      }
+      if (entry.agentName) {
+        lines.push(`- prior agent: ${entry.agentName}`);
+      }
+      return lines.join('\n');
+    }),
+  ].join('\n\n');
+}
+
+function truncateInline(value, maxLength) {
+  const normalized = String(value || '')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1)}…`;
 }

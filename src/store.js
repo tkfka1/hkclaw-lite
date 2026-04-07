@@ -1,14 +1,18 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
+  CHANNEL_MODE_CHOICES,
   CONFIG_FILENAME,
   CURRENT_CONFIG_VERSION,
   DASHBOARD_ALL_AGENTS,
   DEFAULT_DASHBOARD_REFRESH_MS,
+  DEFAULT_CHANNEL_WORKSPACE,
   SUPPORTED_AGENTS,
   TOOL_DIRNAME,
 } from './constants.js';
+import { resolveAgentEffortChoices } from './model-catalog.js';
 import {
   assert,
   ensureDir,
@@ -309,12 +313,30 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
 
   const merged = {
     ...stripManagedFields(existing),
+    mode: normalizeOptionalString(
+      input.mode ??
+        input['mode'] ??
+        input.channelMode ??
+        input['channel-mode'] ??
+        existing.mode ??
+        (input.reviewer || input.arbiter || existing.reviewer || existing.arbiter
+          ? 'tribunal'
+          : 'single'),
+    ),
     discordChannelId: getRequiredString(
       input.discordChannelId ?? input['discord-channel-id'] ?? existing.discordChannelId,
       'discordChannelId',
     ),
     guildId: normalizeOptionalString(input.guildId ?? input['guild-id'] ?? existing.guildId),
-    workdir: input.workdir ?? existing.workdir ?? '.',
+    workspace: normalizeOptionalString(
+      input.workspace ??
+        input['workspace'] ??
+        input.workdir ??
+        input['workdir'] ??
+        existing.workspace ??
+        existing.workdir ??
+        DEFAULT_CHANNEL_WORKSPACE,
+    ),
     agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
     reviewer: normalizeOptionalString(input.reviewer ?? existing.reviewer),
     arbiter: normalizeOptionalString(input.arbiter ?? existing.arbiter),
@@ -323,6 +345,11 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
     description: normalizeOptionalString(input.description ?? existing.description),
   };
 
+  if (merged.mode !== 'tribunal') {
+    merged.reviewer = undefined;
+    merged.arbiter = undefined;
+    merged.reviewRounds = undefined;
+  }
   if (merged.reviewRounds !== undefined) {
     merged.reviewRounds = parseOptionalInteger(merged.reviewRounds, 'reviewRounds');
   }
@@ -412,6 +439,14 @@ function validateAgentDefinition(projectRoot, agent) {
     );
   }
 
+  if (agent.effort) {
+    const supportedEfforts = resolveAgentEffortChoices(agent.agent, agent.model);
+    assert(
+      supportedEfforts.length === 0 || supportedEfforts.includes(agent.effort),
+      `Unsupported effort "${agent.effort}" for agent "${agent.agent}" model "${agent.model || '(default)'}".`,
+    );
+  }
+
   if (agent.agent === 'local-llm') {
     assert(
       typeof agent.model === 'string' && agent.model.trim().length > 0,
@@ -431,25 +466,32 @@ function validateAgentDefinition(projectRoot, agent) {
 
 function validateChannelDefinition(projectRoot, config, channel) {
   assert(
+    CHANNEL_MODE_CHOICES.some((entry) => entry.value === channel.mode),
+    `Unsupported channel mode "${channel.mode}".`,
+  );
+  assert(
     typeof channel.discordChannelId === 'string' &&
       channel.discordChannelId.trim().length > 0,
     'discordChannelId is required.',
   );
   assert(
-    typeof channel.workdir === 'string' && channel.workdir.trim().length > 0,
-    'workdir is required.',
+    typeof channel.workspace === 'string' && channel.workspace.trim().length > 0,
+    'workspace is required.',
   );
-  const resolvedWorkdir = resolveProjectPath(projectRoot, channel.workdir);
-  assert(fs.existsSync(resolvedWorkdir), `Workdir does not exist: ${resolvedWorkdir}`);
+  const resolvedWorkspace = resolveProjectPath(projectRoot, channel.workspace);
+  assert(fs.existsSync(resolvedWorkspace), `Workspace does not exist: ${resolvedWorkspace}`);
   assert(
-    fs.statSync(resolvedWorkdir).isDirectory(),
-    `Workdir must be a directory: ${resolvedWorkdir}`,
+    fs.statSync(resolvedWorkspace).isDirectory(),
+    `Workspace must be a directory: ${resolvedWorkspace}`,
   );
   assert(config.agents[channel.agent], `Channel references unknown agent "${channel.agent}".`);
-  const hasTribunal = Boolean(channel.reviewer || channel.arbiter);
+  const hasTribunal = channel.mode === 'tribunal';
   if (hasTribunal) {
     assert(channel.reviewer, 'Tribunal channel requires a reviewer.');
     assert(channel.arbiter, 'Tribunal channel requires an arbiter.');
+  } else {
+    assert(!channel.reviewer, 'Single channel cannot define a reviewer.');
+    assert(!channel.arbiter, 'Single channel cannot define an arbiter.');
   }
   if (channel.reviewer) {
     assert(config.agents[channel.reviewer], `Channel references unknown reviewer "${channel.reviewer}".`);
@@ -574,13 +616,18 @@ function normalizeLegacyChannelRecords(channels, rawAgents) {
         return [name, channel];
       }
       const next = { ...channel };
-      if (!next.workdir) {
+      if (!next.workspace) {
         const ownerAgent =
           isPlainObject(rawAgents) && isPlainObject(rawAgents[next.agent])
             ? rawAgents[next.agent]
             : null;
-        next.workdir = ownerAgent?.workdir || '.';
+        next.workspace =
+          next.workdir || ownerAgent?.workdir || DEFAULT_CHANNEL_WORKSPACE;
       }
+      if (!next.mode) {
+        next.mode = next.reviewer || next.arbiter ? 'tribunal' : 'single';
+      }
+      delete next.workdir;
       return [name, next];
     }),
   );
@@ -646,5 +693,12 @@ function stripManagedFields(value) {
 }
 
 export function resolveProjectPath(projectRoot, maybeRelativePath) {
-  return path.resolve(projectRoot, maybeRelativePath);
+  const rawPath = String(maybeRelativePath || '').trim();
+  if (!rawPath || rawPath === '~') {
+    return os.homedir();
+  }
+  if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) {
+    return path.join(os.homedir(), rawPath.slice(2));
+  }
+  return path.resolve(projectRoot, rawPath);
 }

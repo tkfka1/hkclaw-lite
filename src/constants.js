@@ -1,7 +1,9 @@
 export const TOOL_DIRNAME = '.hkclaw-lite';
 export const CONFIG_FILENAME = 'config.json';
 export const CURRENT_CONFIG_VERSION = 3;
+export const DEFAULT_ADMIN_PORT = 4622;
 export const DEFAULT_DASHBOARD_REFRESH_MS = 5000;
+export const DEFAULT_CHANNEL_WORKSPACE = '~';
 export const DEFAULT_CODEX_SANDBOX = 'workspace-write';
 export const DEFAULT_CLAUDE_PERMISSION_MODE = 'bypassPermissions';
 export const DEFAULT_LOCAL_LLM_BASE_URL = 'http://127.0.0.1:11434/v1';
@@ -37,6 +39,18 @@ export const AGENT_TYPE_CHOICES = [
     value: 'command',
     label: 'Custom Command',
     description: 'Any local command that reads stdin and writes stdout',
+  },
+];
+export const CHANNEL_MODE_CHOICES = [
+  {
+    value: 'single',
+    label: 'Single',
+    description: 'One owner agent handles the channel',
+  },
+  {
+    value: 'tribunal',
+    label: 'Tribunal',
+    description: 'Owner, reviewer, and arbiter collaborate on each turn',
   },
 ];
 export const CODEX_SANDBOX_CHOICES = [

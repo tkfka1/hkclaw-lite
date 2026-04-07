@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 
 import { saveCiWatcher } from '../src/ci-watch-store.js';
 import { buildPromptEnvelope } from '../src/prompt.js';
+import { DEFAULT_CHANNEL_WORKSPACE } from '../src/constants.js';
 
 const repoRoot = process.cwd();
 const cliPath = path.join(repoRoot, 'bin', 'hkclaw-lite.js');
@@ -81,7 +82,7 @@ function buildChannelAnswers({
   name = 'discord-main',
   discordChannelId = '123456789012345678',
   guildId = '987654321098765432',
-  workdir = '.',
+  workspace = DEFAULT_CHANNEL_WORKSPACE,
   channelMode = '1',
   agentChoice = '1',
   reviewer = '',
@@ -89,7 +90,7 @@ function buildChannelAnswers({
   reviewRounds = '',
   description = '',
 } = {}) {
-  const answers = [name, discordChannelId, guildId, workdir, channelMode, agentChoice];
+  const answers = [name, discordChannelId, guildId, workspace, channelMode, agentChoice];
   if (channelMode === '2' || channelMode === 'tribunal') {
     answers.push(reviewer, arbiter, reviewRounds);
   }
@@ -144,9 +145,10 @@ test('add agent and channel use question flow and store mapping', () => {
   const showChannel = runCli(cwd, ['show', 'channel', 'discord-main']);
   assert.equal(showChannel.status, 0, showChannel.stderr);
   const channel = JSON.parse(showChannel.stdout);
+  assert.equal(channel.mode, 'single');
   assert.equal(channel.agent, 'worker');
   assert.equal(channel.discordChannelId, '123456789012345678');
-  assert.equal(channel.workdir, '.');
+  assert.equal(channel.workspace, DEFAULT_CHANNEL_WORKSPACE);
 });
 
 test('add dashboard and edit agent keep dashboard references aligned', () => {
@@ -237,17 +239,18 @@ test('run command executes a mapped channel and status renders agents and channe
   assert.match(status.stdout, /channels=1/u);
   assert.match(status.stdout, /worker/u);
   assert.match(status.stdout, /mapped=discord-main/u);
-  assert.match(status.stdout, /workdirs=\./u);
+  assert.match(status.stdout, /workspaces=~/u);
   assert.match(status.stdout, /type=command/u);
 
   const channelStatus = runCli(cwd, ['status', 'channel', 'discord-main']);
   assert.equal(channelStatus.status, 0, channelStatus.stderr);
+  assert.match(channelStatus.stdout, /mode=single/u);
   assert.match(channelStatus.stdout, /agent=worker/u);
   assert.match(channelStatus.stdout, /discordChannelId=123456789012345678/u);
-  assert.match(channelStatus.stdout, /workdir=\./u);
+  assert.match(channelStatus.stdout, /workspace=~/u);
 });
 
-test('help omits chat and session commands', () => {
+test('help omits chat and session commands and documents the admin port', () => {
   const cwd = createProject();
   const help = runCli(cwd, ['help']);
 
@@ -255,9 +258,11 @@ test('help omits chat and session commands', () => {
   assert.doesNotMatch(help.stdout, /hkclaw-lite chat /u);
   assert.doesNotMatch(help.stdout, /hkclaw-lite session /u);
   assert.match(help.stdout, /hkclaw-lite run /u);
+  assert.match(help.stdout, /hkclaw-lite admin \[--root DIR\] \[--host 127\.0\.0\.1\] \[--port 4622\]/u);
+  assert.match(help.stdout, /hkclaw-lite discord serve \[--root DIR\] \[--env-file \.env\]/u);
 });
 
-test('run command injects prompt envelope, raw prompt, and channel workdir', () => {
+test('run command injects prompt envelope, raw prompt, and channel workspace', () => {
   const cwd = createProject();
   const skillDir = path.join(cwd, 'skills', 'reviewer');
   const contextDir = path.join(cwd, 'context');
@@ -282,6 +287,7 @@ test('run command injects prompt envelope, raw prompt, and channel workdir', () 
     runCli(cwd, ['add', 'channel'], {
       input: buildChannelAnswers({
         name: 'discord-main',
+        workspace: '.',
         agentChoice: '1',
       }),
     }).status,
@@ -293,12 +299,49 @@ test('run command injects prompt envelope, raw prompt, and channel workdir', () 
   assert.match(result.stdout, /hasSkills=true/u);
   assert.match(result.stdout, /hasContext=true/u);
   assert.match(result.stdout, /hasRuntime=true/u);
+  assert.match(result.stdout, /hasSession=false/u);
   assert.match(result.stdout, /hasChannel=true/u);
   assert.match(result.stdout, /raw=inspect me/u);
   assert.match(
     result.stdout,
     new RegExp(`workdir=${cwd.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),
   );
+});
+
+test('run command injects recent owner session history on repeated channel turns', () => {
+  const cwd = createProject();
+
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({
+        name: 'worker',
+        env: 'HKCLAW_LITE_EXPECT_HISTORY_NEEDLE=first request for memory',
+        command: `node ${inspectFixturePath}`,
+      }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'channel'], {
+      input: buildChannelAnswers({
+        name: 'discord-main',
+        workspace: '.',
+        agentChoice: '1',
+      }),
+    }).status,
+    0,
+  );
+
+  const first = runCli(cwd, ['run', '--channel', 'discord-main', '--message', 'first request for memory']);
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /hasSession=false/u);
+
+  const second = runCli(cwd, ['run', '--channel', 'discord-main', '--message', 'second request now']);
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /hasSession=true/u);
+  assert.match(second.stdout, /hasHistoryNeedle=true/u);
+  assert.match(second.stdout, /raw=second request now/u);
 });
 
 test('run command falls back to fallbackAgent when the primary agent fails', () => {
@@ -433,7 +476,7 @@ test('run command routes invalid reviewer verdicts to the arbiter', () => {
   assert.match(result.stdout, /arbiter-final/u);
 });
 
-test('legacy agent workdir migrates to channel workdir on load', () => {
+test('legacy agent workdir migrates to channel workspace on load', () => {
   const cwd = createProject();
   assert.equal(runCli(cwd, ['init']).status, 0);
 
@@ -459,7 +502,8 @@ test('legacy agent workdir migrates to channel workdir on load', () => {
 
   const showChannel = runCli(cwd, ['show', 'channel', 'main']);
   assert.equal(showChannel.status, 0, showChannel.stderr);
-  assert.equal(JSON.parse(showChannel.stdout).workdir, 'legacy-space');
+  assert.equal(JSON.parse(showChannel.stdout).mode, 'single');
+  assert.equal(JSON.parse(showChannel.stdout).workspace, 'legacy-space');
 });
 
 test('shared env can be managed from CLI', () => {
@@ -587,6 +631,7 @@ test('tribunal channel stores reviewer and arbiter config', () => {
 
   const channelStatus = runCli(cwd, ['status', 'channel', 'tribunal-main']);
   assert.equal(channelStatus.status, 0, channelStatus.stderr);
+  assert.match(channelStatus.stdout, /mode=tribunal/u);
   assert.match(channelStatus.stdout, /reviewer=reviewer/u);
   assert.match(channelStatus.stdout, /reviewRounds=2/u);
 });
@@ -650,7 +695,7 @@ test('prompt envelope injects skills and baseline context separately', () => {
     channel: {
       name: 'discord-main',
       discordChannelId: '123',
-      workdir: '.',
+      workspace: '.',
     },
     userPrompt: 'review the API package',
   });
@@ -697,8 +742,8 @@ test('backup export and import restore config, project assets, and watcher state
     runCli(source, ['add', 'channel'], {
       input: buildChannelAnswers({
         name: 'discord-main',
+        workspace: 'workspace',
         agentChoice: '1',
-        workdir: 'workspace',
       }),
     }).status,
     0,
@@ -781,8 +826,8 @@ test('migrate copies hkclaw-lite state from another project root', () => {
     runCli(source, ['add', 'channel'], {
       input: buildChannelAnswers({
         name: 'discord-main',
+        workspace: 'workspace',
         agentChoice: '1',
-        workdir: 'workspace',
       }),
     }).status,
     0,
@@ -793,7 +838,8 @@ test('migrate copies hkclaw-lite state from another project root', () => {
 
   const showChannel = runCli(destination, ['show', 'channel', 'discord-main']);
   assert.equal(showChannel.status, 0, showChannel.stderr);
-  assert.equal(JSON.parse(showChannel.stdout).workdir, 'workspace');
+  assert.equal(JSON.parse(showChannel.stdout).mode, 'single');
+  assert.equal(JSON.parse(showChannel.stdout).workspace, 'workspace');
 
   const envList = runCli(destination, ['env', 'list']);
   assert.equal(envList.status, 0, envList.stderr);

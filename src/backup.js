@@ -129,7 +129,7 @@ function collectProjectAssets(projectRoot, config) {
   }
 
   for (const [name, channel] of Object.entries(config.channels || {})) {
-    collectPath(projectRoot, channel.workdir, `channel.${name}.workdir`, {
+    collectPath(projectRoot, channel.workspace || channel.workdir, `channel.${name}.workspace`, {
       expectDirectory: true,
       bundleDirectoryContents: false,
       bundleDirectories: true,
