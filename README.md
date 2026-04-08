@@ -512,7 +512,7 @@ hkclaw-lite status dashboard <name>
 기본 이미지는 이 저장소의 `Dockerfile`로 만들 수 있다.
 
 ```bash
-docker build -t ghcr.io/tkfka1/hkclaw-lite:0.1.0 .
+docker build -t ghcr.io/tkfka1/hkclaw-lite:1.0.0 .
 ```
 
 Helm chart는 `charts/hkclaw-lite` 아래에 있다.
@@ -520,7 +520,7 @@ Helm chart는 `charts/hkclaw-lite` 아래에 있다.
 ```bash
 helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
   --set image.repository=ghcr.io/tkfka1/hkclaw-lite \
-  --set image.tag=0.1.0
+  --set image.tag=1.0.0
 ```
 
 설치 후 로컬에서는 아래처럼 포트 포워딩해서 웹 어드민에 붙으면 된다.
@@ -543,7 +543,7 @@ node /app/bin/hkclaw-lite.js status --root /data
 ```bash
 helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
   --set image.repository=ghcr.io/tkfka1/hkclaw-lite \
-  --set image.tag=0.1.0 \
+  --set image.tag=1.0.0 \
   --set bootstrapBackup.enabled=true \
   --set-file bootstrapBackup.data=./backups/project.json
 ```
