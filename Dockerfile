@@ -1,6 +1,7 @@
-FROM node:20-bookworm-slim
+FROM node:24-bookworm-slim
 
-ENV APP_HOME=/app
+ENV APP_HOME=/app \
+    NODE_ENV=production
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates git tini \
@@ -8,7 +9,9 @@ RUN apt-get update \
 
 WORKDIR ${APP_HOME}
 
-COPY package.json README.md LICENSE ./
+COPY package.json package-lock.json README.md LICENSE ./
+RUN npm ci --omit=dev
+
 COPY bin ./bin
 COPY src ./src
 COPY docker/entrypoint.sh /usr/local/bin/hkclaw-lite-entrypoint

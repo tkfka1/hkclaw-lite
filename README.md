@@ -47,7 +47,7 @@
 
 ## 요구 사항
 
-- Node.js 20 이상
+- Node.js 24 이상
 - `codex`, `claude`, `gemini` 같은 외부 에이전트 CLI를 쓸 경우 해당 CLI가 로컬에 설치되어 있어야 한다.
 - GitHub / GitLab CI를 private 리포지토리에서 확인할 경우 API 토큰이 필요하다.
 
