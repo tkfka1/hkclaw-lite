@@ -65,7 +65,9 @@ docker run --rm \
 운영 메모:
 
 - `/data`는 로그인 상태와 런타임 상태를 유지하는 용도다.
-- `/workspace`는 실제 작업 디렉터리를 붙이는 용도다.
+- `/workspace`는 선택적으로 추가 코드 볼륨을 붙이는 용도다. Helm 기본값에서는 비활성화되어 있다.
+- 별도 컨테이너/Pod를 추가로 띄우면 `HOME=/data` 를 동일하게 공유해야 Claude/Gemini 로그인 상태와 hkclaw-lite 런타임 상태가 그대로 보인다.
+- 채널 `workspace` 값이 `~` 이면 컨테이너 안에서는 `/data` 로 해석된다. 실제 저장소를 `/workspace`에 붙였다면 채널 워크스페이스를 `/workspace/...` 절대 경로로 지정해야 한다.
 - 컨테이너는 자동으로 역할을 추측하지 않는다. `admin`, `run`, `discord serve` 중 어떤 명령을 띄울지 직접 넘겨야 한다.
 
 ## 3. Helm
@@ -89,6 +91,12 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 - `admin --host 0.0.0.0 --port 5687`
 - `HOME=/data`
 - 상태 저장용 PVC 사용
+- 추가 `/workspace` 볼륨은 비활성화
+
+운영 주의:
+
+- `discord serve` 를 별도 Deployment/Pod로 분리하면 `/data` PVC를 admin Pod와 공유해야 한다. 그렇지 않으면 Claude 로그인 상태와 `.hkclaw-lite` 프로젝트 상태가 분리된다.
+- 채널 `workspace` 가 `~` 면 Helm 기본값에서는 `/data` 를 뜻한다. 별도 코드 볼륨을 `/workspace` 에 마운트했다면 채널 워크스페이스를 `/workspace/<repo>` 같은 절대 경로로 맞춰야 한다.
 
 즉 Helm 기본 배포는 웹 어드민용이고, Discord 워커를 별도 Deployment로 나누고 싶으면 `args`를 따로 override 하면 된다.
 
