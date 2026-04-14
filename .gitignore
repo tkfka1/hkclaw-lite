@@ -1,5 +1,9 @@
 node_modules/
 .hkclaw-lite/
+.claude/
+.codex/
+.gemini/
+.env
 .admin-password
 npm-debug.log*
 *.tgz
