@@ -17,7 +17,7 @@ Default args: {{ join " " .Values.args }}
 No Kubernetes Service is created because service.enabled=false.
 {{- end }}
 
-If you need Codex, Claude Code, Gemini CLI, or other provider binaries, build a derived image and set:
+If an optional provider bundle failed to install, rebuild a derived image with the needed dependencies and set:
 
   --set image.repository=<your-image>
   --set image.tag=<your-tag>

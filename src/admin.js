@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import http from 'node:http';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   buildAdminSnapshot,
@@ -24,9 +26,15 @@ import {
   setAdminPassword,
   verifyAdminPassword,
 } from './runtime-db.js';
-import { resolveManagedAgentCli, runAgentTurn } from './runners.js';
+import {
+  inspectAgentRuntime,
+  resolveManagedAgentCli,
+  runAgentTurn,
+} from './runners.js';
+import { createClaudeWorkerBridge } from './claude-bridge.js';
 import {
   DEFAULT_ADMIN_PORT,
+  DEFAULT_LOCAL_LLM_BASE_URL,
 } from './constants.js';
 import { listAgentModels } from './model-catalog.js';
 import { buildAgentDefinition, loadConfig } from './store.js';
@@ -41,7 +49,19 @@ const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const ADMIN_PASSWORD_ENV = 'HKCLAW_LITE_ADMIN_PASSWORD';
 const ADMIN_SESSION_COOKIE = 'hkclaw_lite_admin_session';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const AUTH_STATUS_AGENT_TYPES = ['codex', 'claude-code'];
+const AI_STATUS_AGENT_TYPES = ['codex', 'claude-code', 'gemini-cli', 'local-llm'];
+const moduleRequire = createRequire(import.meta.url);
+const claudeAuthFlows = new Map();
+const geminiAuthFlows = new Map();
+const CLAUDE_ACP_DISABLED_ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_VERSION',
+];
+const GEMINI_GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GEMINI_GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GEMINI_GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';
+const GEMINI_GOOGLE_MANUAL_REDIRECT_URI = 'https://codeassist.google.com/authcode';
 
 export async function startAdminServer(
   projectRoot,
@@ -197,7 +217,7 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
   if (request.method === 'GET' && pathname === '/api/ai-statuses') {
     writeJson(response, 200, {
       ok: true,
-      statuses: await readAiAuthStatuses(projectRoot),
+      statuses: await readAiStatuses(projectRoot),
     });
     return;
   }
@@ -400,16 +420,38 @@ async function runOneShotViaCli(projectRoot, payload) {
 async function runAgentAuthAction(projectRoot, payload) {
   const agentType = String(payload?.agentType || '').trim();
   const action = String(payload?.action || 'status').trim();
+  if (agentType === 'claude-code' && action === 'login') {
+    return startClaudeAuthFlow(projectRoot, payload);
+  }
+  if (agentType === 'claude-code' && action === 'complete-login') {
+    return completeClaudeAuthFlow(projectRoot, payload);
+  }
+  if (agentType === 'claude-code' && action === 'logout') {
+    await cleanupClaudeAuthFlow(projectRoot);
+  }
+  if (agentType === 'gemini-cli' && action === 'login') {
+    return startGeminiAuthFlow(projectRoot, payload);
+  }
+  if (agentType === 'gemini-cli' && action === 'complete-login') {
+    return completeGeminiAuthFlow(projectRoot, payload);
+  }
+  if (agentType === 'gemini-cli' && action === 'logout') {
+    return logoutGeminiAuthFlow(projectRoot);
+  }
   if (action === 'test') {
     return runAgentAuthTest(projectRoot, payload);
   }
-  const spec = resolveAgentAuthCommand(agentType, action);
+  if (action === 'status') {
+    return readAgentStatus(projectRoot, agentType, payload);
+  }
+  const spec = resolveAgentAuthCommand(agentType, action, payload);
+  const env = buildManagedAgentEnv(projectRoot, agentType);
 
   return new Promise((resolve, reject) => {
     const child = spawnResolvedCommand(spec.command, spec.args, {
       agentType,
       cwd: process.cwd(),
-      env: process.env,
+      env,
     });
     const stdout = [];
     const stderr = [];
@@ -452,12 +494,21 @@ async function runAgentAuthAction(projectRoot, payload) {
 }
 
 function spawnResolvedCommand(command, args, options) {
-  const managedCli = options?.agentType
-    ? resolveManagedAgentCli(options.agentType, options.env)
+  const managedRunner = options?.agentType
+    ? resolveManagedAgentRunner(options.agentType, options.env)
     : null;
-  if (managedCli) {
-    return spawn(managedCli.command, [...managedCli.argsPrefix, ...args], {
+  if (options?.agentType) {
+    assert(
+      managedRunner,
+      `Bundled runtime for agent type "${options.agentType}" is not installed.`,
+    );
+    const env = {
+      ...(options?.env || process.env),
+      ...(managedRunner.envPatch || {}),
+    };
+    return spawn(managedRunner.command, [...managedRunner.argsPrefix, ...args], {
       ...options,
+      env,
       shell: false,
     });
   }
@@ -471,9 +522,77 @@ function spawnResolvedCommand(command, args, options) {
   });
 }
 
-async function readAiAuthStatuses(projectRoot) {
+function resolveManagedAgentRunner(agentType, env = process.env) {
+  if (agentType === 'claude-code') {
+    return resolveClaudeAuthCli(env);
+  }
+  return resolveManagedAgentCli(agentType, env);
+}
+
+function getClaudeAuthFlowKey(projectRoot) {
+  return path.resolve(projectRoot);
+}
+
+function getClaudeAuthFlow(projectRoot) {
+  return claudeAuthFlows.get(getClaudeAuthFlowKey(projectRoot)) || null;
+}
+
+function setClaudeAuthFlow(projectRoot, flow) {
+  claudeAuthFlows.set(getClaudeAuthFlowKey(projectRoot), flow);
+}
+
+async function cleanupClaudeAuthFlow(projectRoot) {
+  const key = getClaudeAuthFlowKey(projectRoot);
+  const flow = claudeAuthFlows.get(key);
+  claudeAuthFlows.delete(key);
+  if (!flow) {
+    return;
+  }
+  try {
+    await flow.bridge?.request?.('auth.close').catch(() => {});
+    flow.bridge?.close?.();
+  } catch {
+    // Ignore cleanup failures; the auth flow is best-effort.
+  }
+}
+
+function resolveClaudeAuthCli(env = process.env) {
+  const packageJsonOverride = String(env.HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON || '').trim();
+  let packageJsonPath = packageJsonOverride;
+  if (!packageJsonPath) {
+    try {
+      packageJsonPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk/package.json');
+    } catch {
+      try {
+        const entryPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk');
+        const candidate = path.join(path.dirname(entryPath), 'package.json');
+        if (!fs.existsSync(candidate)) {
+          return null;
+        }
+        packageJsonPath = candidate;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  const cliPath = path.resolve(path.dirname(packageJsonPath), 'cli.js');
+  if (!fs.existsSync(cliPath)) {
+    return null;
+  }
+
+  return {
+    source: 'bundled',
+    command: process.execPath,
+    argsPrefix: [cliPath],
+    detail: `@anthropic-ai/claude-agent-sdk (${cliPath})`,
+    envPatch: {},
+  };
+}
+
+async function readAiStatuses(projectRoot) {
   const entries = await Promise.all(
-    AUTH_STATUS_AGENT_TYPES.map(async (agentType) => {
+    AI_STATUS_AGENT_TYPES.map(async (agentType) => {
       try {
         const authResult = await runAgentAuthAction(projectRoot, {
           agentType,
@@ -509,6 +628,712 @@ async function readAiAuthStatuses(projectRoot) {
   return Object.fromEntries(entries);
 }
 
+async function startClaudeAuthFlow(projectRoot, payload = {}) {
+  await cleanupClaudeAuthFlow(projectRoot);
+
+  const loginMode = normalizeClaudeLoginMode(payload?.options?.loginMode);
+  const env = buildManagedAgentEnv(projectRoot, 'claude-code');
+  const bridge = createClaudeWorkerBridge({
+    cwd: projectRoot,
+    env,
+  });
+
+  try {
+    const auth = await bridge.request('auth.start', {
+      cwd: projectRoot,
+      loginMode,
+    });
+    const flow = {
+      id: randomUUID(),
+      createdAt: Date.now(),
+      bridge,
+      loginMode,
+      manualUrl: String(auth?.manualUrl || '').trim(),
+      automaticUrl: String(auth?.automaticUrl || '').trim(),
+    };
+    setClaudeAuthFlow(projectRoot, flow);
+
+    return {
+      agentType: 'claude-code',
+      action: 'login',
+      command: `claude oauth (${loginMode})`,
+      output: [
+        '브라우저에서 로그인을 완료하세요.',
+        flow.manualUrl ? `manualUrl: ${flow.manualUrl}` : '',
+        flow.automaticUrl ? `automaticUrl: ${flow.automaticUrl}` : '',
+      ].filter(Boolean).join('\n'),
+      details: {
+        summary: '브라우저에서 로그인을 완료하세요.',
+        loginStarted: true,
+        requiresCode: true,
+        loginMode,
+        sessionId: flow.id,
+        url: flow.manualUrl || flow.automaticUrl || '',
+        manualUrl: flow.manualUrl || '',
+        automaticUrl: flow.automaticUrl || '',
+      },
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+    };
+  } catch (error) {
+    bridge.close();
+    throw error;
+  }
+}
+
+async function completeClaudeAuthFlow(projectRoot, payload = {}) {
+  const flow = getClaudeAuthFlow(projectRoot);
+  assert(flow, 'Claude Code ACP 로그인 세션이 없습니다. 먼저 로그인 버튼을 누르세요.');
+  const callback = parseClaudeOAuthCallbackPayload(payload);
+  const resolvedState = callback.state || resolveClaudeOAuthState(flow);
+  assert(
+    callback.authorizationCode,
+    '브라우저 완료 후 Authentication Code를 붙여넣으세요.',
+  );
+  assert(
+    resolvedState,
+    'Claude Code ACP 로그인 상태를 찾지 못했습니다. 다시 로그인 버튼을 누르세요.',
+  );
+
+  try {
+    const completion = await flow.bridge.request('auth.complete', {
+      authorizationCode: callback.authorizationCode,
+      state: resolvedState,
+    });
+    const account = completion?.account || {};
+    await cleanupClaudeAuthFlow(projectRoot);
+    return {
+      agentType: 'claude-code',
+      action: 'complete-login',
+      command: 'claude oauth callback',
+      output: [
+        'Claude Code ACP 로그인 완료',
+        account?.email ? `email: ${account.email}` : '',
+        account?.organization ? `organization: ${account.organization}` : '',
+      ].filter(Boolean).join('\n'),
+      details: {
+        summary: 'Claude Code ACP 로그인 완료',
+        loggedIn: true,
+        authMethod: 'oauth',
+        account,
+      },
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+    };
+  } catch (error) {
+    await cleanupClaudeAuthFlow(projectRoot);
+    throw error;
+  }
+}
+
+function getGeminiAuthFlowKey(projectRoot) {
+  return path.resolve(projectRoot);
+}
+
+function getGeminiAuthFlow(projectRoot) {
+  return geminiAuthFlows.get(getGeminiAuthFlowKey(projectRoot)) || null;
+}
+
+function setGeminiAuthFlow(projectRoot, flow) {
+  geminiAuthFlows.set(getGeminiAuthFlowKey(projectRoot), flow);
+}
+
+async function cleanupGeminiAuthFlow(projectRoot) {
+  geminiAuthFlows.delete(getGeminiAuthFlowKey(projectRoot));
+}
+
+async function startGeminiAuthFlow(projectRoot) {
+  await cleanupGeminiAuthFlow(projectRoot);
+
+  const authRuntime = await loadGeminiAuthRuntime(projectRoot);
+  const oauthConfig = readGeminiOauthConfig(authRuntime);
+  const codeVerifier = createPkceCodeVerifier();
+  const state = randomBytes(32).toString('hex');
+  const codeChallenge = createPkceCodeChallenge(codeVerifier);
+  const authUrl = buildGeminiGoogleAuthUrl(oauthConfig, {
+    codeChallenge,
+    state,
+  });
+
+  const flow = {
+    id: randomUUID(),
+    createdAt: Date.now(),
+    codeVerifier,
+    state,
+    authUrl,
+    oauthConfig,
+  };
+  setGeminiAuthFlow(projectRoot, flow);
+
+  return {
+    agentType: 'gemini-cli',
+    action: 'login',
+    command: 'gemini oauth manual',
+    output: [
+      '브라우저에서 Google 로그인을 완료하세요.',
+      `authorizationUrl: ${authUrl}`,
+      '로그인 후 표시되는 authorization code를 붙여넣고 로그인 완료를 누르세요.',
+    ].join('\n'),
+    details: {
+      summary: '브라우저에서 Google 로그인을 완료하세요.',
+      loginStarted: true,
+      requiresCode: true,
+      pendingLogin: true,
+      sessionId: flow.id,
+      url: authUrl,
+      manualUrl: authUrl,
+      authMethod: 'google',
+    },
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+  };
+}
+
+async function completeGeminiAuthFlow(projectRoot, payload = {}) {
+  const flow = getGeminiAuthFlow(projectRoot);
+  assert(flow, 'Gemini CLI 로그인 세션이 없습니다. 먼저 로그인 버튼을 누르세요.');
+
+  const authorizationCode = parseGeminiAuthorizationCodePayload(payload);
+  assert(
+    authorizationCode,
+    '브라우저 로그인 완료 후 authorization code를 붙여넣으세요.',
+  );
+
+  const authRuntime = await loadGeminiAuthRuntime(projectRoot);
+  const tokens = await exchangeGeminiAuthCode(flow.oauthConfig, {
+    authorizationCode,
+    codeVerifier: flow.codeVerifier,
+  });
+
+  const account = await persistGeminiOAuthCredentials(authRuntime, tokens);
+  await cleanupGeminiAuthFlow(projectRoot);
+
+  return {
+    agentType: 'gemini-cli',
+    action: 'complete-login',
+    command: 'gemini oauth exchange',
+    output: [
+      'Gemini CLI Google 로그인 완료',
+      account?.email ? `email: ${account.email}` : '',
+    ].filter(Boolean).join('\n'),
+    details: {
+      summary: 'Gemini CLI Google 로그인 완료',
+      loggedIn: true,
+      ready: true,
+      runtimeReady: true,
+      authMethod: 'google',
+      account,
+    },
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+  };
+}
+
+async function logoutGeminiAuthFlow(projectRoot) {
+  const authRuntime = await loadGeminiAuthRuntime(projectRoot);
+  await cleanupGeminiAuthFlow(projectRoot);
+  await authRuntime.supportModule.clearCachedCredentialFile();
+  const accountManager = new authRuntime.supportModule.UserAccountManager();
+  const accountCachePath = String(accountManager.getGoogleAccountsCachePath?.() || '').trim();
+  if (accountCachePath) {
+    await fs.promises.rm(accountCachePath, { force: true }).catch(() => {});
+  }
+  authRuntime.supportModule.clearOauthClientCache?.();
+
+  return {
+    agentType: 'gemini-cli',
+    action: 'logout',
+    command: 'gemini logout',
+    output: 'Gemini CLI Google 로그인 상태를 지웠습니다.',
+    details: {
+      summary: '로그아웃됨',
+      loggedIn: false,
+      authMethod: 'google',
+    },
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+  };
+}
+
+async function loadGeminiAuthRuntime(projectRoot) {
+  const env = buildManagedAgentEnv(projectRoot, 'gemini-cli');
+  const cli = resolveManagedAgentCli('gemini-cli', env);
+  assert(
+    cli,
+    'gemini is unavailable. Bundled dependency @google/gemini-cli is required; reinstall hkclaw-lite without omitting optional dependencies.',
+  );
+
+  const scriptPath = String(cli.argsPrefix?.[0] || '').trim();
+  assert(scriptPath, 'Bundled Gemini CLI entrypoint is unavailable.');
+
+  const bundleDir = path.dirname(scriptPath);
+  const geminiSource = fs.readFileSync(scriptPath, 'utf8');
+  const supportModulePath = resolveGeminiBundleChunkPath(bundleDir, geminiSource, 'getOauthClient');
+  const coreModulePath = resolveGeminiBundleChunkPath(bundleDir, geminiSource, 'Storage');
+  const [supportModule, coreModule] = await Promise.all([
+    import(pathToFileURL(supportModulePath).href),
+    import(pathToFileURL(coreModulePath).href),
+  ]);
+
+  assert(
+    typeof supportModule.UserAccountManager === 'function',
+    'Gemini CLI support bundle is missing UserAccountManager.',
+  );
+  assert(
+    typeof supportModule.clearCachedCredentialFile === 'function',
+    'Gemini CLI support bundle is missing clearCachedCredentialFile().',
+  );
+  assert(
+    coreModule?.Storage && typeof coreModule.Storage.getOAuthCredsPath === 'function',
+    'Gemini CLI core bundle is missing Storage.getOAuthCredsPath().',
+  );
+
+  return {
+    cli,
+    scriptPath,
+    bundleDir,
+    supportModulePath,
+    coreModulePath,
+    supportModule,
+    coreModule,
+  };
+}
+
+function resolveGeminiBundleChunkPath(bundleDir, geminiSource, exportedName) {
+  const escapedName = exportedName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const pattern = new RegExp(
+    `import\\s*\\{[\\s\\S]*?\\b${escapedName}\\b[\\s\\S]*?\\}\\s*from\\s*"(.\\/chunk-[^"]+\\.js)"`,
+    'u',
+  );
+  const match = geminiSource.match(pattern);
+  assert(match?.[1], `Gemini CLI bundle is missing ${exportedName} import metadata.`);
+  return path.resolve(bundleDir, match[1]);
+}
+
+function readGeminiOauthConfig(authRuntime) {
+  const source = fs.readFileSync(authRuntime.supportModulePath, 'utf8');
+  const clientId =
+    String(process.env.HKCLAW_LITE_GEMINI_OAUTH_CLIENT_ID || '').trim() ||
+    source.match(/var OAUTH_CLIENT_ID = "([^"]+)";/u)?.[1] ||
+    '';
+  const clientSecret =
+    String(process.env.HKCLAW_LITE_GEMINI_OAUTH_CLIENT_SECRET || '').trim() ||
+    source.match(/var OAUTH_CLIENT_SECRET = "([^"]+)";/u)?.[1] ||
+    '';
+  const redirectUri =
+    String(process.env.HKCLAW_LITE_GEMINI_OAUTH_MANUAL_REDIRECT_URI || '').trim() ||
+    source.match(/const redirectUri = "(https:\/\/[^"]+)";/u)?.[1] ||
+    GEMINI_GOOGLE_MANUAL_REDIRECT_URI;
+  const scopeMatch = source.match(/var OAUTH_SCOPE = \[([\s\S]*?)\];/u)?.[1] || '';
+  const scopes = Array.from(scopeMatch.matchAll(/"([^"]+)"/gu), (entry) => entry[1]);
+
+  assert(clientId, 'Gemini CLI bundle is missing OAuth client ID metadata.');
+  assert(clientSecret, 'Gemini CLI bundle is missing OAuth client secret metadata.');
+  assert(scopes.length > 0, 'Gemini CLI bundle is missing OAuth scope metadata.');
+
+  return {
+    clientId,
+    clientSecret,
+    redirectUri,
+    scopes,
+    authorizationUrl:
+      String(process.env.HKCLAW_LITE_GEMINI_OAUTH_AUTH_URL || '').trim() ||
+      GEMINI_GOOGLE_AUTH_URL,
+    tokenUrl:
+      String(process.env.HKCLAW_LITE_GEMINI_OAUTH_TOKEN_URL || '').trim() ||
+      GEMINI_GOOGLE_TOKEN_URL,
+    userInfoUrl:
+      String(process.env.HKCLAW_LITE_GEMINI_OAUTH_USERINFO_URL || '').trim() ||
+      GEMINI_GOOGLE_USERINFO_URL,
+  };
+}
+
+function createPkceCodeVerifier() {
+  return randomBytes(64).toString('base64url');
+}
+
+function createPkceCodeChallenge(codeVerifier) {
+  return createHash('sha256').update(codeVerifier).digest('base64url');
+}
+
+function buildGeminiGoogleAuthUrl(oauthConfig, { codeChallenge, state }) {
+  const params = new URLSearchParams({
+    client_id: oauthConfig.clientId,
+    response_type: 'code',
+    redirect_uri: oauthConfig.redirectUri,
+    access_type: 'offline',
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    scope: oauthConfig.scopes.join(' '),
+  });
+  return `${oauthConfig.authorizationUrl}?${params.toString()}`;
+}
+
+function parseGeminiAuthorizationCodePayload(payload = {}) {
+  const value = String(
+    payload?.authorizationCode ||
+    payload?.code ||
+    payload?.callbackUrl ||
+    payload?.options?.authorizationCode ||
+    '',
+  ).trim();
+  if (!value) {
+    return '';
+  }
+
+  try {
+    const parsedUrl = new URL(value);
+    return String(
+      parsedUrl.searchParams.get('code') ||
+      parsedUrl.searchParams.get('authorization_code') ||
+      '',
+    ).trim();
+  } catch {
+    return value;
+  }
+}
+
+async function exchangeGeminiAuthCode(oauthConfig, { authorizationCode, codeVerifier }) {
+  const response = await fetch(oauthConfig.tokenUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      code: authorizationCode,
+      code_verifier: codeVerifier,
+      client_id: oauthConfig.clientId,
+      client_secret: oauthConfig.clientSecret,
+      redirect_uri: oauthConfig.redirectUri,
+      grant_type: 'authorization_code',
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      typeof payload.error_description === 'string'
+        ? payload.error_description
+        : typeof payload.error === 'string'
+          ? payload.error
+          : `HTTP ${response.status}`;
+    throw new Error(`Gemini OAuth 토큰 교환에 실패했습니다: ${message}`);
+  }
+
+  return payload;
+}
+
+async function persistGeminiOAuthCredentials(authRuntime, tokens) {
+  const credentialsPath = authRuntime.coreModule.Storage.getOAuthCredsPath();
+  fs.mkdirSync(path.dirname(credentialsPath), { recursive: true });
+  fs.writeFileSync(credentialsPath, JSON.stringify(tokens, null, 2), {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  try {
+    fs.chmodSync(credentialsPath, 0o600);
+  } catch {
+    // Ignore chmod failures on unsupported filesystems.
+  }
+
+  authRuntime.supportModule.clearOauthClientCache?.();
+  const account = await fetchGeminiUserInfo(authRuntime, tokens);
+  if (account?.email) {
+    const manager = new authRuntime.supportModule.UserAccountManager();
+    await manager.cacheGoogleAccount(account.email);
+  }
+  return account;
+}
+
+async function fetchGeminiUserInfo(authRuntime, tokens) {
+  const accessToken = String(tokens?.access_token || '').trim();
+  if (!accessToken) {
+    return null;
+  }
+
+  const oauthConfig = readGeminiOauthConfig(authRuntime);
+  const response = await fetch(oauthConfig.userInfoUrl, {
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  return {
+    email: typeof payload.email === 'string' ? payload.email : '',
+    name: typeof payload.name === 'string' ? payload.name : '',
+  };
+}
+
+async function readGeminiAuthState(projectRoot) {
+  const authRuntime = await loadGeminiAuthRuntime(projectRoot);
+  const accountManager = new authRuntime.supportModule.UserAccountManager();
+  const email = String(accountManager.getCachedGoogleAccount?.() || '').trim();
+  const credentialsPath = authRuntime.coreModule.Storage.getOAuthCredsPath();
+  const hasCachedCredentials = fs.existsSync(credentialsPath);
+  const normalizedEmail = hasCachedCredentials ? email : '';
+  return {
+    authRuntime,
+    email: normalizedEmail,
+    hasCachedCredentials,
+    loggedIn: Boolean(hasCachedCredentials),
+  };
+}
+
+async function readAgentStatus(projectRoot, agentType, payload = {}) {
+  if (agentType === 'codex') {
+    const authResult = await runManagedCliAuthAction(projectRoot, agentType, 'status', payload);
+    return {
+      ...authResult,
+      output: [
+        authResult.output,
+        '인증 저장소: 이 머신의 로컬 Codex 로그인 상태를 그대로 사용합니다.',
+      ].filter(Boolean).join('\n'),
+      details: {
+        ...(authResult.details || {}),
+        sharedLogin: true,
+        authScope: 'local-user',
+      },
+    };
+  }
+
+  const config = loadConfig(projectRoot);
+  const sharedEnv = config.sharedEnv || {};
+
+  if (agentType === 'claude-code') {
+    const runtime = inspectAgentRuntime(projectRoot, { agent: 'claude-code' });
+    const pendingFlow = getClaudeAuthFlow(projectRoot);
+    let authResult;
+    try {
+      authResult = await runManagedCliAuthAction(projectRoot, agentType, 'status', payload);
+    } catch (error) {
+      authResult = {
+        agentType,
+        action: 'status',
+        command: 'claude auth status --json',
+        output: toErrorMessage(error),
+        details: {
+          summary: '로그인 상태 확인 실패',
+          loggedIn: false,
+        },
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      };
+    }
+    const loggedIn = Boolean(authResult?.details?.loggedIn);
+    if (loggedIn && pendingFlow) {
+      await cleanupClaudeAuthFlow(projectRoot);
+    }
+    const activeFlow = loggedIn ? null : getClaudeAuthFlow(projectRoot);
+    const ready = Boolean(runtime.ready && loggedIn);
+    const outputLines = [
+      runtime.ready ? '런타임: 준비됨' : `런타임: ${runtime.detail || '미설치'}`,
+      loggedIn
+        ? `로그인: 완료 (${authResult.details.authMethod || 'account'})`
+        : '로그인: 미완료',
+      activeFlow
+        ? `브라우저 로그인: 진행 중 (${activeFlow.loginMode === 'console' ? 'console' : 'claude.ai'})`
+        : '',
+      activeFlow
+        ? '완료 방법: 브라우저 로그인 후 표시된 Authentication Code를 붙여넣고 로그인 완료를 누르세요.'
+        : '',
+    ].filter(Boolean);
+
+    return {
+      ...authResult,
+      output: outputLines.join('\n'),
+      details: {
+        ...authResult.details,
+        summary: ready
+          ? 'Claude Code ACP 로그인됨'
+          : activeFlow
+            ? 'Claude Code ACP 브라우저 로그인 진행 중'
+            : 'Claude Code ACP 로그인이 필요합니다.',
+        runtimeReady: runtime.ready,
+        ready,
+        pendingLogin: Boolean(activeFlow),
+        requiresCode: Boolean(activeFlow),
+        loginMode: activeFlow?.loginMode || null,
+        manualUrl: activeFlow?.manualUrl || '',
+        automaticUrl: activeFlow?.automaticUrl || '',
+      },
+    };
+  }
+
+  if (agentType === 'gemini-cli') {
+    const runtime = inspectAgentRuntime(projectRoot, { agent: 'gemini-cli' });
+    const credential = resolveCredentialSource(sharedEnv, process.env, [
+      'GEMINI_API_KEY',
+      'GOOGLE_API_KEY',
+    ]);
+    const pendingFlow = getGeminiAuthFlow(projectRoot);
+    let geminiLogin = {
+      loggedIn: false,
+      email: '',
+      hasCachedCredentials: false,
+    };
+
+    if (runtime.ready) {
+      try {
+        geminiLogin = await readGeminiAuthState(projectRoot);
+      } catch {
+        // Keep status best-effort. Runtime can still be used through API keys.
+      }
+    }
+
+    if (geminiLogin.loggedIn && pendingFlow) {
+      await cleanupGeminiAuthFlow(projectRoot);
+    }
+
+    const runtimeReady = Boolean(runtime.ready);
+    const loggedIn = Boolean(geminiLogin.loggedIn);
+    const configured = Boolean(credential.key);
+    const ready = runtimeReady && (loggedIn || configured);
+    const activeFlow = loggedIn ? null : getGeminiAuthFlow(projectRoot);
+    const outputLines = [
+      runtimeReady ? '런타임: 준비됨' : `런타임: ${runtime.detail || '미설치'}`,
+      loggedIn
+        ? `Google 로그인: 완료${geminiLogin.email ? ` (${geminiLogin.email})` : ''}`
+        : 'Google 로그인: 미완료',
+      configured
+        ? `API 키: ${credential.key} (${localizeCredentialSource(credential.source)})`
+        : 'API 키: 미설정 (선택 사항)',
+      activeFlow ? '브라우저 로그인: 진행 중' : '',
+      activeFlow ? '완료 방법: 브라우저 로그인 후 authorization code를 붙여넣고 로그인 완료를 누르세요.' : '',
+    ].filter(Boolean);
+
+    return {
+      agentType,
+      action: 'status',
+      command: 'config inspection',
+      output: outputLines.join('\n'),
+      details: {
+        summary: ready
+          ? (loggedIn ? 'Gemini CLI Google 로그인됨' : 'Gemini CLI API 자격정보 설정됨')
+          : activeFlow
+            ? 'Gemini CLI 브라우저 로그인 진행 중'
+            : runtimeReady
+              ? 'Gemini CLI Google 로그인 또는 API 키가 필요합니다.'
+              : '런타임 준비 필요',
+        loggedIn,
+        configured,
+        runtimeReady,
+        ready,
+        authMethod: loggedIn ? 'google' : (configured ? 'api-key' : 'none'),
+        email: geminiLogin.email || '',
+        pendingLogin: Boolean(activeFlow),
+        requiresCode: Boolean(activeFlow),
+        url: activeFlow?.authUrl || '',
+        manualUrl: activeFlow?.authUrl || '',
+        credentialKey: credential.key || null,
+        credentialSource: credential.key ? localizeCredentialSource(credential.source) : null,
+      },
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+    };
+  }
+
+  if (agentType === 'local-llm') {
+    const runtime = inspectAgentRuntime(projectRoot, { agent: 'local-llm' });
+    const baseUrl =
+      resolveCredentialSource(sharedEnv, process.env, ['LOCAL_LLM_BASE_URL']).value ||
+      DEFAULT_LOCAL_LLM_BASE_URL;
+    const apiKey = resolveCredentialSource(sharedEnv, process.env, ['LOCAL_LLM_API_KEY']);
+    return {
+      agentType,
+      action: 'status',
+      command: 'config inspection',
+      output: [
+        `기본 주소: ${baseUrl}`,
+        apiKey.key
+          ? `API 키: 설정됨 (${localizeCredentialSource(apiKey.source)})`
+          : 'API 키: 미설정 (선택 사항)',
+      ].join('\n'),
+      details: {
+        summary: apiKey.key ? '로컬 LLM 기본 설정됨' : '로컬 LLM 기본 주소 설정됨',
+        configured: true,
+        runtimeReady: runtime.ready,
+        ready: false,
+        baseUrl,
+        credentialOptional: true,
+        credentialSource: apiKey.key ? localizeCredentialSource(apiKey.source) : null,
+      },
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+    };
+  }
+
+  assert(false, `Auth actions are not supported for agent type "${agentType}".`);
+}
+
+async function runManagedCliAuthAction(projectRoot, agentType, action, payload = {}) {
+  const spec = resolveAgentAuthCommand(agentType, action, payload);
+  const env = buildManagedAgentEnv(projectRoot, agentType);
+  return await new Promise((resolve, reject) => {
+    const child = spawnResolvedCommand(spec.command, spec.args, {
+      agentType,
+      cwd: process.cwd(),
+      env,
+    });
+    const stdout = [];
+    const stderr = [];
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, spec.timeoutMs);
+
+    child.stdout.on('data', (chunk) => {
+      stdout.push(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr.push(chunk);
+    });
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timeout);
+      const output = [
+        Buffer.concat(stdout).toString('utf8').trim(),
+        Buffer.concat(stderr).toString('utf8').trim(),
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      const cleanedOutput = stripAnsiEscapeSequences(output);
+
+      resolve({
+        agentType,
+        action,
+        command: [spec.command, ...spec.args].join(' '),
+        output: cleanedOutput || '(출력 없음)',
+        details: parseAgentAuthOutput(agentType, action, cleanedOutput, code),
+        exitCode: code,
+        signal: signal || null,
+        timedOut,
+      });
+    });
+  });
+}
+
 async function runAgentAuthTest(projectRoot, payload) {
   const input = payload?.definition || {};
   const agentType = String(input.agent || payload?.agentType || '').trim();
@@ -527,13 +1352,14 @@ async function runAgentAuthTest(projectRoot, payload) {
     }),
   };
   const prompt = 'Return exactly OK.';
+  const config = loadConfig(projectRoot);
   const output = await runAgentTurn({
     projectRoot,
     agent: service,
     prompt,
     rawPrompt: prompt,
     workdir: String(payload?.workdir || '.').trim() || '.',
-    sharedEnv: {},
+    sharedEnv: config.sharedEnv || {},
   });
 
   return {
@@ -551,36 +1377,42 @@ async function runAgentAuthTest(projectRoot, payload) {
   };
 }
 
-function resolveAgentAuthCommand(agentType, action) {
+function resolveAgentAuthCommand(agentType, action, payload = {}) {
   if (agentType === 'codex') {
-    if (action === 'status') {
-      return { command: 'codex', args: ['login', 'status'], timeoutMs: 10_000 };
-    }
     if (action === 'login') {
       return { command: 'codex', args: ['login', '--device-auth'], timeoutMs: 2_500 };
     }
     if (action === 'logout') {
       return { command: 'codex', args: ['logout'], timeoutMs: 10_000 };
     }
+    if (action === 'status') {
+      return { command: 'codex', args: ['login', 'status'], timeoutMs: 10_000 };
+    }
   }
 
   if (agentType === 'claude-code') {
-    if (action === 'status') {
-      return { command: 'claude', args: ['auth', 'status'], timeoutMs: 10_000 };
-    }
     if (action === 'login') {
-      return {
-        command: 'claude',
-        args: ['auth', 'login'],
-        timeoutMs: 4_000,
-      };
+      const options = payload?.options || {};
+      const loginMode = normalizeClaudeLoginMode(options.loginMode);
+      const args = ['auth', 'login', loginMode === 'console' ? '--console' : '--claudeai'];
+      const email = String(options.email || '').trim();
+      if (email) {
+        args.push('--email', email);
+      }
+      if (options.sso) {
+        args.push('--sso');
+      }
+      return { command: 'claude', args, timeoutMs: 4_000 };
     }
     if (action === 'logout') {
       return { command: 'claude', args: ['auth', 'logout'], timeoutMs: 10_000 };
     }
+    if (action === 'status') {
+      return { command: 'claude', args: ['auth', 'status', '--json'], timeoutMs: 10_000 };
+    }
   }
 
-  throw new Error(`Auth actions are not supported for agent type "${agentType}".`);
+  assert(false, `Auth actions are not supported for agent type "${agentType}".`);
 }
 
 function parseAgentAuthOutput(agentType, action, output, exitCode) {
@@ -611,23 +1443,19 @@ function parseAgentAuthOutput(agentType, action, output, exitCode) {
 
   if (agentType === 'claude-code') {
     if (action === 'status') {
-      try {
-        const payload = JSON.parse(trimmed);
-        return {
-          summary: payload.loggedIn ? '로그인됨' : '로그인 안 됨',
-          loggedIn: Boolean(payload.loggedIn),
-          authMethod: payload.authMethod || 'unknown',
-        };
-      } catch {
-        return {
-          summary: trimmed || '상태 확인 완료',
-        };
-      }
+      const parsed = parseJsonObject(trimmed);
+      const loggedIn = Boolean(parsed?.loggedIn);
+      return {
+        summary: loggedIn ? '로그인됨' : '로그인 안 됨',
+        loggedIn,
+        authMethod: parsed?.authMethod || 'none',
+        apiProvider: parsed?.apiProvider || '',
+      };
     }
     if (action === 'login') {
-      const url = trimmed.match(/https:\/\/\S+/u)?.[0] || '';
+      const url = extractFirstUrl(trimmed);
       return {
-        summary: url ? '브라우저에서 로그인 링크를 여세요.' : '로그인을 시작했습니다.',
+        summary: url ? '브라우저에서 로그인을 완료하세요.' : '로그인을 시작했습니다.',
         url,
       };
     }
@@ -643,8 +1471,171 @@ function parseAgentAuthOutput(agentType, action, output, exitCode) {
   };
 }
 
+function buildManagedAgentEnv(projectRoot, agentType = '') {
+  const config = loadConfig(projectRoot);
+  const env = {
+    ...process.env,
+    ...(config.sharedEnv || {}),
+  };
+  return agentType === 'claude-code' ? stripClaudeAcpEnv(env) : env;
+}
+
+function buildCredentialStatusResult({
+  agentType,
+  runtime,
+  credential,
+  configuredSummary,
+  missingSummary,
+  note = '',
+}) {
+  const runtimeReady = Boolean(runtime?.ready);
+  const configured = Boolean(credential.key);
+  const ready = runtimeReady && configured;
+  const lines = [
+    runtimeReady ? `런타임: 준비됨` : `런타임: ${runtime?.detail || '미설치'}`,
+    configured
+      ? `자격정보: ${credential.key} (${localizeCredentialSource(credential.source)})`
+      : `자격정보: ${missingSummary}`,
+  ];
+  if (note) {
+    lines.push(note);
+  }
+
+  return {
+    agentType,
+    action: 'status',
+    command: 'config inspection',
+    output: lines.join('\n'),
+    details: {
+      summary: ready ? configuredSummary : (runtimeReady ? missingSummary : '런타임 준비 필요'),
+      configured,
+      runtimeReady,
+      ready,
+      credentialKey: credential.key || null,
+      credentialSource: credential.key ? localizeCredentialSource(credential.source) : null,
+    },
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+  };
+}
+
+function resolveCredentialSource(sharedEnv, processEnv, keys) {
+  for (const key of keys) {
+    const sharedValue = typeof sharedEnv?.[key] === 'string' ? sharedEnv[key] : '';
+    if (sharedValue) {
+      return {
+        key,
+        value: sharedValue,
+        source: 'shared',
+      };
+    }
+    const processValue = typeof processEnv?.[key] === 'string' ? processEnv[key] : '';
+    if (processValue) {
+      return {
+        key,
+        value: processValue,
+        source: 'process',
+      };
+    }
+  }
+
+  return {
+    key: '',
+    value: '',
+    source: '',
+  };
+}
+
+function localizeCredentialSource(source) {
+  if (source === 'shared') {
+    return '공유 환경';
+  }
+  if (source === 'process') {
+    return '프로세스 환경';
+  }
+  return source || '미설정';
+}
+
+function stripClaudeAcpEnv(env) {
+  const nextEnv = { ...(env || {}) };
+  for (const key of CLAUDE_ACP_DISABLED_ENV_KEYS) {
+    delete nextEnv[key];
+  }
+  return nextEnv;
+}
+
 function stripAnsiEscapeSequences(value) {
   return String(value || '').replace(/\x1b\[[0-9;]*[A-Za-z]/gu, '');
+}
+
+function normalizeClaudeLoginMode(value) {
+  return String(value || '').trim().toLowerCase() === 'console' ? 'console' : 'claudeai';
+}
+
+function parseClaudeOAuthCallbackPayload(payload = {}) {
+  const callbackUrl =
+    String(payload?.callbackUrl || payload?.options?.callbackUrl || '').trim();
+  if (callbackUrl) {
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(callbackUrl);
+    } catch {
+      throw new Error('Authentication Code 또는 callback URL 전체를 붙여넣어야 합니다.');
+    }
+    return {
+      callbackUrl,
+      authorizationCode: String(
+        parsedUrl.searchParams.get('code') ||
+        parsedUrl.searchParams.get('authorization_code') ||
+        '',
+      ).trim(),
+      state: String(parsedUrl.searchParams.get('state') || '').trim(),
+    };
+  }
+
+  return {
+    callbackUrl: '',
+    authorizationCode: String(
+      payload?.authorizationCode || payload?.code || payload?.options?.authorizationCode || '',
+    ).trim(),
+    state: String(payload?.state || payload?.options?.state || '').trim(),
+  };
+}
+
+function resolveClaudeOAuthState(flow) {
+  for (const candidate of [flow?.manualUrl, flow?.automaticUrl]) {
+    const value = String(candidate || '').trim();
+    if (!value) {
+      continue;
+    }
+    try {
+      const parsedUrl = new URL(value);
+      const state = String(parsedUrl.searchParams.get('state') || '').trim();
+      if (state) {
+        return state;
+      }
+    } catch {
+      // Ignore invalid URLs from the runtime and keep scanning.
+    }
+  }
+  return '';
+}
+
+function parseJsonObject(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function extractFirstUrl(value) {
+  return String(value || '').match(/https:\/\/\S+/u)?.[0] || '';
 }
 
 function parseDeviceAuthCode(value) {
@@ -654,18 +1645,30 @@ function parseDeviceAuthCode(value) {
   }
 
   const withoutUrls = text.replace(/https:\/\/\S+/gu, ' ');
-  const labeled =
-    withoutUrls.match(
-      /\b(?:enter|code|device code|verification code)(?:\s+(?:the\s+)?)?(?:is\s+)?[:#-]?\s*([A-Z0-9]+(?:-[A-Z0-9]+)*)/iu,
-    )?.[1] || '';
-  if (labeled) {
-    return labeled;
+  const lineGrouped =
+    withoutUrls.match(/^[ \t]*([A-Z0-9]{3,}(?:-[A-Z0-9]{2,})+)[ \t]*$/mu)?.[1] || '';
+  if (lineGrouped) {
+    return lineGrouped;
   }
 
   const grouped =
     withoutUrls.match(/\b([A-Z0-9]{3,}(?:-[A-Z0-9]{2,})+)\b/u)?.[1] || '';
   if (grouped) {
     return grouped;
+  }
+
+  const linePlain =
+    withoutUrls.match(/^[ \t]*([A-Z0-9]{8,12})[ \t]*$/mu)?.[1] || '';
+  if (linePlain) {
+    return linePlain;
+  }
+
+  const labeled =
+    withoutUrls.match(
+      /\b(?:enter|device code|verification code|one-time code)(?:\s+(?:the\s+)?)?(?:is\s+)?[:#-][ \t]*([A-Z0-9]+(?:-[A-Z0-9]+)*)/iu,
+    )?.[1] || '';
+  if (labeled) {
+    return labeled;
   }
 
   return withoutUrls.match(/\b([A-Z0-9]{8,12})\b/u)?.[1] || '';

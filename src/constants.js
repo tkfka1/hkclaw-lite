@@ -1,7 +1,7 @@
 export const TOOL_DIRNAME = '.hkclaw-lite';
 export const CONFIG_FILENAME = 'config.json';
 export const CURRENT_CONFIG_VERSION = 3;
-export const DEFAULT_ADMIN_PORT = 4622;
+export const DEFAULT_ADMIN_PORT = 5687;
 export const DEFAULT_DASHBOARD_REFRESH_MS = 5000;
 export const DEFAULT_CHANNEL_WORKSPACE = '~';
 export const DEFAULT_CODEX_SANDBOX = 'workspace-write';
@@ -22,8 +22,8 @@ export const AGENT_TYPE_CHOICES = [
   },
   {
     value: 'claude-code',
-    label: 'Claude Code',
-    description: 'Anthropic Claude Code CLI based coding agent',
+    label: 'Claude Code ACP',
+    description: 'Anthropic Claude Code ACP runtime based coding agent',
   },
   {
     value: 'gemini-cli',
@@ -79,7 +79,7 @@ export const CLAUDE_PERMISSION_MODE_CHOICES = [
   {
     value: 'default',
     label: 'Default',
-    description: 'Use Claude Code default permission behavior',
+    description: 'Use Claude Code ACP default permission behavior',
   },
   {
     value: 'acceptEdits',

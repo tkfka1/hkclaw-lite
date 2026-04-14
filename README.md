@@ -1,10 +1,11 @@
 # hkclaw-lite
 
-`hkclaw-lite`는 디스코드 전용 AI 에이전트를 CLI 중심으로 운영하기 위해 다시 정리한 경량 런타임이다.
+`hkclaw-lite`는 디스코드 전용 AI 에이전트를 로컬 웹 어드민을 기본 진입점으로 운영하기 위해 다시 정리한 경량 런타임이다.
 
 핵심 전제는 다음과 같다.
 
-- 모든 조작은 CLI에서 한다.
+- 기본 진입점은 로컬 웹 어드민이다.
+- CLI는 부트스트랩, 자동화, 운영 보조 작업에 쓴다.
 - 불필요한 권한 관리 계층은 두지 않는다.
 - 각 에이전트는 실행한 OS 계정 권한을 그대로 가진다.
 
@@ -22,7 +23,7 @@
 - 선택적 owner/reviewer/arbiter tribunal 채널
 - agent-level automatic failover
 - CLI 상태 뷰와 라이브 대시보드
-- 선택적 로컬 웹 어드민
+- 기본 로컬 웹 어드민
 - 에이전트별 skill/context 파일 주입
 - project-level shared env
 - GitHub / GitLab CI check/watch
@@ -48,18 +49,43 @@
 ## 요구 사항
 
 - Node.js 24 이상
-- 기본 설치 시 `codex`, `claude`, `gemini` CLI는 패키지 내부 번들을 우선 사용한다.
-- 번들 설치가 빠졌거나 직접 다른 버전을 쓰고 싶다면, 같은 CLI를 시스템 `PATH`에 따로 설치해도 된다.
+- 기본 설치 시 `codex`, `gemini` CLI와 `claude` Claude Code ACP 런타임(`@anthropic-ai/claude-agent-sdk`)은 패키지 내부 번들만 사용한다.
+- 번들 설치가 빠졌으면 해당 에이전트 타입은 실행되지 않는다. 시스템 `PATH`에 깔린 같은 이름의 CLI로 fallback하지 않는다.
 - GitHub / GitLab CI를 private 리포지토리에서 확인할 경우 API 토큰이 필요하다.
+
+## 자동 설치되는 AI 런타임 버전
+
+현재 `hkclaw-lite@1.0.1` 기준으로 기본 설치 시 함께 설치를 시도하는 번들은 아래와 같다.
+
+- `@openai/codex@0.120.0`
+- `@anthropic-ai/claude-agent-sdk@0.2.105`
+- `@google/gemini-cli@0.37.1`
+
+중요한 점:
+
+- 이 버전들은 `package.json`의 `optionalDependencies`에 고정되어 있다.
+- `npm install hkclaw-lite`, `npm install -g hkclaw-lite`, Docker 이미지 빌드, Helm chart 배포는 모두 이 고정 버전을 기준으로 같은 런타임을 설치한다.
+- 즉 “내 로컬 npm 설치”, “컨테이너 이미지”, “Kubernetes Pod”가 같은 `hkclaw-lite` 릴리스를 쓰면 기본적으로 같은 AI 런타임 버전을 쓴다.
+- 나중에 `hkclaw-lite` 버전이 올라가면서 이 번들 버전도 같이 바뀔 수 있다. 그 경우 README와 `package.json`의 `optionalDependencies`를 같이 보면 된다.
+- `--omit=optional`로 설치하거나 optional dependency 설치가 실패하면 해당 번들은 아예 들어오지 않고, hkclaw-lite는 시스템 `PATH` fallback 없이 그 에이전트 타입을 실행 실패로 처리한다.
 
 ## 플랫폼 지원
 
 - macOS / Linux: 네이티브 실행 지원
 - Windows: 네이티브 실행 지원. `npm install` 또는 `npm install -g` 후 바로 쓸 수 있다.
-- `codex` / `claude` / `gemini`는 패키지 내부 번들을 먼저 찾고, 없을 때만 시스템 `PATH`를 본다.
+- `codex` / `gemini`는 내부 CLI 번들을, `claude`는 내부 Claude Code ACP 런타임 번들을 사용한다.
 - Windows에서 `command` 에이전트는 기본적으로 `cmd.exe`를 사용한다. 따라서 명령 문자열은 호스트 OS 셸 문법에 맞춰야 한다.
 - Docker 이미지, Helm 차트, Linux container 배포는 그대로 Linux 기준이다.
 - Windows container mode는 지원하지 않는다. Windows에서는 네이티브 npm 설치 또는 Docker Desktop의 Linux container 모드를 사용하면 된다.
+
+## 실행 모델
+
+- `npm install`은 설치만 한다. `admin`, `run`, `discord serve` 중 아무 것도 자동 실행하지 않는다.
+- `hkclaw-lite` 또는 `hkclaw-lite --help`는 도움말만 출력한다.
+- `hkclaw-lite admin`은 웹 어드민 서버를 띄운다.
+- `hkclaw-lite run ...`은 단발성 one-shot 실행이다. 서버를 붙잡고 유지하지 않는다.
+- `hkclaw-lite discord serve`는 장기 실행 Discord 워커다.
+- 컨테이너와 Kubernetes도 동일하다. 이미지가 자동으로 역할을 추론하지 않고, 배포 스펙에서 넘긴 명령만 실행한다.
 
 ## 설치
 
@@ -92,7 +118,9 @@ npm install -g hkclaw-lite
 hkclaw-lite --help
 ```
 
-이 경로에서는 `hkclaw-lite`와 함께 기본 AI CLI 번들도 같이 설치된다. 별도로 `npm install -g @openai/codex` 같은 전역 설치를 할 필요는 없다.
+이 경로에서는 `hkclaw-lite`와 함께 기본 AI 런타임 번들도 같이 설치된다. `codex`와 `gemini`는 CLI 번들, `claude`는 `@anthropic-ai/claude-agent-sdk` 번들을 사용하므로 별도 전역 설치가 필요 없다.
+현재 `hkclaw-lite@1.0.1` 기준 기본 번들 버전은 `@openai/codex@0.120.0`, `@anthropic-ai/claude-agent-sdk@0.2.105`, `@google/gemini-cli@0.37.1` 이다.
+설치만 했다고 웹 어드민이 자동으로 켜지지는 않는다. 실행은 별도로 `hkclaw-lite admin` 또는 `npx hkclaw-lite admin`을 호출해야 한다.
 
 ### Windows 네이티브 설치
 
@@ -110,7 +138,8 @@ npm install hkclaw-lite
 npx hkclaw-lite --help
 ```
 
-설치 후 `hkclaw-lite`가 내부 번들을 먼저 사용하므로, 별도 CLI 전역 설치 없이 `admin`, `run`, `agent auth` 흐름을 바로 쓸 수 있다.
+설치 후 `hkclaw-lite`는 내부 번들만 사용하므로, 별도 CLI 전역 설치 없이 `admin`, `run`, `agent test` 흐름을 바로 쓸 수 있다. Claude는 `@anthropic-ai/claude-agent-sdk`를 통해 Claude Code ACP 런타임으로 동작하며, 웹 어드민에서는 ACP 브라우저 로그인만 지원한다. 로그인 시 `claude.ai`는 개인 Claude 구독 계정, `console`은 Anthropic Console 조직/API 계정용이다. 브라우저 인증 후 표시되는 `Authentication Code`를 웹 어드민에 붙여넣어 완료한다.
+여기서도 설치 직후 자동 실행은 없다. Windows에서도 `hkclaw-lite admin` 또는 `npx hkclaw-lite admin`을 명시적으로 호출해야 한다.
 
 ## 빠른 시작
 
@@ -132,11 +161,11 @@ hkclaw-lite admin
 
 이후 기본 흐름은 `admin 실행 -> 웹에서 agent/channel/dashboard 설정 -> run 또는 discord serve` 순서다. 원하면 `hkclaw-lite init`으로 상태 디렉터리를 미리 만들어둘 수도 있다.
 
-기본 주소는 `http://127.0.0.1:4622` 이다.
+기본 주소는 `http://127.0.0.1:5687` 이다.
 
 ## 기본 흐름
 
-처음 설정은 CLI보다 웹 어드민에서 진행하는 쪽을 권장한다. CLI 명령은 동일한 설정을 스크립트처럼 직접 다루고 싶을 때 쓰면 된다.
+처음 설정은 웹 어드민에서 끝내는 것을 기본으로 한다. CLI 명령은 동일한 설정을 스크립트처럼 직접 다루거나, 자동화·운영 작업을 붙이고 싶을 때 쓰면 된다.
 
 ### 1. 웹 어드민 실행
 
@@ -144,7 +173,7 @@ hkclaw-lite admin
 hkclaw-lite admin
 ```
 
-브라우저에서 `http://127.0.0.1:4622` 로 접속하면 된다. 여기서 바로 아래 작업을 진행할 수 있다.
+브라우저에서 `http://127.0.0.1:5687` 로 접속하면 된다. 여기서 바로 아래 작업을 진행할 수 있다.
 
 - agent 추가/수정
 - channel 추가/수정
@@ -422,7 +451,7 @@ hkclaw-lite migrate --from ../old-project --root ./new-project
 
 즉 설정값과 hkclaw-lite가 직접 관리하는 상태 파일은 옮기되, 실제 작업 저장소 자체는 별도로 복사해야 한다.
 
-### 8. 로컬 웹 어드민
+### 8. 기본 로컬 웹 어드민
 
 브라우저에서 agent/channel/dashboard/shared env 를 수정하고 one-shot `run` 을 실행하려면:
 
@@ -433,12 +462,12 @@ hkclaw-lite admin
 옵션:
 
 - `--host`: 바인딩 주소. 기본값은 `127.0.0.1`
-- `--port`: 리슨 포트. 기본값은 `4622`
+- `--port`: 리슨 포트. 기본값은 `5687`
 
 예시:
 
 ```bash
-hkclaw-lite admin --host 0.0.0.0 --port 4622
+hkclaw-lite admin --host 0.0.0.0 --port 5687
 ```
 
 가벼운 로그인 비밀번호를 걸고 싶으면 환경 변수로 설정한다.
@@ -460,7 +489,7 @@ HKCLAW_LITE_ADMIN_PASSWORD='change-me' hkclaw-lite admin
 - CI watcher 목록과 로그 확인
 - 기존 CLI `run` 흐름을 그대로 타는 one-shot 실행
 
-즉 웹에서 별도 런타임을 새로 구현한 것이 아니라, 기존 프로젝트 설정과 CLI 동작을 브라우저에서 조작할 수 있게 감싼 관리자다. 처음 설정은 여기서 끝내고, 필요할 때만 CLI로 세부 작업을 직접 하면 된다.
+즉 웹에서 별도 런타임을 새로 구현한 것이 아니라, 기존 프로젝트 설정과 CLI 동작을 브라우저에서 조작할 수 있게 감싼 관리자다. 대부분의 일상 관리 작업은 여기서 끝내고, 필요할 때만 CLI로 세부 작업을 직접 하면 된다.
 
 ## 주요 명령
 
@@ -521,22 +550,29 @@ hkclaw-lite status dashboard <name>
 
 ## 컨테이너 / Helm 배포
 
-이 프로젝트는 기본적으로 HTTP 서버가 아니라 CLI 런타임이지만, 기본 Helm chart는 운영 편의를 위해 웹 어드민을 바로 띄우도록 구성돼 있다. 기본값은 `0.0.0.0:4622` 이고 `ClusterIP` Service도 함께 생성된다.
+이 프로젝트는 CLI 런타임을 바탕으로 하지만, 기본 진입점은 웹 어드민이다. 기본 Helm chart도 운영 편의를 위해 웹 어드민을 바로 띄우도록 구성돼 있다. 기본값은 `0.0.0.0:5687` 이고 `ClusterIP` Service도 함께 생성된다.
 
-기본 이미지는 이 저장소의 `Dockerfile`로 만들 수 있다. 현재 Dockerfile은 `codex`, `claude`, `gemini` CLI를 함께 넣는 all-in-one 이미지를 기준으로 한다.
+기본 이미지는 이 저장소의 `Dockerfile`로 만들 수 있다. 이미지는 `npm ci --omit=dev` 과정에서 `codex`, `gemini` CLI와 `claude` Claude Code ACP 런타임 번들을 함께 설치한다. Claude 인증은 컨테이너 안에서도 ACP 로그인 상태로만 처리한다.
+이미지 자체는 설치물만 담고 있고, 컨테이너가 어떤 역할로 뜰지는 전달한 명령에 따라 결정된다.
 
 ```bash
 docker build -t ghcr.io/tkfka1/hkclaw-lite:1.0.0 .
 ```
 
-원하면 build arg로 각 CLI 버전을 고정할 수 있다.
+`docker run ghcr.io/tkfka1/hkclaw-lite:1.0.0`처럼 명령 없이 실행하면 기본 entrypoint는 아무 런타임도 추측해서 시작하지 않고 대기 상태로 둔다. 실제 운영에서는 아래처럼 역할을 명시해야 한다.
+
+이미지 안에는 npm 설치와 같은 기준의 번들 런타임이 들어간다. 현재 `hkclaw-lite@1.0.1` 기준으로는 `@openai/codex@0.120.0`, `@anthropic-ai/claude-agent-sdk@0.2.105`, `@google/gemini-cli@0.37.1` 이 설치된다.
 
 ```bash
-docker build -t ghcr.io/tkfka1/hkclaw-lite:1.0.0 \
-  --build-arg CODEX_CLI_VERSION=latest \
-  --build-arg CLAUDE_CODE_VERSION=latest \
-  --build-arg GEMINI_CLI_VERSION=latest \
-  .
+docker run --rm -p 5687:5687 ghcr.io/tkfka1/hkclaw-lite:1.0.0 admin --host 0.0.0.0 --port 5687
+```
+
+```bash
+docker run --rm ghcr.io/tkfka1/hkclaw-lite:1.0.0 run --channel discord-main --message "summarize the repo"
+```
+
+```bash
+docker run --rm ghcr.io/tkfka1/hkclaw-lite:1.0.0 discord serve --env-file /data/.env
 ```
 
 Helm chart는 `charts/hkclaw-lite` 아래에 있다.
@@ -550,10 +586,12 @@ helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
 설치 후 로컬에서는 아래처럼 포트 포워딩해서 웹 어드민에 붙으면 된다.
 
 ```bash
-kubectl port-forward svc/hkclaw-lite 4622:4622
+kubectl port-forward svc/hkclaw-lite 5687:5687
 ```
 
-기본 차트는 `node /app/bin/hkclaw-lite.js admin --host 0.0.0.0 --port 4622` 를 실행한다. CLI toolbox 모드가 필요하면 `args`를 비우거나 원하는 명령으로 override 하면 된다.
+기본 차트는 `node /app/bin/hkclaw-lite.js admin --host 0.0.0.0 --port 5687` 를 실행한다. CLI toolbox 모드가 필요하면 `args`를 비우거나 원하는 명령으로 override 하면 된다.
+즉 K8s 기본 배포는 `admin` 모드이고, worker 용도로 쓰려면 `args`를 `discord serve ...`로 바꿔서 별도 Deployment로 운영하는 쪽이 맞다.
+Helm chart도 별도 sidecar나 전역 CLI를 설치하지 않는다. Docker 이미지 안에 이미 들어간 같은 pinned 번들 버전을 그대로 사용한다.
 
 웹 어드민 대신 직접 pod 안에서 CLI를 쓰고 싶으면:
 

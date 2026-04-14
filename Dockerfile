@@ -1,16 +1,20 @@
 FROM node:24-bookworm-slim
 
 ENV APP_HOME=/app \
-    NODE_ENV=production
+    NODE_ENV=production \
+    HOME=/data \
+    DISABLE_AUTOUPDATER=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates git tini \
+  && apt-get install -y --no-install-recommends bash ca-certificates git ripgrep tini \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR ${APP_HOME}
 
 COPY package.json package-lock.json README.md LICENSE ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+  && npm cache clean --force
 
 COPY bin ./bin
 COPY src ./src

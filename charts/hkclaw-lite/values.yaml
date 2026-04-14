@@ -61,16 +61,19 @@ bootstrapBackup:
 service:
   enabled: true
   type: ClusterIP
-  port: 4622
-  targetPort: 4622
+  port: 5687
+  targetPort: 5687
 
 command: []
+# Images do not auto-start a role on install.
+# Kubernetes runs only the explicit command/args below.
+# Default chart mode is the web admin; override args for discord serve or other tasks.
 args:
   - admin
   - --host
   - 0.0.0.0
   - --port
-  - "4622"
+  - "5687"
 
 env: {}
 extraEnv: []

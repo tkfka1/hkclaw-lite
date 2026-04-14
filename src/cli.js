@@ -54,6 +54,7 @@ import {
   removeAgent,
   removeChannel,
   removeDashboard,
+  resolveOrInitProjectRoot,
   resolveProjectPath,
   resolveProjectRoot,
   saveConfig,
@@ -113,7 +114,7 @@ export async function main(argv) {
       return;
     }
 
-    const projectRoot = resolveProjectRoot(process.cwd(), rootOverride);
+    const projectRoot = resolveOrInitProjectRoot(process.cwd(), rootOverride);
 
     switch (command) {
       case 'add':
@@ -1944,8 +1945,18 @@ function buildChannelPreset(name, flags) {
 function printHelp() {
   console.log(`hkclaw-lite
 
-Discord-only AI agent runtime managed entirely from the CLI.
+Discord-only AI agent runtime managed primarily from the local web admin.
+Use the web admin for most setup and day-to-day control; keep the CLI for automation and operational tasks.
 Agents intentionally run with the full permissions of the host account that launched them.
+Most commands auto-create .hkclaw-lite in the current directory when missing.
+Installing the package never starts a process by itself.
+
+Execution model:
+  hkclaw-lite / --help      Show help only
+  hkclaw-lite admin         Start the web admin server
+  hkclaw-lite run ...       Execute one one-shot turn
+  hkclaw-lite discord serve Start the long-running Discord worker
+  Containers and Kubernetes only run whichever command you pass explicitly.
 
 Usage:
   hkclaw-lite init [--root DIR] [--force]

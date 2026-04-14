@@ -2,9 +2,17 @@ import { DEFAULT_LOCAL_LLM_BASE_URL } from './constants.js';
 import { assert } from './utils.js';
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
-const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
-const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
+const CURATED_CLAUDE_CODE_MODELS = [
+  {
+    value: 'claude-opus-4-1-20250805',
+    label: 'Claude Opus 4.1',
+  },
+  {
+    value: 'claude-sonnet-4-20250514',
+    label: 'Claude Sonnet 4',
+  },
+];
 
 export function supportsModelCatalogLookup(agentType) {
   return ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
@@ -83,28 +91,8 @@ async function listOpenAiModels(env) {
 }
 
 async function listAnthropicModels(env) {
-  const apiKey = firstDefined(env.ANTHROPIC_API_KEY);
-  assert(apiKey, 'ANTHROPIC_API_KEY is required for claude-code model listing.');
-  const baseUrl = normalizeBaseUrl(env.ANTHROPIC_BASE_URL || DEFAULT_ANTHROPIC_BASE_URL);
-  const headers = {
-    'x-api-key': apiKey,
-    'anthropic-version': env.ANTHROPIC_VERSION || DEFAULT_ANTHROPIC_VERSION,
-  };
-
-  const payload = await fetchJson(
-    /\/v1$/u.test(baseUrl) ? `${baseUrl}/models` : `${baseUrl}/v1/models`,
-    { headers },
-  );
-  const models = dedupeModelOptions(
-    (payload?.data || [])
-      .map((entry) => ({
-        value: String(entry?.id || '').trim(),
-        label: String(entry?.display_name || entry?.id || '').trim(),
-        created: Date.parse(entry?.created_at || '') || 0,
-      }))
-      .filter((entry) => entry.value)
-      .sort((left, right) => right.created - left.created),
-  ).map((entry) => ({
+  void env;
+  const models = CURATED_CLAUDE_CODE_MODELS.map((entry) => ({
     value: entry.value,
     label: entry.label,
     efforts: resolveAgentEffortChoices('claude-code', entry.value),
@@ -113,8 +101,8 @@ async function listAnthropicModels(env) {
   return {
     agentType: 'claude-code',
     models,
-    source: 'live',
-    summary: models.length > 0 ? `실제 조회 모델 ${models.length}개` : '조회된 모델이 없습니다.',
+    source: 'curated',
+    summary: `권장 모델 ${models.length}개`,
   };
 }
 

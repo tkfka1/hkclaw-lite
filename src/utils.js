@@ -213,47 +213,6 @@ export function resolveBundledNodeCli(
   }
 }
 
-export function resolvePreferredCli(
-  binaryName,
-  {
-    packageName = null,
-    platform = process.platform,
-    pathValue = process.env.PATH || '',
-    pathext = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
-    resolvePackageJson = defaultResolvePackageJson,
-  } = {},
-) {
-  if (packageName) {
-    const bundled = resolveBundledNodeCli(packageName, binaryName, {
-      resolvePackageJson,
-    });
-    if (bundled) {
-      return {
-        source: 'bundled',
-        command: process.execPath,
-        argsPrefix: [bundled.scriptPath],
-        detail: `${packageName} (${bundled.scriptPath})`,
-      };
-    }
-  }
-
-  const resolvedPath = resolveExecutable(binaryName, {
-    platform,
-    pathValue,
-    pathext,
-  });
-  if (!resolvedPath) {
-    return null;
-  }
-
-  return {
-    source: 'path',
-    command: resolvedPath,
-    argsPrefix: [],
-    detail: resolvedPath,
-  };
-}
-
 function hasPathSeparator(value) {
   return value.includes('/') || value.includes('\\');
 }

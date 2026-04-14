@@ -145,7 +145,13 @@ function handleClick(event) {
   }
 
   if (action === 'ai-auth-login') {
-    void runAiManagerAction('login');
+    const popup = openLoginPopup();
+    void runAiManagerAction('login', { popup });
+    return;
+  }
+
+  if (action === 'ai-auth-complete-login') {
+    void runAiManagerAction('complete-login');
     return;
   }
 
@@ -156,6 +162,11 @@ function handleClick(event) {
 
   if (action === 'ai-auth-test') {
     void runAiManagerAction('test');
+    return;
+  }
+
+  if (action === 'ai-save-credentials') {
+    void saveAiCredentials();
     return;
   }
 
@@ -195,7 +206,8 @@ function handleClick(event) {
   }
 
   if (action === 'agent-auth-login') {
-    void runAgentWizardAuth('login');
+    const popup = openLoginPopup();
+    void runAgentWizardAuth('login', { popup });
     return;
   }
 
@@ -248,6 +260,24 @@ function handleInput(event) {
       target.closest('[data-form="ai-manager"]') &&
       target.name
     ) {
+      if (target.dataset.aiAuthKey) {
+        state.aiManager.authConfig[target.dataset.aiAuthKey] =
+          target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+        if (
+          target.dataset.aiAuthKey === 'callbackUrl' ||
+          target.dataset.aiAuthKey === 'authorizationCode'
+        ) {
+          render();
+        }
+        return;
+      }
+      if (target.dataset.aiCredentialKey) {
+        state.aiManager.credentials[target.dataset.aiCredentialKey] = target.value;
+        if (target.dataset.aiCredentialKey === 'LOCAL_LLM_BASE_URL') {
+          state.aiManager.testConfig.baseUrl = target.value;
+        }
+        return;
+      }
       state.aiManager.testConfig[target.name] =
         target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
       if (target.name === 'modelMode') {
@@ -396,7 +426,9 @@ async function changeAdminPassword(form) {
 
   state.auth = response.auth || state.auth;
   state.adminPasswordModalOpen = false;
-  state.notice = null;
+  if (!(action === 'login' && response.result?.details?.url)) {
+    state.notice = null;
+  }
   render();
 }
 
@@ -436,7 +468,7 @@ async function saveAgentWizard() {
   render();
 }
 
-async function runAgentWizardAuth(action) {
+async function runAgentWizardAuth(action, options = {}) {
   if (!state.agentWizard) {
     return;
   }
@@ -478,6 +510,8 @@ async function runAgentWizardAuth(action) {
     method: 'POST',
     body,
   });
+
+  handleLoginLaunch(response.result, options.popup);
 
   if (!state.agentWizard) {
     return;
@@ -949,11 +983,11 @@ function renderAiModal() {
   }
 
   const authSupported = isAiAuthSupported(entry.value);
+  const statusSupported = isAiStatusSupported(entry.value);
+  const credentialEditingSupported = supportsAiCredentialEditing(entry.value);
   const testSupported = isAiTestSupported(entry.value);
   const authResult = state.aiManager?.authResult;
   const testResult = state.aiManager?.testResult;
-  const loggedIn = Boolean(authResult?.details?.loggedIn);
-  const testOk = Boolean(testResult?.details?.success);
   const ready = isAiReady(entry.value, {
     authResult,
     testResult,
@@ -968,33 +1002,90 @@ function renderAiModal() {
           <button type="button" class="btn-secondary" data-action="close-ai-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
         </div>
         <form data-form="ai-manager" class="form">
-          <div class="ai-modal-body">
-            <div class="auth-chip ${authSupported && loggedIn ? 'is-ok' : ''}">
-              ${escapeHtml(authSupported ? `인증 ${loggedIn ? '완료' : '미완료'}` : '인증 없음')}
-            </div>
-            <div class="auth-chip ${testOk ? 'is-ok' : ''}">
-              ${escapeHtml(`테스트 ${testOk ? '완료' : '미완료'}`)}
-            </div>
-            ${ready ? '<div class="auth-chip is-ok">사용 가능</div>' : ''}
-          </div>
+          <div class="ai-modal-body">${renderAiStatusChips(entry.value, authResult, testResult, ready)}</div>
+          ${renderAiWorkflowGuide(entry.value, authResult, testResult, ready, testSupported)}
+          ${renderAiAuthFields(entry.value)}
+          ${renderAiCredentialFields(entry.value)}
+          ${renderAiTestFields(entry.value)}
           ${
             authSupported
               ? `<div class="wizard-auth-action-stack">
                   <div class="wizard-auth-actions">
-                    <button type="button" class="btn-secondary" data-action="ai-auth-login" ${state.busy ? 'disabled' : ''}>로그인</button>
-                    <button type="button" class="btn-secondary" data-action="ai-auth-logout" ${state.busy ? 'disabled' : ''}>로그아웃</button>
+                    <button type="button" class="btn-secondary" data-action="ai-auth-login" ${state.busy ? 'disabled' : ''}>1. 로그인</button>
+                    ${
+                      entry.value === 'claude-code' || entry.value === 'gemini-cli'
+                        ? `<button
+                            type="button"
+                            class="btn-secondary"
+                            data-action="ai-auth-complete-login"
+                            ${isAiCompleteLoginDisabled(entry.value, authResult) || state.busy ? 'disabled' : ''}
+                          >
+                            2. 로그인 완료
+                          </button>`
+                        : ''
+                    }
+                    <button type="button" class="btn-secondary" data-action="ai-auth-status" ${state.busy ? 'disabled' : ''}>
+                      ${entry.value === 'claude-code' || entry.value === 'gemini-cli' ? '3. 상태 확인' : '2. 상태 확인'}
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-primary"
+                      data-action="ai-auth-test"
+                      ${state.busy || !testSupported || !isAiTestReady(entry.value, ready) ? 'disabled' : ''}
+                    >
+                      ${entry.value === 'claude-code' || entry.value === 'gemini-cli' ? '4. 테스트 호출' : '3. 테스트 호출'}
+                    </button>
                   </div>
                   <div class="wizard-auth-actions">
-                    <button type="button" class="btn-secondary" data-action="ai-auth-status" ${state.busy ? 'disabled' : ''}>상태 확인</button>
-                    <button type="button" class="btn-primary" data-action="ai-auth-test" ${state.busy || !testSupported ? 'disabled' : ''}>테스트 호출</button>
+                    <button type="button" class="btn-secondary" data-action="ai-auth-logout" ${state.busy ? 'disabled' : ''}>로그아웃</button>
+                    ${
+                      credentialEditingSupported
+                        ? `<button
+                            type="button"
+                            class="btn-secondary"
+                            data-action="ai-save-credentials"
+                            ${state.busy ? 'disabled' : ''}
+                          >
+                            자격정보 저장
+                          </button>`
+                        : ''
+                    }
+                    ${
+                      entry.value === 'codex'
+                        ? '<div class="field-hint">Codex는 hkclaw-lite 전용 저장소가 아니라 이 머신의 로컬 Codex 로그인 상태를 그대로 사용합니다.</div>'
+                        : ''
+                    }
                   </div>
                 </div>`
               : ''
           }
-          ${renderAiTestFields(entry.value)}
           ${
             !authSupported
               ? `<div class="wizard-auth-actions">
+                  ${
+                    credentialEditingSupported
+                      ? `<button
+                          type="button"
+                          class="btn-secondary"
+                          data-action="ai-save-credentials"
+                          ${state.busy ? 'disabled' : ''}
+                        >
+                          자격정보 저장
+                        </button>`
+                      : ''
+                  }
+                  ${
+                    statusSupported
+                      ? `<button
+                          type="button"
+                          class="btn-secondary"
+                          data-action="ai-auth-status"
+                          ${state.busy ? 'disabled' : ''}
+                        >
+                          상태 확인
+                        </button>`
+                      : ''
+                  }
                   <button
                     type="button"
                     class="btn-primary"
@@ -1012,6 +1103,179 @@ function renderAiModal() {
       </div>
     </section>
   `;
+}
+
+function renderAiStatusChips(agentType, authResult, testResult, ready) {
+  const chips = [];
+  const primaryChip = buildAiPrimaryStatusChip(agentType, authResult);
+  if (primaryChip) {
+    chips.push(primaryChip);
+  }
+  const runtimeReady = Boolean(authResult?.details?.runtimeReady);
+  if (authResult?.details?.runtimeReady !== undefined) {
+    chips.push(
+      `<div class="auth-chip ${runtimeReady ? 'is-ok' : ''}">${escapeHtml(`런타임 ${runtimeReady ? '준비' : '미설치'}`)}</div>`,
+    );
+  }
+  if (authResult?.details?.configured !== undefined && agentType !== 'codex') {
+    const configured = Boolean(authResult?.details?.configured);
+    const label = agentType === 'local-llm' ? '기본 설정' : 'API 키';
+    chips.push(
+      `<div class="auth-chip ${configured ? 'is-ok' : ''}">${escapeHtml(`${label} ${configured ? '완료' : '미완료'}`)}</div>`,
+    );
+  }
+  if (authResult?.details?.pendingLogin) {
+    chips.push('<div class="auth-chip">브라우저 로그인 진행 중</div>');
+  }
+  const testOk = Boolean(testResult?.details?.success);
+  chips.push(
+    `<div class="auth-chip ${testOk ? 'is-ok' : ''}">${escapeHtml(`테스트 ${testOk ? '완료' : '미완료'}`)}</div>`,
+  );
+  if (ready) {
+    chips.push('<div class="auth-chip is-ok">사용 가능</div>');
+  }
+  return chips.join('');
+}
+
+function renderAiWorkflowGuide(agentType, authResult, testResult, ready, testSupported) {
+  if (!isAiAuthSupported(agentType)) {
+    return '';
+  }
+
+  const loggedIn = Boolean(authResult?.details?.loggedIn);
+  const pendingLogin = Boolean(authResult?.details?.pendingLogin);
+  const testOk = Boolean(testResult?.details?.success);
+  const steps = agentType === 'claude-code'
+      ? [
+          {
+            label: '1. 로그인',
+            state: loggedIn ? '완료' : (pendingLogin ? '진행 중' : '대기'),
+            hint: '브라우저 로그인 창을 엽니다.',
+          },
+          {
+            label: '2. 로그인 완료',
+            state: loggedIn ? '완료' : (pendingLogin ? '필요' : '대기'),
+            hint: '브라우저 인증 뒤 표시되는 Authentication Code를 붙여넣습니다.',
+          },
+        {
+          label: '3. 상태 확인',
+          state: loggedIn ? '완료' : '대기',
+          hint: '현재 로그인 상태를 다시 읽습니다.',
+        },
+        {
+          label: '4. 테스트 호출',
+          state: testOk ? '완료' : (ready ? '준비됨' : '대기'),
+          hint: '실제 Claude Code ACP turn 호출이 되는지 확인합니다.',
+        },
+      ]
+    : agentType === 'gemini-cli'
+      ? [
+          {
+            label: '1. 로그인',
+            state: loggedIn ? '완료' : (pendingLogin ? '진행 중' : '대기'),
+            hint: '브라우저 Google 로그인 창을 엽니다.',
+          },
+          {
+            label: '2. 로그인 완료',
+            state: loggedIn ? '완료' : (pendingLogin ? '필요' : '대기'),
+            hint: '브라우저 인증 뒤 표시되는 authorization code를 붙여넣습니다.',
+          },
+          {
+            label: '3. 상태 확인',
+            state: loggedIn ? '완료' : '대기',
+            hint: '현재 Google 로그인 상태를 다시 읽습니다.',
+          },
+          {
+            label: '4. 테스트 호출',
+            state: testOk ? '완료' : (ready ? '준비됨' : '대기'),
+            hint: '실제 Gemini CLI turn 호출이 되는지 확인합니다.',
+          },
+        ]
+      : [
+          {
+            label: '1. 로그인',
+            state: loggedIn ? '완료' : '대기',
+            hint: 'Codex 로그인 플로우를 시작합니다.',
+          },
+          {
+            label: '2. 상태 확인',
+            state: loggedIn ? '완료' : '대기',
+            hint: '현재 로그인 상태를 다시 읽습니다.',
+          },
+          {
+            label: '3. 테스트 호출',
+            state: testOk ? '완료' : (ready ? '준비됨' : '대기'),
+            hint: '실제 Codex turn 호출이 되는지 확인합니다.',
+          },
+        ];
+
+  return `
+    <div class="wizard-result">
+      <strong>권장 순서</strong>
+      <ol class="flow-list">
+        ${steps
+          .map(
+            (step) =>
+              `<li><strong>${escapeHtml(step.label)}</strong> - ${escapeHtml(step.state)}<br /><span class="field-hint">${escapeHtml(step.hint)}</span></li>`,
+          )
+          .join('')}
+      </ol>
+      ${
+        agentType === 'codex'
+          ? '<div class="field-hint">Codex는 이 머신의 로컬 Codex 로그인 상태를 그대로 사용합니다. 그래서 이미 로그인되어 있으면 처음부터 완료로 보일 수 있습니다.</div>'
+          : ''
+      }
+      ${
+        agentType === 'claude-code'
+          ? '<div class="field-hint">Claude Code ACP는 브라우저 인증을 마친 뒤 Authentication Code 붙여넣기까지 해야 완료됩니다.</div>'
+          : ''
+      }
+      ${
+        agentType === 'gemini-cli'
+          ? '<div class="field-hint">Gemini CLI는 브라우저 인증을 마친 뒤 authorization code 붙여넣기까지 해야 완료됩니다. API 키는 대체 경로로 계속 쓸 수 있습니다.</div>'
+          : ''
+      }
+      ${
+        !testSupported
+          ? '<div class="field-hint">이 AI 유형은 테스트 호출을 지원하지 않습니다.</div>'
+          : ''
+      }
+    </div>
+  `;
+}
+
+function isAiCompleteLoginDisabled(agentType, authResult) {
+  if (agentType === 'claude-code') {
+    const authorizationCode = optionalDraftText(state.aiManager?.authConfig?.authorizationCode);
+    return !authorizationCode;
+  }
+  if (agentType === 'gemini-cli') {
+    const authorizationCode = optionalDraftText(state.aiManager?.authConfig?.authorizationCode);
+    return !authorizationCode;
+  }
+  if (!isAiAuthSupported(agentType)) {
+    return true;
+  }
+  return false;
+}
+
+function isAiTestReady(agentType, ready) {
+  if (agentType === 'codex' || agentType === 'claude-code' || agentType === 'gemini-cli') {
+    return Boolean(ready);
+  }
+  return true;
+}
+
+function buildAiPrimaryStatusChip(agentType, authResult) {
+  if (isAiAuthSupported(agentType)) {
+    const loggedIn = Boolean(authResult?.details?.loggedIn);
+    const label = agentType === 'codex' ? '인증' : '로그인';
+    return `<div class="auth-chip ${loggedIn ? 'is-ok' : ''}">${escapeHtml(`${label} ${loggedIn ? '완료' : '미완료'}`)}</div>`;
+  }
+
+  const configured = Boolean(authResult?.details?.configured);
+  const label = agentType === 'local-llm' ? '기본 설정' : '자격정보';
+  return `<div class="auth-chip ${configured ? 'is-ok' : ''}">${escapeHtml(`${label} ${configured ? '완료' : '미완료'}`)}</div>`;
 }
 
 function renderAdminPasswordModal() {
@@ -1358,13 +1622,34 @@ function renderAgentWizardResult(result) {
   }
 
   const details = result.details || {};
+  const links = [];
+  if (details.url) {
+    links.push(
+      `<a class="result-link" href="${escapeAttr(details.url)}" target="_blank" rel="noreferrer">${escapeHtml(details.url)}</a>`,
+    );
+  }
+  if (details.manualUrl && details.manualUrl !== details.url) {
+    links.push(
+      `<a class="result-link" href="${escapeAttr(details.manualUrl)}" target="_blank" rel="noreferrer">manual: ${escapeHtml(details.manualUrl)}</a>`,
+    );
+  }
+  if (details.automaticUrl) {
+    links.push(
+      `<a class="result-link" href="${escapeAttr(details.automaticUrl)}" target="_blank" rel="noreferrer">automatic: ${escapeHtml(details.automaticUrl)}</a>`,
+    );
+  }
   return `
     <div class="wizard-result">
       <strong>${escapeHtml(details.summary || result.output || '완료')}</strong>
-      ${details.url ? `<a class="result-link" href="${escapeAttr(details.url)}" target="_blank" rel="noreferrer">${escapeHtml(details.url)}</a>` : ''}
+      ${links.join('')}
       ${details.code ? `<div class="result-code">${escapeHtml(details.code)}</div>` : ''}
       ${
-        !details.url && !details.code && result.output
+        details.requiresCode
+          ? '<div class="field-hint">브라우저 인증 후 표시되는 Authentication Code를 붙여넣고 로그인 완료를 누르세요.</div>'
+          : ''
+      }
+      ${
+        !links.length && !details.code && result.output
           ? `<pre class="result-output">${escapeHtml(result.output)}</pre>`
           : ''
       }
@@ -1500,19 +1785,23 @@ function assertSelectableAgentType(agentType) {
 
 function createAiManager(agentType) {
   const cached = state.aiStatuses[agentType] || {};
+  const sharedEnv = state.data?.sharedEnv || {};
+  const localLlmBaseUrl = optionalDraftText(sharedEnv.LOCAL_LLM_BASE_URL) || 'http://127.0.0.1:11434/v1';
   return {
     type: agentType,
     authResult: cached.authResult || null,
     testResult: cached.testResult || null,
+    authConfig: buildAiAuthDraft(agentType),
+    credentials: buildAiCredentialDraft(agentType, sharedEnv),
     testConfig: {
       modelMode: defaultModelModeForAgent(agentType),
       model: '',
-      baseUrl: 'http://127.0.0.1:11434/v1',
+      baseUrl: localLlmBaseUrl,
     },
   };
 }
 
-async function runAiManagerAction(action) {
+async function runAiManagerAction(action, options = {}) {
   if (!state.aiManager) {
     return;
   }
@@ -1526,7 +1815,11 @@ async function runAiManagerAction(action) {
     throw new Error('이 AI 유형은 테스트 호출을 지원하지 않습니다.');
   }
 
-  if (action !== 'test' && !isAiAuthSupported(agentType)) {
+  if (action === 'status' && !isAiStatusSupported(agentType)) {
+    throw new Error('이 AI 유형은 상태 확인을 지원하지 않습니다.');
+  }
+
+  if (action !== 'test' && action !== 'status' && !isAiAuthSupported(agentType)) {
     throw new Error('이 AI 유형은 인증 관리를 지원하지 않습니다.');
   }
 
@@ -1534,6 +1827,14 @@ async function runAiManagerAction(action) {
     agentType,
     action,
   };
+
+  if (action === 'login') {
+    body.options = buildAiManagerAuthOptions(agentType);
+  }
+
+  if (action === 'complete-login') {
+    body.authorizationCode = optionalDraftText(state.aiManager?.authConfig?.authorizationCode);
+  }
 
   if (action === 'test') {
     body.definition = buildAiManagerTestDefinition(agentType);
@@ -1546,6 +1847,8 @@ async function runAiManagerAction(action) {
       body,
     });
 
+    handleLoginLaunch(response.result, options.popup);
+
     if (!state.aiManager || state.aiManager.type !== agentType) {
       return;
     }
@@ -1554,18 +1857,60 @@ async function runAiManagerAction(action) {
       state.aiManager.testResult = response.result;
     } else {
       state.aiManager.authResult = response.result;
-      if (action === 'logout' || (action === 'status' && !response.result?.details?.loggedIn)) {
+      if (action === 'logout') {
+        state.aiManager.testResult = null;
+      }
+      if (
+        action === 'status' &&
+        isAuthRequiredAgent(agentType) &&
+        !response.result?.details?.loggedIn
+      ) {
         state.aiManager.testResult = null;
       }
     }
     syncAiStatus(agentType, state.aiManager);
 
-    state.notice = null;
+    if (!(action === 'login' && response.result?.details?.url)) {
+      state.notice = null;
+    }
     render();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
   }
+}
+
+async function saveAiCredentials() {
+  if (!state.aiManager || !supportsAiCredentialEditing(state.aiManager.type)) {
+    return;
+  }
+
+  const agentType = optionalDraftText(state.aiManager.type);
+  const nextSharedEnv = {
+    ...(state.data?.sharedEnv || {}),
+  };
+
+  for (const key of getAiManagedCredentialKeys(agentType)) {
+    const value = optionalDraftText(state.aiManager.credentials?.[key]);
+    if (value) {
+      nextSharedEnv[key] = value;
+    } else {
+      delete nextSharedEnv[key];
+    }
+  }
+
+  const response = await mutateJson('/api/shared-env', {
+    method: 'PUT',
+    body: {
+      sharedEnv: nextSharedEnv,
+    },
+  });
+
+  state.data = response.state;
+  await refreshAiStatuses();
+  state.aiManager = createAiManager(agentType);
+  setNotice('info', `${localizeAgentTypeValue(agentType)} 자격정보를 저장했습니다.`);
+  render();
 }
 
 function buildAiManagerTestDefinition(agentType) {
@@ -1622,6 +1967,206 @@ function renderAiTestFields(agentType) {
   }
 
   return `<div class="form-grid">${fields.join('')}</div>`;
+}
+
+function renderAiCredentialFields(agentType) {
+  if (!supportsAiCredentialEditing(agentType)) {
+    return '';
+  }
+
+  const credentials = state.aiManager?.credentials || {};
+  const fields = [];
+
+  for (const field of getAiCredentialFields(agentType)) {
+    fields.push(`
+      <div class="field field-full">
+        <label for="${escapeAttr(field.inputId)}">${escapeHtml(field.label)}</label>
+        <input
+          id="${escapeAttr(field.inputId)}"
+          type="${escapeAttr(field.type || 'text')}"
+          name="${escapeAttr(field.envKey)}"
+          value="${escapeAttr(credentials[field.envKey] || '')}"
+          data-ai-credential-key="${escapeAttr(field.envKey)}"
+          autocomplete="off"
+          placeholder="${escapeAttr(field.placeholder || '')}"
+        />
+        ${field.hint ? `<div class="field-hint">${escapeHtml(field.hint)}</div>` : ''}
+      </div>
+    `);
+  }
+
+  return `<div class="form-grid">${fields.join('')}</div>`;
+}
+
+function renderAiAuthFields(agentType) {
+  const authConfig = state.aiManager?.authConfig || buildAiAuthDraft(agentType);
+  if (agentType === 'claude-code') {
+    return `
+      <div class="form-grid">
+        <div class="field">
+          <label for="ai-manager-claude-login-mode">로그인 방식</label>
+          <select id="ai-manager-claude-login-mode" name="claudeLoginMode" data-ai-auth-key="loginMode">
+            <option value="claudeai" ${authConfig.loginMode !== 'console' ? 'selected' : ''}>claude.ai</option>
+            <option value="console" ${authConfig.loginMode === 'console' ? 'selected' : ''}>console</option>
+          </select>
+          <div class="field-hint">claude.ai 는 개인 Claude 구독 계정이고, console 은 Anthropic Console 조직/API 계정입니다.</div>
+        </div>
+        <div class="field field-full">
+          <label for="ai-manager-claude-authorization-code">Authentication Code 붙여넣기</label>
+          <textarea
+            id="ai-manager-claude-authorization-code"
+            name="claudeAuthorizationCode"
+            data-ai-auth-key="authorizationCode"
+            placeholder="브라우저 로그인 완료 후 표시된 Authentication Code"
+          >${escapeHtml(authConfig.authorizationCode || '')}</textarea>
+          <div class="field-hint">로그인 버튼을 누른 뒤 브라우저 인증을 마치면 Authentication Code가 표시됩니다. 그 코드를 그대로 붙여넣고 로그인 완료를 누르세요.</div>
+        </div>
+      </div>
+    `;
+  }
+  if (agentType === 'gemini-cli') {
+    return `
+      <div class="form-grid">
+        <div class="field field-full">
+          <label for="ai-manager-gemini-authorization-code">Authorization code 붙여넣기</label>
+          <textarea
+            id="ai-manager-gemini-authorization-code"
+            name="geminiAuthorizationCode"
+            data-ai-auth-key="authorizationCode"
+            placeholder="브라우저 로그인 완료 후 표시된 authorization code"
+          >${escapeHtml(authConfig.authorizationCode || '')}</textarea>
+          <div class="field-hint">로그인 버튼을 누른 뒤 Google 브라우저 인증을 마치면 authorization code가 표시됩니다. 그 코드를 그대로 붙여넣고 로그인 완료를 누르세요.</div>
+        </div>
+      </div>
+    `;
+  }
+  return '';
+}
+
+function buildAiAuthDraft(agentType) {
+  if (agentType === 'claude-code') {
+    return {
+      loginMode: 'claudeai',
+      authorizationCode: '',
+    };
+  }
+  if (agentType === 'gemini-cli') {
+    return {
+      authorizationCode: '',
+    };
+  }
+  return {};
+}
+
+function buildAiManagerAuthOptions(agentType) {
+  if (agentType === 'claude-code') {
+    const authConfig = state.aiManager?.authConfig || {};
+    return {
+      loginMode: authConfig.loginMode === 'console' ? 'console' : 'claudeai',
+    };
+  }
+  if (agentType === 'gemini-cli') {
+    const authConfig = state.aiManager?.authConfig || {};
+    return {
+      authorizationCode: optionalDraftText(authConfig.authorizationCode),
+    };
+  }
+  return {};
+}
+
+function openLoginPopup() {
+  try {
+    return window.open('about:blank', '_blank');
+  } catch {
+    return null;
+  }
+}
+
+function handleLoginLaunch(result, popup) {
+  const url = optionalDraftText(result?.details?.url);
+  if (!url) {
+    if (popup && !popup.closed) {
+      popup.close();
+    }
+    return;
+  }
+
+  if (popup && !popup.closed) {
+    popup.location.replace(url);
+  } else {
+    window.open(url, '_blank');
+  }
+  if (result?.details?.requiresCode) {
+    setNotice('info', '로그인 창을 열었습니다. 브라우저 인증 뒤 표시된 Authentication Code를 붙여넣고 로그인 완료를 누르세요.');
+    return;
+  }
+  setNotice('info', '로그인 창을 열었습니다. 브라우저에서 완료한 뒤 상태 확인을 누르세요.');
+}
+
+function buildAiCredentialDraft(agentType, sharedEnv) {
+  return Object.fromEntries(
+    getAiManagedCredentialKeys(agentType).map((key) => [key, sharedEnv?.[key] || '']),
+  );
+}
+
+function supportsAiCredentialEditing(agentType) {
+  return ['gemini-cli', 'local-llm'].includes(agentType);
+}
+
+function isAiStatusSupported(agentType) {
+  return ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
+}
+
+function getAiManagedCredentialKeys(agentType) {
+  if (agentType === 'gemini-cli') {
+    return ['GEMINI_API_KEY', 'GOOGLE_API_KEY'];
+  }
+  if (agentType === 'local-llm') {
+    return ['LOCAL_LLM_BASE_URL', 'LOCAL_LLM_API_KEY'];
+  }
+  return [];
+}
+
+function getAiCredentialFields(agentType) {
+  if (agentType === 'gemini-cli') {
+    return [
+      {
+        envKey: 'GEMINI_API_KEY',
+        inputId: 'ai-manager-gemini-api-key',
+        label: 'GEMINI_API_KEY',
+        type: 'password',
+        placeholder: 'AIza...',
+      },
+      {
+        envKey: 'GOOGLE_API_KEY',
+        inputId: 'ai-manager-google-api-key',
+        label: 'GOOGLE_API_KEY',
+        type: 'password',
+        placeholder: 'AIza...',
+        hint: 'Gemini는 Google 로그인 우선으로 동작하고, API 키는 대체 경로로만 사용합니다.',
+      },
+    ];
+  }
+  if (agentType === 'local-llm') {
+    return [
+      {
+        envKey: 'LOCAL_LLM_BASE_URL',
+        inputId: 'ai-manager-local-llm-base-url',
+        label: 'LOCAL_LLM_BASE_URL',
+        type: 'text',
+        placeholder: 'http://127.0.0.1:11434/v1',
+      },
+      {
+        envKey: 'LOCAL_LLM_API_KEY',
+        inputId: 'ai-manager-local-llm-api-key',
+        label: 'LOCAL_LLM_API_KEY',
+        type: 'password',
+        placeholder: '선택 사항',
+        hint: 'OpenAI 호환 서버가 토큰을 요구할 때만 입력하면 됩니다.',
+      },
+    ];
+  }
+  return [];
 }
 
 function renderModelField({
@@ -1876,7 +2421,7 @@ function resolveRuntimeChipClass(status) {
 function localizeAgentTypeValue(value) {
   const labels = {
     codex: 'Codex',
-    'claude-code': 'Claude Code',
+    'claude-code': 'Claude Code ACP',
     'gemini-cli': 'Gemini CLI',
     'local-llm': '로컬 LLM',
     command: '사용자 명령어',
@@ -1899,21 +2444,21 @@ function localizeEffortLabel(value) {
 
 function localizeAiMeta(value) {
   const labels = {
-    codex: '로컬 인증 · 테스트',
-    'claude-code': '로컬 인증 · 테스트',
-    'gemini-cli': '테스트',
-    'local-llm': '연결 테스트',
+    codex: '로컬 Codex 로그인 공유 · 테스트',
+    'claude-code': 'ACP 로그인 · 테스트',
+    'gemini-cli': 'Google 로그인 · API 키 대체 경로 · 테스트',
+    'local-llm': '주소 / API 키 · 테스트',
     command: '명령 테스트',
   };
   return labels[value] || '';
 }
 
 function isAuthRequiredAgent(agentType) {
-  return ['codex', 'claude-code'].includes(agentType);
+  return ['codex'].includes(agentType);
 }
 
 function isAiAuthSupported(agentType) {
-  return ['codex', 'claude-code'].includes(agentType);
+  return ['codex', 'claude-code', 'gemini-cli'].includes(agentType);
 }
 
 function isAiTestSupported(agentType) {
@@ -1959,6 +2504,10 @@ function mergeAiStatuses(currentStatuses, nextStatuses) {
 }
 
 function isAiReady(agentType, status) {
+  const ready = status?.authResult?.details?.ready;
+  if (typeof ready === 'boolean') {
+    return ready;
+  }
   const loggedIn = Boolean(status?.authResult?.details?.loggedIn);
   const testOk = Boolean(status?.testResult?.details?.success);
   return isAiAuthSupported(agentType) ? loggedIn : testOk;
@@ -2058,7 +2607,7 @@ function normalizeEffortValue(agentType, model, effort) {
 function localizeOptionLabel(option) {
   const labels = {
     codex: 'Codex',
-    'claude-code': 'Claude Code',
+    'claude-code': 'Claude Code ACP',
     'gemini-cli': 'Gemini CLI',
     'local-llm': '로컬 LLM',
     command: '사용자 명령어',
@@ -2155,9 +2704,6 @@ function localizeErrorMessage(message) {
   if (text === 'OPENAI_API_KEY is required for codex model listing.') {
     return 'OPENAI_API_KEY 가 필요합니다.';
   }
-  if (text === 'ANTHROPIC_API_KEY is required for claude-code model listing.') {
-    return 'ANTHROPIC_API_KEY 가 필요합니다.';
-  }
   if (text === 'GEMINI_API_KEY is required for gemini-cli model listing.') {
     return 'GEMINI_API_KEY 또는 GOOGLE_API_KEY 가 필요합니다.';
   }
@@ -2215,14 +2761,38 @@ function localizeErrorMessage(message) {
   if (/^Auth actions are not supported for agent type ".+"\.$/u.test(text)) {
     return '이 AI 유형은 인증 관리를 지원하지 않습니다.';
   }
-  if (text === 'codex executable was not found in PATH.') {
-    return 'codex 실행 파일을 찾을 수 없습니다.';
+  if (text === '이 AI 유형은 상태 확인을 지원하지 않습니다.') {
+    return text;
   }
-  if (text === 'claude executable was not found in PATH.') {
-    return 'claude 실행 파일을 찾을 수 없습니다.';
+  if (/^codex is unavailable\. Bundled dependency @openai\/codex is required/u.test(text)) {
+    return 'codex 번들이 설치되어 있지 않습니다.';
   }
-  if (text === 'gemini executable was not found in PATH.') {
-    return 'gemini 실행 파일을 찾을 수 없습니다.';
+  if (/^claude is unavailable\. Bundled dependency @anthropic-ai\/claude-agent-sdk is required/u.test(text)) {
+    return 'Claude Code ACP 번들이 설치되어 있지 않습니다.';
+  }
+  if (/^gemini is unavailable\. Bundled dependency @google\/gemini-cli is required/u.test(text)) {
+    return 'gemini 번들이 설치되어 있지 않습니다.';
+  }
+  if (/^Bundled runtime for agent type "codex" is not installed\.$/u.test(text)) {
+    return 'codex 번들이 설치되어 있지 않습니다.';
+  }
+  if (/^Bundled runtime for agent type "claude-code" is not installed\.$/u.test(text)) {
+    return 'Claude Code ACP 번들이 설치되어 있지 않습니다.';
+  }
+  if (/^Bundled runtime for agent type "gemini-cli" is not installed\.$/u.test(text)) {
+    return 'gemini 번들이 설치되어 있지 않습니다.';
+  }
+  if (text === 'Claude Code ACP 로그인 세션이 없습니다. 먼저 로그인 버튼을 누르세요.') {
+    return text;
+  }
+  if (text === '브라우저 완료 후 Authentication Code를 붙여넣으세요.') {
+    return text;
+  }
+  if (text === 'Authentication Code 또는 callback URL 전체를 붙여넣어야 합니다.') {
+    return text;
+  }
+  if (text === 'Claude Code ACP 로그인 상태를 찾지 못했습니다. 다시 로그인 버튼을 누르세요.') {
+    return text;
   }
 
   return text;

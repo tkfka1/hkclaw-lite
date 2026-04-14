@@ -27,12 +27,34 @@ function createProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-test-'));
 }
 
-function createFakeCodexBin() {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-bin-'));
-  const codexPath = path.join(binDir, 'codex');
+function createFakeManagedCliBundle({ packageName, binaryName, script }) {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-cli-'));
+  const packageDir = path.join(rootDir, ...packageName.split('/'));
+  const scriptPath = path.join(packageDir, 'bin', `${binaryName}.js`);
+  fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
   fs.writeFileSync(
-    codexPath,
-    `#!/usr/bin/env node
+    path.join(packageDir, 'package.json'),
+    JSON.stringify({
+      name: packageName,
+      version: '0.0.0-test',
+      bin: {
+        [binaryName]: `./bin/${binaryName}.js`,
+      },
+    }),
+  );
+  fs.writeFileSync(
+    scriptPath,
+    script,
+    { mode: 0o755 },
+  );
+  return path.join(packageDir, 'package.json');
+}
+
+function createFakeCodexBundle() {
+  return createFakeManagedCliBundle({
+    packageName: '@openai/codex',
+    binaryName: 'codex',
+    script: `#!/usr/bin/env node
 const fs = require('node:fs');
 
 const args = process.argv.slice(2);
@@ -43,7 +65,12 @@ if (args[0] === 'login' && args[1] === 'status') {
 }
 
 if (args[0] === 'login' && args[1] === '--device-auth') {
-  process.stdout.write('Open https://example.test/codex/device\\u001b[0m and enter CODE-12345\\n');
+  process.stdout.write('Welcome to Codex [v0.120.0]\\n');
+  process.stdout.write('Follow these steps to sign in with ChatGPT using device code authorization:\\n\\n');
+  process.stdout.write('1. Open this link in your browser and sign in to your account\\n');
+  process.stdout.write('   https://example.test/codex/device\\u001b[0m\\n\\n');
+  process.stdout.write('2. Enter this one-time code (expires in 15 minutes)\\n');
+  process.stdout.write('   CODE-12345\\n');
   process.exit(0);
 }
 
@@ -75,32 +102,114 @@ if (args[0] === 'exec') {
 process.stderr.write(\`unexpected args: \${args.join(' ')}\\n\`);
 process.exit(1);
 `,
-    { mode: 0o755 },
-  );
-  return binDir;
+  });
 }
 
-function createFakeClaudeBin() {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-claude-bin-'));
-  const claudePath = path.join(binDir, 'claude');
+function createFakeClaudeAgentSdkBundle() {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-claude-sdk-'));
+  const packageDir = path.join(rootDir, '@anthropic-ai', 'claude-agent-sdk');
+  const modulePath = path.join(packageDir, 'sdk.mjs');
+  const cliPath = path.join(packageDir, 'cli.js');
+  fs.mkdirSync(path.dirname(modulePath), { recursive: true });
   fs.writeFileSync(
-    claudePath,
+    path.join(packageDir, 'package.json'),
+    JSON.stringify({
+      name: '@anthropic-ai/claude-agent-sdk',
+      version: '0.0.0-test',
+      type: 'module',
+      exports: {
+        '.': {
+          default: './sdk.mjs',
+        },
+      },
+    }),
+  );
+  fs.writeFileSync(
+    modulePath,
+    `export function query({ prompt, options = {} }) {
+  let closed = false;
+  let completionResolve = null;
+  const completionPromise = new Promise((resolve) => {
+    completionResolve = resolve;
+  });
+
+  return {
+    async initializationResult() {
+      return { ok: true };
+    },
+    async claudeAuthenticate(loginWithClaudeAi) {
+      return {
+        manualUrl: loginWithClaudeAi
+          ? 'https://claude.example.test/oauth/manual?state=claudeai-flow'
+          : 'https://console.example.test/oauth/manual?state=console-flow',
+        automaticUrl: loginWithClaudeAi
+          ? 'http://localhost:4455/callback?mode=claudeai&state=claudeai-flow'
+          : 'http://localhost:4455/callback?mode=console&state=console-flow',
+      };
+    },
+    async claudeOAuthCallback(code, state) {
+      completionResolve?.({
+        account: {
+          email: 'dev@example.test',
+          organization: state === 'console-flow' ? 'Console Org' : 'Claude Org',
+          code,
+          state,
+        },
+      });
+    },
+    async claudeOAuthWaitForCompletion() {
+      return await completionPromise;
+    },
+    async accountInfo() {
+      return {
+        email: 'dev@example.test',
+        organization: 'Console Org',
+      };
+    },
+    close() {
+      if (!closed) {
+        closed = true;
+        completionResolve?.({ closed: true });
+      }
+    },
+    async *[Symbol.asyncIterator]() {
+      if (typeof prompt !== 'string') {
+        return;
+      }
+      yield {
+        type: 'result',
+        subtype: 'success',
+        result: prompt === 'Return exactly OK.'
+          ? \`OK:\${options.permissionMode || 'default'}\`
+          : \`SDK:\${prompt}\`,
+      };
+    },
+  };
+}
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    cliPath,
     `#!/usr/bin/env node
 const args = process.argv.slice(2);
 
-if (args[0] === 'auth' && args[1] === 'status') {
-  process.stdout.write('{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\\n');
-  process.exit(1);
+if (args[0] === 'auth' && args[1] === 'status' && args[2] === '--json') {
+  process.stdout.write(JSON.stringify({
+    loggedIn: true,
+    authMethod: 'claudeai',
+    apiProvider: 'firstParty',
+  }));
+  process.exit(0);
 }
 
-if (args[0] === 'auth' && args[1] === 'login' && args.length === 2) {
-  process.stdout.write("Opening browser to sign in…\\n");
-  process.stdout.write("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true\\n");
+if (args[0] === 'auth' && args[1] === 'login') {
+  process.stdout.write('Opening browser to sign in...\\nhttps://claude.example.test/oauth/start\\n');
   process.exit(0);
 }
 
 if (args[0] === 'auth' && args[1] === 'logout') {
-  process.stdout.write('logged out\\n');
+  process.stdout.write('Logged out\\n');
   process.exit(0);
 }
 
@@ -109,7 +218,157 @@ process.exit(1);
 `,
     { mode: 0o755 },
   );
-  return binDir;
+  return path.join(packageDir, 'package.json');
+}
+
+function createFakeGeminiBundle() {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-gemini-cli-'));
+  const packageDir = path.join(rootDir, '@google', 'gemini-cli');
+  const bundleDir = path.join(packageDir, 'bundle');
+  const packageJsonPath = path.join(packageDir, 'package.json');
+  const scriptPath = path.join(bundleDir, 'gemini.js');
+  const supportChunkPath = path.join(bundleDir, 'chunk-2P3YD5SP.js');
+  const coreChunkPath = path.join(bundleDir, 'chunk-JS5WSGB2.js');
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-gemini-home-'));
+
+  fs.mkdirSync(bundleDir, { recursive: true });
+  fs.writeFileSync(
+    packageJsonPath,
+    JSON.stringify({
+      name: '@google/gemini-cli',
+      version: '0.0.0-test',
+      type: 'module',
+      bin: {
+        gemini: './bundle/gemini.js',
+      },
+    }),
+  );
+  fs.writeFileSync(
+    coreChunkPath,
+    `import path from 'node:path';
+import os from 'node:os';
+
+function resolveHomeDir() {
+  return process.env.HKCLAW_LITE_TEST_GEMINI_HOME || os.homedir();
+}
+
+export const Storage = {
+  getOAuthCredsPath() {
+    return path.join(resolveHomeDir(), '.gemini', 'oauth_creds.json');
+  },
+};
+`,
+  );
+  fs.writeFileSync(
+    supportChunkPath,
+    `import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { Storage } from './chunk-JS5WSGB2.js';
+
+var OAUTH_CLIENT_ID = "test-client-id.apps.googleusercontent.com";
+var OAUTH_CLIENT_SECRET = "test-client-secret";
+var OAUTH_SCOPE = ["openid", "email", "profile"];
+const redirectUri = "https://codeassist.google.com/authcode";
+
+function resolveHomeDir() {
+  return process.env.HKCLAW_LITE_TEST_GEMINI_HOME || os.homedir();
+}
+
+function getGoogleAccountsPath() {
+  return path.join(resolveHomeDir(), '.gemini', 'google_accounts.json');
+}
+
+export function getOauthClient() {
+  return {
+    clientId: OAUTH_CLIENT_ID,
+    clientSecret: OAUTH_CLIENT_SECRET,
+    redirectUri,
+    scopes: OAUTH_SCOPE,
+  };
+}
+
+export class UserAccountManager {
+  getGoogleAccountsCachePath() {
+    return getGoogleAccountsPath();
+  }
+
+  getCachedGoogleAccount() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(getGoogleAccountsPath(), 'utf8'));
+      return typeof parsed.email === 'string' ? parsed.email : '';
+    } catch {
+      return '';
+    }
+  }
+
+  async cacheGoogleAccount(email) {
+    const cachePath = getGoogleAccountsPath();
+    await fsPromises.mkdir(path.dirname(cachePath), { recursive: true });
+    await fsPromises.writeFile(cachePath, JSON.stringify({ email }, null, 2), 'utf8');
+  }
+}
+
+export async function clearCachedCredentialFile() {
+  await fsPromises.rm(Storage.getOAuthCredsPath(), { force: true }).catch(() => {});
+}
+
+export function clearOauthClientCache() {}
+`,
+  );
+  fs.writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import { getOauthClient, UserAccountManager, clearCachedCredentialFile, clearOauthClientCache } from "./chunk-2P3YD5SP.js";
+import { Storage } from "./chunk-JS5WSGB2.js";
+
+void getOauthClient;
+void UserAccountManager;
+void clearCachedCredentialFile;
+void clearOauthClientCache;
+void Storage;
+
+const args = process.argv.slice(2);
+const promptIndex = args.indexOf('-p');
+const prompt = promptIndex >= 0 ? (args[promptIndex + 1] || '') : '';
+
+if (prompt) {
+  process.stdout.write(JSON.stringify({ text: 'OK' }));
+  process.exit(0);
+}
+
+process.stderr.write(\`unexpected args: \${args.join(' ')}\\n\`);
+process.exit(1);
+`,
+    { mode: 0o755 },
+  );
+
+  return {
+    packageJsonPath,
+    homeDir,
+  };
+}
+
+async function withEnv(entries, callback) {
+  const keys = Object.keys(entries);
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(entries)) {
+    process.env[key] = value;
+  }
+
+  try {
+    await callback();
+  } finally {
+    for (const key of keys) {
+      const original = previous.get(key);
+      if (original === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = original;
+      }
+    }
+  }
 }
 
 async function withJsonServer(handler, callback) {
@@ -598,44 +857,374 @@ test('admin server supports agent auth status, login, and test call', async () =
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
   initProject(projectRoot);
 
-  const fakeBinDir = createFakeCodexBin();
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${fakeBinDir}${path.delimiter}${previousPath || ''}`;
+  const fakePackageJson = createFakeCodexBundle();
+  await withEnv(
+    {
+      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      await withAdminServer(projectRoot, async ({ url }) => {
+        const status = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'codex',
+            action: 'status',
+          },
+        });
+        assert.equal(status.response.status, 200, JSON.stringify(status.payload));
+        assert.equal(status.payload.result.details.loggedIn, true);
 
-  try {
+        const login = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'codex',
+            action: 'login',
+          },
+        });
+        assert.equal(login.response.status, 200, JSON.stringify(login.payload));
+        assert.match(login.payload.result.details.url, /example\.test/u);
+        assert.doesNotMatch(login.payload.result.details.url, /\u001b/u);
+        assert.equal(login.payload.result.details.code, 'CODE-12345');
+
+        const testCall = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'codex',
+            action: 'test',
+            workdir: 'workspace',
+            definition: {
+              name: 'wizard-agent',
+              agent: 'codex',
+              sandbox: 'read-only',
+            },
+          },
+        });
+        assert.equal(testCall.response.status, 200, JSON.stringify(testCall.payload));
+        assert.equal(testCall.payload.result.details.success, true);
+        assert.match(testCall.payload.result.output, /OK/u);
+      });
+    },
+  );
+});
+
+test('admin server reports codex, Claude ACP, Gemini, and local LLM status details', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const config = loadConfig(projectRoot);
+  config.sharedEnv = {
+    GEMINI_API_KEY: 'test-gemini-key',
+    LOCAL_LLM_BASE_URL: 'http://127.0.0.1:11434/v1',
+    LOCAL_LLM_API_KEY: 'test-local-key',
+  };
+  saveConfig(projectRoot, config);
+
+  const fakeCodexPackageJson = createFakeCodexBundle();
+  const fakeClaudePackageJson = createFakeClaudeAgentSdkBundle();
+  const fakeGeminiBundle = createFakeGeminiBundle();
+  await withEnv(
+    {
+      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakeCodexPackageJson,
+      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakeClaudePackageJson,
+      HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakeGeminiBundle.packageJsonPath,
+      HKCLAW_LITE_TEST_GEMINI_HOME: fakeGeminiBundle.homeDir,
+    },
+    async () => {
+      await withAdminServer(projectRoot, async ({ url }) => {
+        const snapshot = await requestJson(`${url}/api/ai-statuses`);
+        assert.equal(snapshot.response.status, 200, JSON.stringify(snapshot.payload));
+        assert.equal(snapshot.payload.statuses.codex.authResult.details.loggedIn, true);
+        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.ready, true);
+        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.loggedIn, true);
+        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.authMethod, 'claudeai');
+        assert.equal('credentialKey' in snapshot.payload.statuses['claude-code'].authResult.details, false);
+        assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.ready, true);
+        assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.credentialKey, 'GEMINI_API_KEY');
+        assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.baseUrl, 'http://127.0.0.1:11434/v1');
+      });
+    },
+  );
+});
+
+test('admin server starts and completes Gemini CLI Google login flow through the bundled runtime', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const fakeGeminiBundle = createFakeGeminiBundle();
+  const oauthRequests = [];
+
+  await withJsonServer(async (req, res) => {
+    if (req.method === 'POST' && req.url === '/oauth/token') {
+      const body = await new Promise((resolve, reject) => {
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        req.on('error', reject);
+      });
+      oauthRequests.push(new URLSearchParams(body));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        access_token: 'ya29.test-token',
+        refresh_token: 'refresh-token',
+        token_type: 'Bearer',
+        expiry_date: Date.now() + 3_600_000,
+      }));
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/userinfo') {
+      assert.equal(req.headers.authorization, 'Bearer ya29.test-token');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        email: 'gemini@example.test',
+        name: 'Gemini Test',
+      }));
+      return;
+    }
+
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not-found' }));
+  }, async (oauthUrl) => {
+    await withEnv(
+      {
+        HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakeGeminiBundle.packageJsonPath,
+        HKCLAW_LITE_TEST_GEMINI_HOME: fakeGeminiBundle.homeDir,
+        HKCLAW_LITE_GEMINI_OAUTH_AUTH_URL: `${oauthUrl}/oauth/authorize`,
+        HKCLAW_LITE_GEMINI_OAUTH_TOKEN_URL: `${oauthUrl}/oauth/token`,
+        HKCLAW_LITE_GEMINI_OAUTH_USERINFO_URL: `${oauthUrl}/userinfo`,
+      },
+      async () => {
+        await withAdminServer(projectRoot, async ({ url }) => {
+          const statusBefore = await requestJson(`${url}/api/agent-auth`, {
+            method: 'POST',
+            body: {
+              agentType: 'gemini-cli',
+              action: 'status',
+            },
+          });
+          assert.equal(statusBefore.response.status, 200, JSON.stringify(statusBefore.payload));
+          assert.equal(statusBefore.payload.result.details.loggedIn, false);
+          assert.equal(statusBefore.payload.result.details.ready, false);
+
+          const login = await requestJson(`${url}/api/agent-auth`, {
+            method: 'POST',
+            body: {
+              agentType: 'gemini-cli',
+              action: 'login',
+            },
+          });
+          assert.equal(login.response.status, 200, JSON.stringify(login.payload));
+          assert.equal(login.payload.result.details.requiresCode, true);
+          assert.match(login.payload.result.details.url, /oauth\/authorize/u);
+          assert.match(login.payload.result.details.url, /redirect_uri=https%3A%2F%2Fcodeassist\.google\.com%2Fauthcode/u);
+          assert.match(login.payload.result.output, /authorization code/u);
+
+          const complete = await requestJson(`${url}/api/agent-auth`, {
+            method: 'POST',
+            body: {
+              agentType: 'gemini-cli',
+              action: 'complete-login',
+              authorizationCode: 'google-auth-code-123',
+            },
+          });
+          assert.equal(complete.response.status, 200, JSON.stringify(complete.payload));
+          assert.equal(complete.payload.result.details.loggedIn, true);
+          assert.equal(complete.payload.result.details.account.email, 'gemini@example.test');
+
+          assert.equal(oauthRequests.length, 1);
+          assert.equal(oauthRequests[0].get('code'), 'google-auth-code-123');
+          assert.equal(oauthRequests[0].get('grant_type'), 'authorization_code');
+          assert.equal(
+            oauthRequests[0].get('redirect_uri'),
+            'https://codeassist.google.com/authcode',
+          );
+
+          const credsPath = path.join(fakeGeminiBundle.homeDir, '.gemini', 'oauth_creds.json');
+          const accountsPath = path.join(fakeGeminiBundle.homeDir, '.gemini', 'google_accounts.json');
+          assert.equal(fs.existsSync(credsPath), true);
+          assert.equal(fs.existsSync(accountsPath), true);
+
+          const statusAfter = await requestJson(`${url}/api/agent-auth`, {
+            method: 'POST',
+            body: {
+              agentType: 'gemini-cli',
+              action: 'status',
+            },
+          });
+          assert.equal(statusAfter.response.status, 200, JSON.stringify(statusAfter.payload));
+          assert.equal(statusAfter.payload.result.details.loggedIn, true);
+          assert.equal(statusAfter.payload.result.details.ready, true);
+          assert.equal(statusAfter.payload.result.details.authMethod, 'google');
+          assert.equal(statusAfter.payload.result.details.email, 'gemini@example.test');
+
+          const testCall = await requestJson(`${url}/api/agent-auth`, {
+            method: 'POST',
+            body: {
+              agentType: 'gemini-cli',
+              action: 'test',
+              workdir: '.',
+              definition: {
+                name: 'gemini-wizard',
+                agent: 'gemini-cli',
+              },
+            },
+          });
+          assert.equal(testCall.response.status, 200, JSON.stringify(testCall.payload));
+          assert.equal(testCall.payload.result.details.success, true);
+          assert.match(testCall.payload.result.output, /OK/u);
+
+          const logout = await requestJson(`${url}/api/agent-auth`, {
+            method: 'POST',
+            body: {
+              agentType: 'gemini-cli',
+              action: 'logout',
+            },
+          });
+          assert.equal(logout.response.status, 200, JSON.stringify(logout.payload));
+          assert.equal(logout.payload.result.details.loggedIn, false);
+          assert.equal(fs.existsSync(credsPath), false);
+          assert.equal(fs.existsSync(accountsPath), false);
+
+          const statusAfterLogout = await requestJson(`${url}/api/agent-auth`, {
+            method: 'POST',
+            body: {
+              agentType: 'gemini-cli',
+              action: 'status',
+            },
+          });
+          assert.equal(statusAfterLogout.response.status, 200, JSON.stringify(statusAfterLogout.payload));
+          assert.equal(statusAfterLogout.payload.result.details.loggedIn, false);
+          assert.equal(statusAfterLogout.payload.result.details.ready, false);
+        });
+      },
+    );
+  });
+});
+
+test('admin server starts and completes Claude ACP login flow through the bundled sdk', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      await withAdminServer(projectRoot, async ({ url }) => {
+        const login = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'claude-code',
+            action: 'login',
+            options: {
+              loginMode: 'console',
+            },
+          },
+        });
+        assert.equal(login.response.status, 200, JSON.stringify(login.payload));
+        assert.equal(login.payload.result.details.summary, '브라우저에서 로그인을 완료하세요.');
+        assert.equal(login.payload.result.details.requiresCode, true);
+        assert.equal(login.payload.result.details.url, 'https://console.example.test/oauth/manual?state=console-flow');
+        assert.equal(login.payload.result.details.manualUrl, 'https://console.example.test/oauth/manual?state=console-flow');
+        assert.equal(login.payload.result.details.automaticUrl, 'http://localhost:4455/callback?mode=console&state=console-flow');
+
+        const complete = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'claude-code',
+            action: 'complete-login',
+            authorizationCode: 'test-code',
+          },
+        });
+        assert.equal(complete.response.status, 200, JSON.stringify(complete.payload));
+        assert.equal(complete.payload.result.details.loggedIn, true);
+        assert.equal(complete.payload.result.details.account.email, 'dev@example.test');
+        assert.equal(complete.payload.result.details.account.organization, 'Console Org');
+      });
+    },
+  );
+});
+
+test('admin server runs claude test calls through the bundled agent sdk', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      await withAdminServer(projectRoot, async ({ url }) => {
+        const testCall = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'claude-code',
+            action: 'test',
+            workdir: 'workspace',
+            definition: {
+              name: 'wizard-agent',
+              agent: 'claude-code',
+              permissionMode: 'acceptEdits',
+            },
+          },
+        });
+        assert.equal(testCall.response.status, 200, JSON.stringify(testCall.payload));
+        assert.equal(testCall.payload.result.details.success, true);
+        assert.match(testCall.payload.result.output, /OK:acceptEdits/u);
+      });
+    },
+  );
+});
+
+test('admin server uses shared env credentials for local LLM test calls', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  const config = loadConfig(projectRoot);
+  config.sharedEnv = {
+    LOCAL_LLM_API_KEY: 'local-secret',
+  };
+  saveConfig(projectRoot, config);
+
+  await withJsonServer((request, response) => {
+    if (request.url === '/v1/chat/completions') {
+      assert.equal(request.headers.authorization, 'Bearer local-secret');
+      response.writeHead(200, {
+        'content-type': 'application/json',
+      });
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: 'OK',
+              },
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404, {
+      'content-type': 'application/json',
+    });
+    response.end(JSON.stringify({ error: 'Not found' }));
+  }, async (localLlmUrl) => {
     await withAdminServer(projectRoot, async ({ url }) => {
-      const status = await requestJson(`${url}/api/agent-auth`, {
-        method: 'POST',
-        body: {
-          agentType: 'codex',
-          action: 'status',
-        },
-      });
-      assert.equal(status.response.status, 200, JSON.stringify(status.payload));
-      assert.equal(status.payload.result.details.loggedIn, true);
-
-      const login = await requestJson(`${url}/api/agent-auth`, {
-        method: 'POST',
-        body: {
-          agentType: 'codex',
-          action: 'login',
-        },
-      });
-      assert.equal(login.response.status, 200, JSON.stringify(login.payload));
-      assert.match(login.payload.result.details.url, /example\.test/u);
-      assert.doesNotMatch(login.payload.result.details.url, /\u001b/u);
-      assert.equal(login.payload.result.details.code, 'CODE-12345');
-
       const testCall = await requestJson(`${url}/api/agent-auth`, {
         method: 'POST',
         body: {
-          agentType: 'codex',
+          agentType: 'local-llm',
           action: 'test',
           workdir: 'workspace',
           definition: {
             name: 'wizard-agent',
-            agent: 'codex',
-            sandbox: 'read-only',
+            agent: 'local-llm',
+            model: 'qwen2.5-coder:14b',
+            baseUrl: `${localLlmUrl}/v1`,
           },
         },
       });
@@ -643,77 +1232,16 @@ test('admin server supports agent auth status, login, and test call', async () =
       assert.equal(testCall.payload.result.details.success, true);
       assert.match(testCall.payload.result.output, /OK/u);
     });
-  } finally {
-    process.env.PATH = previousPath;
-  }
+  });
 });
 
-test('admin server restores AI auth statuses from local CLI state', async () => {
-  const projectRoot = createProject();
-  initProject(projectRoot);
-
-  const fakeCodexBin = createFakeCodexBin();
-  const fakeClaudeBin = createFakeClaudeBin();
-  const previousPath = process.env.PATH;
-  process.env.PATH = [fakeCodexBin, fakeClaudeBin, previousPath || ''].join(path.delimiter);
-
-  try {
-    await withAdminServer(projectRoot, async ({ url }) => {
-      const snapshot = await requestJson(`${url}/api/ai-statuses`);
-      assert.equal(snapshot.response.status, 200, JSON.stringify(snapshot.payload));
-      assert.equal(snapshot.payload.statuses.codex.authResult.details.loggedIn, true);
-      assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.loggedIn, false);
-    });
-  } finally {
-    process.env.PATH = previousPath;
-  }
-});
-
-test('admin server uses default claude login flow', async () => {
-  const projectRoot = createProject();
-  initProject(projectRoot);
-
-  const fakeBinDir = createFakeClaudeBin();
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${fakeBinDir}${path.delimiter}${previousPath || ''}`;
-
-  try {
-    await withAdminServer(projectRoot, async ({ url }) => {
-      const status = await requestJson(`${url}/api/agent-auth`, {
-        method: 'POST',
-        body: {
-          agentType: 'claude-code',
-          action: 'status',
-        },
-      });
-      assert.equal(status.response.status, 200, JSON.stringify(status.payload));
-      assert.equal(status.payload.result.details.loggedIn, false);
-
-      const login = await requestJson(`${url}/api/agent-auth`, {
-        method: 'POST',
-        body: {
-          agentType: 'claude-code',
-          action: 'login',
-        },
-      });
-      assert.equal(login.response.status, 200, JSON.stringify(login.payload));
-      assert.match(login.payload.result.details.url, /claude\.com\/cai\/oauth/u);
-      assert.doesNotMatch(login.payload.result.command, /--console/u);
-    });
-  } finally {
-    process.env.PATH = previousPath;
-  }
-});
-
-test('admin server lists live model options for provider APIs', async () => {
+test('admin server lists model options for provider APIs and curated Claude ACP defaults', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
 
   const previousEnv = {
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-    ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     GEMINI_BASE_URL: process.env.GEMINI_BASE_URL,
   };
@@ -741,34 +1269,6 @@ test('admin server lists live model options for provider APIs', async () => {
       response.end(JSON.stringify({ error: 'Not found' }));
     }, async (openAiUrl) => {
       await withJsonServer((request, response) => {
-        if (request.url === '/v1/models') {
-          response.writeHead(200, {
-            'content-type': 'application/json',
-          });
-          response.end(
-            JSON.stringify({
-              data: [
-                {
-                  id: 'claude-sonnet-4-20250514',
-                  display_name: 'Claude Sonnet 4',
-                  created_at: '2026-04-01T00:00:00Z',
-                },
-                {
-                  id: 'claude-opus-4-1-20250805',
-                  display_name: 'Claude Opus 4.1',
-                  created_at: '2026-04-02T00:00:00Z',
-                },
-              ],
-            }),
-          );
-          return;
-        }
-        response.writeHead(404, {
-          'content-type': 'application/json',
-        });
-        response.end(JSON.stringify({ error: 'Not found' }));
-      }, async (anthropicUrl) => {
-        await withJsonServer((request, response) => {
           if (request.url === '/models') {
             response.writeHead(200, {
               'content-type': 'application/json',
@@ -784,12 +1284,12 @@ test('admin server lists live model options for provider APIs', async () => {
             );
             return;
           }
-          response.writeHead(404, {
-            'content-type': 'application/json',
-          });
-          response.end(JSON.stringify({ error: 'Not found' }));
-        }, async (geminiUrl) => {
-          await withJsonServer((request, response) => {
+            response.writeHead(404, {
+              'content-type': 'application/json',
+            });
+            response.end(JSON.stringify({ error: 'Not found' }));
+      }, async (geminiUrl) => {
+        await withJsonServer((request, response) => {
             if (request.url === '/v1/models') {
               response.writeHead(200, {
                 'content-type': 'application/json',
@@ -809,71 +1309,68 @@ test('admin server lists live model options for provider APIs', async () => {
               'content-type': 'application/json',
             });
             response.end(JSON.stringify({ error: 'Not found' }));
-          }, async (modelServerUrl) => {
-            process.env.OPENAI_API_KEY = 'test-openai-key';
-            process.env.OPENAI_BASE_URL = `${openAiUrl}/v1`;
-            process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
-            process.env.ANTHROPIC_BASE_URL = anthropicUrl;
-            process.env.GEMINI_API_KEY = 'test-gemini-key';
-            process.env.GEMINI_BASE_URL = geminiUrl;
+        }, async (modelServerUrl) => {
+          process.env.OPENAI_API_KEY = 'test-openai-key';
+          process.env.OPENAI_BASE_URL = `${openAiUrl}/v1`;
+          process.env.GEMINI_API_KEY = 'test-gemini-key';
+          process.env.GEMINI_BASE_URL = geminiUrl;
 
-            await withAdminServer(projectRoot, async ({ url }) => {
-              const codex = await requestJson(`${url}/api/agent-models`, {
-                method: 'POST',
-                body: {
-                  agentType: 'codex',
-                },
-              });
-              assert.equal(codex.response.status, 200, JSON.stringify(codex.payload));
-              assert.equal(codex.payload.result.source, 'live');
-              assert.deepEqual(
-                codex.payload.result.models.map((entry) => entry.value),
-                ['gpt-5.3-codex', 'gpt-5.4'],
-              );
-              assert.deepEqual(codex.payload.result.models[0].efforts, ['low', 'medium', 'high', 'xhigh']);
-
-              const claude = await requestJson(`${url}/api/agent-models`, {
-                method: 'POST',
-                body: {
-                  agentType: 'claude-code',
-                },
-              });
-              assert.equal(claude.response.status, 200, JSON.stringify(claude.payload));
-              assert.equal(claude.payload.result.source, 'live');
-              assert.deepEqual(
-                claude.payload.result.models.map((entry) => entry.value),
-                ['claude-opus-4-1-20250805', 'claude-sonnet-4-20250514'],
-              );
-              assert.deepEqual(claude.payload.result.models[0].efforts, ['low', 'medium', 'high', 'max']);
-
-              const gemini = await requestJson(`${url}/api/agent-models`, {
-                method: 'POST',
-                body: {
-                  agentType: 'gemini-cli',
-                },
-              });
-              assert.equal(gemini.response.status, 200, JSON.stringify(gemini.payload));
-              assert.equal(gemini.payload.result.source, 'live');
-              assert.deepEqual(
-                gemini.payload.result.models.map((entry) => entry.value),
-                ['gemini-3-flash-preview', 'gemini-2.5-flash'],
-              );
-              assert.deepEqual(gemini.payload.result.models[1].efforts, ['none', 'minimal', 'low', 'medium', 'high']);
-
-              const live = await requestJson(`${url}/api/agent-models`, {
-                method: 'POST',
-                body: {
-                  agentType: 'local-llm',
-                  baseUrl: `${modelServerUrl}/v1`,
-                },
-              });
-              assert.equal(live.response.status, 200, JSON.stringify(live.payload));
-              assert.equal(live.payload.result.source, 'live');
-              assert.deepEqual(
-                live.payload.result.models.map((entry) => entry.value),
-                ['llama3.1:8b', 'qwen2.5-coder:14b'],
-              );
+          await withAdminServer(projectRoot, async ({ url }) => {
+            const codex = await requestJson(`${url}/api/agent-models`, {
+              method: 'POST',
+              body: {
+                agentType: 'codex',
+              },
             });
+            assert.equal(codex.response.status, 200, JSON.stringify(codex.payload));
+            assert.equal(codex.payload.result.source, 'live');
+            assert.deepEqual(
+              codex.payload.result.models.map((entry) => entry.value),
+              ['gpt-5.3-codex', 'gpt-5.4'],
+            );
+            assert.deepEqual(codex.payload.result.models[0].efforts, ['low', 'medium', 'high', 'xhigh']);
+
+            const claude = await requestJson(`${url}/api/agent-models`, {
+              method: 'POST',
+              body: {
+                agentType: 'claude-code',
+              },
+            });
+            assert.equal(claude.response.status, 200, JSON.stringify(claude.payload));
+            assert.equal(claude.payload.result.source, 'curated');
+            assert.deepEqual(
+              claude.payload.result.models.map((entry) => entry.value),
+              ['claude-opus-4-1-20250805', 'claude-sonnet-4-20250514'],
+            );
+            assert.deepEqual(claude.payload.result.models[0].efforts, ['low', 'medium', 'high', 'max']);
+
+            const gemini = await requestJson(`${url}/api/agent-models`, {
+              method: 'POST',
+              body: {
+                agentType: 'gemini-cli',
+              },
+            });
+            assert.equal(gemini.response.status, 200, JSON.stringify(gemini.payload));
+            assert.equal(gemini.payload.result.source, 'live');
+            assert.deepEqual(
+              gemini.payload.result.models.map((entry) => entry.value),
+              ['gemini-3-flash-preview', 'gemini-2.5-flash'],
+            );
+            assert.deepEqual(gemini.payload.result.models[1].efforts, ['none', 'minimal', 'low', 'medium', 'high']);
+
+            const live = await requestJson(`${url}/api/agent-models`, {
+              method: 'POST',
+              body: {
+                agentType: 'local-llm',
+                baseUrl: `${modelServerUrl}/v1`,
+              },
+            });
+            assert.equal(live.response.status, 200, JSON.stringify(live.payload));
+            assert.equal(live.payload.result.source, 'live');
+            assert.deepEqual(
+              live.payload.result.models.map((entry) => entry.value),
+              ['llama3.1:8b', 'qwen2.5-coder:14b'],
+            );
           });
         });
       });

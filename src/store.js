@@ -61,6 +61,22 @@ export function resolveProjectRoot(startDir, explicitRoot) {
   return discovered;
 }
 
+export function resolveOrInitProjectRoot(startDir, explicitRoot) {
+  const projectRoot = explicitRoot
+    ? path.resolve(explicitRoot)
+    : findProjectRoot(startDir) || path.resolve(startDir);
+  ensureProjectInitialized(projectRoot);
+  return projectRoot;
+}
+
+export function ensureProjectInitialized(projectRoot) {
+  const layout = getProjectLayout(projectRoot);
+  if (!fs.existsSync(layout.configPath)) {
+    initProject(projectRoot);
+  }
+  return layout;
+}
+
 export function initProject(projectRoot, { force = false } = {}) {
   const layout = getProjectLayout(projectRoot);
   if (fs.existsSync(layout.configPath) && !force) {

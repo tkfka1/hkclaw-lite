@@ -112,6 +112,25 @@ test('init creates v3 project metadata', () => {
   assert.deepEqual(config.dashboards, {});
 });
 
+test('add agent auto-initializes project metadata when missing', () => {
+  const cwd = createProject();
+
+  const addAgent = runCli(cwd, ['add', 'agent'], {
+    input: buildCommandAgentAnswers({
+      name: 'worker',
+    }),
+  });
+
+  assert.equal(addAgent.status, 0, addAgent.stderr);
+  assert.match(addAgent.stdout, /Added agent "worker"/u);
+
+  const configPath = path.join(cwd, '.hkclaw-lite', 'config.json');
+  assert.equal(fs.existsSync(configPath), true);
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.equal(config.version, 3);
+  assert.ok(config.agents.worker);
+});
+
 test('add agent and channel use question flow and store mapping', () => {
   const cwd = createProject();
   assert.equal(runCli(cwd, ['init']).status, 0);
@@ -258,7 +277,11 @@ test('help omits chat and session commands and documents the admin port', () => 
   assert.doesNotMatch(help.stdout, /hkclaw-lite chat /u);
   assert.doesNotMatch(help.stdout, /hkclaw-lite session /u);
   assert.match(help.stdout, /hkclaw-lite run /u);
-  assert.match(help.stdout, /hkclaw-lite admin \[--root DIR\] \[--host 127\.0\.0\.1\] \[--port 4622\]/u);
+  assert.match(help.stdout, /Most commands auto-create \.hkclaw-lite/u);
+  assert.match(help.stdout, /Installing the package never starts a process by itself\./u);
+  assert.match(help.stdout, /hkclaw-lite admin\s+Start the web admin server/u);
+  assert.match(help.stdout, /hkclaw-lite run \.\.\.\s+Execute one one-shot turn/u);
+  assert.match(help.stdout, /hkclaw-lite admin \[--root DIR\] \[--host 127\.0\.0\.1\] \[--port 5687\]/u);
   assert.match(help.stdout, /hkclaw-lite discord serve \[--root DIR\] \[--env-file \.env\]/u);
 });
 
