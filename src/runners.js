@@ -86,6 +86,25 @@ const GEMINI_CLI_DISABLED_ENV_KEYS = [
   'GOOGLE_CLOUD_ACCESS_TOKEN',
   'GOOGLE_GENAI_USE_GCA',
 ];
+const GEMINI_DEFAULT_SANDBOX_POLICY_TOML = `# hkclaw-lite fallback for missing bundled Gemini sandbox policy
+[modes.plan]
+network = false
+readonly = true
+approvedTools = []
+allowOverrides = false
+
+[modes.default]
+network = false
+readonly = true
+approvedTools = []
+allowOverrides = true
+
+[modes.accepting_edits]
+network = false
+readonly = false
+approvedTools = ["sed", "grep", "awk", "perl", "cat", "echo"]
+allowOverrides = true
+`;
 
 export async function runAgentTurn({
   projectRoot,
@@ -371,6 +390,7 @@ async function runGeminiCli({
   sharedEnv,
 }) {
   const cli = requireManagedAgentCli('gemini-cli');
+  ensureGeminiCliRuntimeFiles(cli);
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const args = [...cli.argsPrefix, '-p', prompt, '--output-format', 'json'];
   if (service.model) {
@@ -889,9 +909,26 @@ export function resolveManagedAgentCli(agentType, env = process.env) {
     source: 'bundled',
     command: process.execPath,
     argsPrefix: [bundled.scriptPath],
+    scriptPath: bundled.scriptPath,
     detail: `${spec.packageName} (${bundled.scriptPath})`,
     envPatch: {},
   };
+}
+
+function ensureGeminiCliRuntimeFiles(cli) {
+  const scriptPath = String(cli?.scriptPath || cli?.argsPrefix?.[0] || '').trim();
+  if (!scriptPath) {
+    return;
+  }
+
+  const bundleDir = path.dirname(scriptPath);
+  const policyPath = path.join(bundleDir, 'policies', 'sandbox-default.toml');
+  if (fs.existsSync(policyPath)) {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(policyPath), { recursive: true });
+  fs.writeFileSync(policyPath, GEMINI_DEFAULT_SANDBOX_POLICY_TOML, 'utf8');
 }
 
 function requireManagedAgentCli(agentType, env = process.env) {

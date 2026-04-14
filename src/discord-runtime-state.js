@@ -8,7 +8,9 @@ import { assert, readJson, timestamp, writeJson } from './utils.js';
 export const DISCORD_ROLE_NAMES = ['owner', 'reviewer', 'arbiter'];
 
 const DISCORD_STATUS_FILENAME = 'discord-status.json';
+const DISCORD_AGENT_STATUSES_DIRNAME = 'discord-agent-statuses';
 const DISCORD_COMMANDS_DIRNAME = 'discord-commands';
+const DISCORD_AGENT_COMMANDS_DIRNAME = 'discord-agent-commands';
 const DISCORD_HEARTBEAT_STALE_MS = 45_000;
 const ROLE_TOKEN_ENV_KEYS = {
   owner: [
@@ -32,7 +34,23 @@ export function getDiscordStatusPath(projectRoot) {
   return path.join(getProjectLayout(projectRoot).toolRoot, DISCORD_STATUS_FILENAME);
 }
 
-export function getDiscordCommandQueuePath(projectRoot) {
+export function getDiscordAgentStatusesPath(projectRoot) {
+  return path.join(getProjectLayout(projectRoot).toolRoot, DISCORD_AGENT_STATUSES_DIRNAME);
+}
+
+export function getDiscordAgentStatusPath(projectRoot, agentName) {
+  assert(agentName, 'Agent name is required.');
+  return path.join(getDiscordAgentStatusesPath(projectRoot), `${agentName}.json`);
+}
+
+export function getDiscordCommandQueuePath(projectRoot, agentName = null) {
+  if (agentName) {
+    return path.join(
+      getProjectLayout(projectRoot).toolRoot,
+      DISCORD_AGENT_COMMANDS_DIRNAME,
+      agentName,
+    );
+  }
   return path.join(getProjectLayout(projectRoot).toolRoot, DISCORD_COMMANDS_DIRNAME);
 }
 
@@ -198,10 +216,105 @@ export function writeDiscordServiceStatus(projectRoot, value) {
   writeJson(getDiscordStatusPath(projectRoot), value);
 }
 
+export function readDiscordAgentServiceStatus(projectRoot, agentName) {
+  return readJson(getDiscordAgentStatusPath(projectRoot, agentName), null);
+}
+
+export function writeDiscordAgentServiceStatus(projectRoot, agentName, value) {
+  writeJson(getDiscordAgentStatusPath(projectRoot, agentName), value);
+}
+
+export function listDiscordAgentServiceStatuses(projectRoot) {
+  const statusesPath = getDiscordAgentStatusesPath(projectRoot);
+  if (!fs.existsSync(statusesPath)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    fs
+      .readdirSync(statusesPath)
+      .filter((fileName) => fileName.endsWith('.json'))
+      .map((fileName) => {
+        const agentName = fileName.slice(0, -'.json'.length);
+        return [agentName, readJson(path.join(statusesPath, fileName), null)];
+      })
+      .filter(([, status]) => Boolean(status)),
+  );
+}
+
 export function buildDiscordServiceSnapshot(
   projectRoot,
-  rawStatus = readDiscordServiceStatus(projectRoot),
+  rawStatus = undefined,
 ) {
+  if (rawStatus !== undefined) {
+    return buildSingleDiscordServiceSnapshot(rawStatus);
+  }
+
+  const agentStatuses = listDiscordAgentServiceStatuses(projectRoot);
+  const agentNames = Object.keys(agentStatuses);
+  if (agentNames.length > 0) {
+    const agentServices = Object.fromEntries(
+      agentNames.map((agentName) => [
+        agentName,
+        buildDiscordAgentServiceSnapshot(projectRoot, agentName, agentStatuses[agentName]),
+      ]),
+    );
+    const runningAgentNames = agentNames.filter((agentName) => agentServices[agentName].running);
+    const staleAgentNames = agentNames.filter((agentName) => agentServices[agentName].stale);
+    const bots = Object.fromEntries(
+      agentNames.map((agentName) => [
+        agentName,
+        buildServiceBotSummary(agentStatuses[agentName]?.bots || {})[agentName] || {
+          tokenConfigured: false,
+          connected: false,
+          tag: '',
+          userId: '',
+          agent: '',
+        },
+      ]),
+    );
+    const state =
+      runningAgentNames.length > 0 ? 'running' : staleAgentNames.length > 0 ? 'stale' : 'stopped';
+
+    return {
+      state,
+      label: buildAggregateDiscordServiceLabel({
+        state,
+        runningCount: runningAgentNames.length,
+        totalCount: agentNames.length,
+        staleCount: staleAgentNames.length,
+      }),
+      running: runningAgentNames.length > 0,
+      stale: staleAgentNames.length > 0,
+      pid: null,
+      startedAt: null,
+      stoppedAt: null,
+      heartbeatAt: null,
+      envFilePath: null,
+      lastError: null,
+      bots,
+      agentServices,
+      runningAgentCount: runningAgentNames.length,
+      totalAgentCount: agentNames.length,
+    };
+  }
+
+  rawStatus = readDiscordServiceStatus(projectRoot);
+  return buildSingleDiscordServiceSnapshot(rawStatus);
+}
+
+export function buildDiscordAgentServiceSnapshot(
+  projectRoot,
+  agentName,
+  rawStatus = readDiscordAgentServiceStatus(projectRoot, agentName),
+) {
+  return {
+    agentName,
+    ...buildSingleDiscordServiceSnapshot(rawStatus),
+  };
+}
+
+function buildSingleDiscordServiceSnapshot(rawStatus) {
   const emptyBots = {};
   if (!rawStatus) {
     return {
@@ -250,6 +363,7 @@ export function createDiscordServiceStatus(projectRoot, options = {}) {
   return {
     version: 1,
     projectRoot,
+    agentName: options.agentName || null,
     pid: process.pid,
     running: Boolean(options.running),
     startedAt: options.startedAt || timestamp(),
@@ -264,24 +378,28 @@ export function createDiscordServiceStatus(projectRoot, options = {}) {
 export function enqueueDiscordServiceCommand(projectRoot, input = {}) {
   const action = String(input?.action || '').trim();
   assert(action, 'Discord service command action is required.');
+  const agentName =
+    input?.agentName || input?.botName ? String(input.agentName || input.botName).trim() : null;
+  assert(agentName, 'Discord service command agentName is required.');
 
   const command = {
     version: 1,
     id: randomUUID(),
     action,
-    botName: input?.botName ? String(input.botName).trim() : null,
+    agentName,
+    botName: agentName,
     requestedAt: timestamp(),
   };
   const filePath = path.join(
-    getDiscordCommandQueuePath(projectRoot),
+    getDiscordCommandQueuePath(projectRoot, agentName),
     `${Date.now()}-${command.id}.json`,
   );
   writeJson(filePath, command);
   return command;
 }
 
-export function listDiscordServiceCommands(projectRoot) {
-  const queuePath = getDiscordCommandQueuePath(projectRoot);
+export function listDiscordServiceCommands(projectRoot, { agentName = null } = {}) {
+  const queuePath = getDiscordCommandQueuePath(projectRoot, agentName);
   if (!fs.existsSync(queuePath)) {
     return [];
   }
@@ -376,4 +494,14 @@ function localizeDiscordServiceState(state) {
     return '끊김';
   }
   return '중지';
+}
+
+function buildAggregateDiscordServiceLabel({ state, runningCount, totalCount, staleCount }) {
+  if (state === 'running') {
+    return `가동 중 ${runningCount}/${totalCount}`;
+  }
+  if (state === 'stale') {
+    return staleCount > 0 ? `끊김 ${staleCount}/${totalCount}` : '끊김';
+  }
+  return totalCount > 0 ? `중지 0/${totalCount}` : '중지';
 }

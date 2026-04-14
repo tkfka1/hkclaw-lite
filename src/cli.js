@@ -797,6 +797,7 @@ async function handleDiscordCommand(projectRoot, argv) {
   const { serveDiscord } = await import('./discord-service.js');
   await serveDiscord(projectRoot, {
     envFile: getFlagValue(flags, 'env-file'),
+    agentName: getFlagValue(flags, 'agent'),
   });
 }
 

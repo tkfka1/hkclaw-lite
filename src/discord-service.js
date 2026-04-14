@@ -7,6 +7,7 @@ import {
   DISCORD_ROLE_NAMES,
   listDiscordServiceCommands,
   loadProjectEnvFile,
+  writeDiscordAgentServiceStatus,
   resolveChannelBotNames,
   resolveDiscordRoleTokens,
   writeDiscordServiceStatus,
@@ -19,23 +20,29 @@ import { listChannels, loadConfig, resolveProjectPath } from './store.js';
 import { assert, timestamp, toErrorMessage } from './utils.js';
 
 const DISCORD_MESSAGE_LIMIT = 1900;
-const DISCORD_OUTBOX_FLUSH_INTERVAL_MS = 5_000;
+const DISCORD_OUTBOX_FLUSH_INTERVAL_MS = 1_000;
 const DISCORD_COMMAND_POLL_INTERVAL_MS = 1_000;
 
-export async function serveDiscord(projectRoot, { envFile = null } = {}) {
+export async function serveDiscord(projectRoot, { envFile = null, agentName = null } = {}) {
   const { envFilePath } = loadProjectEnvFile(projectRoot, envFile);
   const config = loadConfig(projectRoot);
   const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
   let botConfigs = resolveDiscordBotConfigs(config, process.env, {
     requireReviewerAndArbiter: needsTribunalBots,
+    agentName,
   });
+  const persistServiceStatus = (value) =>
+    agentName
+      ? writeDiscordAgentServiceStatus(projectRoot, agentName, value)
+      : writeDiscordServiceStatus(projectRoot, value);
   const serviceStatus = createDiscordServiceStatus(projectRoot, {
+    agentName,
     running: false,
     envFilePath,
     heartbeatAt: timestamp(),
     bots: buildDiscordBotStatus(botConfigs),
   });
-  writeDiscordServiceStatus(projectRoot, serviceStatus);
+  persistServiceStatus(serviceStatus);
 
   let heartbeatTimer = null;
   let outboxTimer = null;
@@ -52,7 +59,7 @@ export async function serveDiscord(projectRoot, { envFile = null } = {}) {
     serviceStatus.stoppedAt = null;
     serviceStatus.lastError = null;
     serviceStatus.heartbeatAt = timestamp();
-    writeDiscordServiceStatus(projectRoot, serviceStatus);
+    persistServiceStatus(serviceStatus);
 
     const enqueueOutboxFlush = (task) => {
       const next = outboxFlushTask
@@ -64,13 +71,21 @@ export async function serveDiscord(projectRoot, { envFile = null } = {}) {
 
     heartbeatTimer = setInterval(() => {
       serviceStatus.heartbeatAt = timestamp();
-      writeDiscordServiceStatus(projectRoot, serviceStatus);
+      persistServiceStatus(serviceStatus);
     }, 10_000);
     heartbeatTimer.unref?.();
 
-    await enqueueOutboxFlush(() => flushPendingDiscordOutbox(projectRoot, clients));
+    await enqueueOutboxFlush(() =>
+      flushPendingDiscordOutbox(projectRoot, clients, {
+        botName: agentName,
+      }),
+    );
     outboxTimer = setInterval(() => {
-      void enqueueOutboxFlush(() => flushPendingDiscordOutbox(projectRoot, clients)).catch((error) => {
+      void enqueueOutboxFlush(() =>
+        flushPendingDiscordOutbox(projectRoot, clients, {
+          botName: agentName,
+        }),
+      ).catch((error) => {
         console.error(`Discord outbox flush error: ${toErrorMessage(error)}`);
       });
     }, DISCORD_OUTBOX_FLUSH_INTERVAL_MS);
@@ -85,6 +100,7 @@ export async function serveDiscord(projectRoot, { envFile = null } = {}) {
         client,
         channelQueues,
         enqueueOutboxFlush,
+        workerBotName: agentName,
       });
     }
 
@@ -93,9 +109,11 @@ export async function serveDiscord(projectRoot, { envFile = null } = {}) {
         projectRoot,
         Discord,
         env: process.env,
+        agentName,
         clients,
         botConfigs,
         serviceStatus,
+        persistServiceStatus,
         channelQueues,
         enqueueOutboxFlush,
       })
@@ -105,7 +123,7 @@ export async function serveDiscord(projectRoot, { envFile = null } = {}) {
         .catch((error) => {
           serviceStatus.lastError = `Command processing failed: ${toErrorMessage(error)}`;
           serviceStatus.heartbeatAt = timestamp();
-          writeDiscordServiceStatus(projectRoot, serviceStatus);
+          persistServiceStatus(serviceStatus);
           console.error(`Discord command error: ${toErrorMessage(error)}`);
         });
     }, DISCORD_COMMAND_POLL_INTERVAL_MS);
@@ -128,7 +146,7 @@ export async function serveDiscord(projectRoot, { envFile = null } = {}) {
       serviceStatus.running = false;
       serviceStatus.stoppedAt = timestamp();
       serviceStatus.heartbeatAt = timestamp();
-      writeDiscordServiceStatus(projectRoot, serviceStatus);
+      persistServiceStatus(serviceStatus);
     });
   } catch (error) {
     if (heartbeatTimer) {
@@ -144,7 +162,7 @@ export async function serveDiscord(projectRoot, { envFile = null } = {}) {
     serviceStatus.lastError = toErrorMessage(error);
     serviceStatus.stoppedAt = timestamp();
     serviceStatus.heartbeatAt = timestamp();
-    writeDiscordServiceStatus(projectRoot, serviceStatus);
+    persistServiceStatus(serviceStatus);
     throw error;
   }
 }
@@ -177,7 +195,14 @@ async function createDiscordClient(token, Discord) {
   return client;
 }
 
-async function handleInboundMessage({ projectRoot, clients, botName, message, enqueueOutboxFlush }) {
+async function handleInboundMessage({
+  projectRoot,
+  clients,
+  botName,
+  workerBotName,
+  message,
+  enqueueOutboxFlush,
+}) {
   if (!message.inGuild() || message.author.bot) {
     return;
   }
@@ -226,7 +251,9 @@ async function handleInboundMessage({ projectRoot, clients, botName, message, en
 
   if (runId) {
     await enqueueOutboxFlush(() =>
-      flushDiscordOutboxForRun(projectRoot, clients, channel, runId, message.channelId),
+      flushDiscordOutboxForRun(projectRoot, clients, channel, runId, message.channelId, {
+        botName: workerBotName,
+      }),
     );
   }
 }
@@ -235,6 +262,7 @@ function attachDiscordClientMessageHandler({
   projectRoot,
   clients,
   botName,
+  workerBotName,
   client,
   channelQueues,
   enqueueOutboxFlush,
@@ -245,6 +273,7 @@ function attachDiscordClientMessageHandler({
         projectRoot,
         clients,
         botName,
+        workerBotName,
         message,
         enqueueOutboxFlush,
       });
@@ -259,13 +288,17 @@ async function processDiscordServiceCommands({
   projectRoot,
   Discord,
   env,
+  agentName,
   clients,
   botConfigs,
   serviceStatus,
+  persistServiceStatus,
   channelQueues,
   enqueueOutboxFlush,
 }) {
-  const commands = listDiscordServiceCommands(projectRoot);
+  const commands = listDiscordServiceCommands(projectRoot, {
+    agentName,
+  });
   if (commands.length === 0) {
     return botConfigs;
   }
@@ -278,9 +311,11 @@ async function processDiscordServiceCommands({
           projectRoot,
           Discord,
           env,
+          agentName,
           clients,
           botConfigs: nextBotConfigs,
           serviceStatus,
+          persistServiceStatus,
           channelQueues,
           enqueueOutboxFlush,
         });
@@ -289,10 +324,12 @@ async function processDiscordServiceCommands({
           projectRoot,
           Discord,
           env,
+          agentName,
           clients,
           botConfigs: nextBotConfigs,
           botName: command.botName,
           serviceStatus,
+          persistServiceStatus,
           channelQueues,
           enqueueOutboxFlush,
         });
@@ -308,9 +345,11 @@ async function reloadDiscordServiceConfig({
   projectRoot,
   Discord,
   env,
+  agentName,
   clients,
   botConfigs,
   serviceStatus,
+  persistServiceStatus,
   channelQueues,
   enqueueOutboxFlush,
 }) {
@@ -318,6 +357,7 @@ async function reloadDiscordServiceConfig({
   const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
   const nextBotConfigs = resolveDiscordBotConfigs(config, env, {
     requireReviewerAndArbiter: needsTribunalBots,
+    agentName,
   });
   if (buildDiscordBotConfigSignature(nextBotConfigs) === buildDiscordBotConfigSignature(botConfigs)) {
     return botConfigs;
@@ -341,6 +381,7 @@ async function reloadDiscordServiceConfig({
       client,
       channelQueues,
       enqueueOutboxFlush,
+      workerBotName: agentName,
     });
     nextClients[botName] = client;
   }
@@ -361,7 +402,7 @@ async function reloadDiscordServiceConfig({
   hydrateDiscordBotStatus(serviceStatus.bots, nextBotConfigs, clients);
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
-  writeDiscordServiceStatus(projectRoot, serviceStatus);
+  persistServiceStatus(serviceStatus);
   console.log('Discord service reloaded bot configuration.');
   return nextBotConfigs;
 }
@@ -370,10 +411,12 @@ async function reconnectDiscordBot({
   projectRoot,
   Discord,
   env,
+  agentName,
   clients,
   botConfigs,
   botName,
   serviceStatus,
+  persistServiceStatus,
   channelQueues,
   enqueueOutboxFlush,
 }) {
@@ -382,6 +425,7 @@ async function reconnectDiscordBot({
   const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
   const nextBotConfigs = resolveDiscordBotConfigs(config, env, {
     requireReviewerAndArbiter: needsTribunalBots,
+    agentName,
   });
   const nextBot = nextBotConfigs[botName] || null;
   const existingClient = clients[botName] || null;
@@ -396,6 +440,7 @@ async function reconnectDiscordBot({
       client: nextClient,
       channelQueues,
       enqueueOutboxFlush,
+      workerBotName: agentName,
     });
   }
 
@@ -413,7 +458,7 @@ async function reconnectDiscordBot({
   hydrateDiscordBotStatus(serviceStatus.bots, nextBotConfigs, clients);
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
-  writeDiscordServiceStatus(projectRoot, serviceStatus);
+  persistServiceStatus(serviceStatus);
   console.log(`Discord service reconnected bot "${botName}".`);
   return nextBotConfigs;
 }
@@ -453,6 +498,11 @@ function splitDiscordMessage(text) {
 }
 
 export function formatDiscordRoleMessage(channel, entry) {
+  const content = String(entry?.content || '').trim() || '(빈 응답)';
+  if (!isTribunalChannel(channel)) {
+    return content;
+  }
+
   const title = resolveRoleMessageTitle(channel, entry);
   const meta = [];
   if (channel?.name) {
@@ -472,7 +522,7 @@ export function formatDiscordRoleMessage(channel, entry) {
     `**${title}${entry?.agent?.name ? ` · ${entry.agent.name}` : ''}**`,
     meta.join(' · '),
     '',
-    String(entry?.content || '').trim() || '(빈 응답)',
+    content,
   ]
     .filter((line, index) => index === 2 || Boolean(line))
     .join('\n');
@@ -484,12 +534,16 @@ export async function flushDiscordOutboxForRun(
   channel,
   runId,
   fallbackChannelId = null,
+  { botName = null } = {},
 ) {
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { runId, limit: 100 });
   for (const event of events) {
-    const botName = resolveEventBotName(channel, event.role);
-    const client = clients[botName];
-    assert(client, `${botName || event.role} bot client is not configured.`);
+    const targetBotName = resolveEventBotName(channel, event.role);
+    if (botName && targetBotName !== botName) {
+      continue;
+    }
+    const client = clients[targetBotName];
+    assert(client, `${targetBotName || event.role} bot client is not configured.`);
     const channelId = event.discordChannelId || fallbackChannelId;
     assert(channelId, `Discord channel id is missing for run ${runId}.`);
     await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
@@ -497,7 +551,11 @@ export async function flushDiscordOutboxForRun(
   }
 }
 
-export async function flushPendingDiscordOutbox(projectRoot, clients, { limit = 100 } = {}) {
+export async function flushPendingDiscordOutbox(
+  projectRoot,
+  clients,
+  { limit = 100, botName = null } = {},
+) {
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { limit });
   if (events.length === 0) {
     return 0;
@@ -517,9 +575,12 @@ export async function flushPendingDiscordOutbox(projectRoot, clients, { limit = 
         mode: 'single',
         discordChannelId: event.discordChannelId,
       };
-    const botName = resolveEventBotName(channel, event.role);
-    const client = clients[botName];
-    assert(client, `${botName || event.role} bot client is not configured.`);
+    const targetBotName = resolveEventBotName(channel, event.role);
+    if (botName && targetBotName !== botName) {
+      continue;
+    }
+    const client = clients[targetBotName];
+    assert(client, `${targetBotName || event.role} bot client is not configured.`);
     const channelId = event.discordChannelId || channel.discordChannelId;
     assert(channelId, `Discord channel id is missing for queued event ${event.eventId}.`);
     await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
@@ -574,7 +635,25 @@ async function waitForShutdown(onShutdown) {
   });
 }
 
-function resolveDiscordBotConfigs(config, env, { requireReviewerAndArbiter = false } = {}) {
+function resolveDiscordBotConfigs(
+  config,
+  env,
+  { requireReviewerAndArbiter = false, agentName = null } = {},
+) {
+  if (agentName) {
+    const agent = config?.agents?.[agentName];
+    assert(agent, `Agent "${agentName}" does not exist.`);
+    const token = String(agent?.discordToken || '').trim();
+    assert(token, `Agent "${agentName}" does not configure a Discord token.`);
+    return {
+      [agentName]: {
+        name: agentName,
+        agent: agent.agent,
+        token,
+      },
+    };
+  }
+
   const configuredAgents = config?.agents || {};
   const configuredAgentEntries = Object.entries(configuredAgents).filter(([, agent]) =>
     String(agent?.discordToken || '').trim(),

@@ -43,8 +43,13 @@ import {
   DEFAULT_LOCAL_LLM_BASE_URL,
 } from './constants.js';
 import {
+  buildDiscordAgentServiceSnapshot,
   buildDiscordServiceSnapshot,
   enqueueDiscordServiceCommand,
+  readDiscordAgentServiceStatus,
+  readDiscordServiceStatus,
+  writeDiscordAgentServiceStatus,
+  writeDiscordServiceStatus,
 } from './discord-runtime-state.js';
 import { listAgentModels } from './model-catalog.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
@@ -80,6 +85,9 @@ const GEMINI_GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GEMINI_GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GEMINI_GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';
 const GEMINI_GOOGLE_MANUAL_REDIRECT_URI = 'https://codeassist.google.com/authcode';
+const DISCORD_SERVICE_START_TIMEOUT_MS = 8_000;
+const DISCORD_SERVICE_STOP_TIMEOUT_MS = 8_000;
+const DISCORD_SERVICE_ENTRY_ENV = 'HKCLAW_LITE_DISCORD_SERVICE_ENTRY';
 
 export async function startAdminServer(
   projectRoot,
@@ -298,9 +306,70 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
   if (request.method === 'POST' && pathname === '/api/discord-service/reload') {
     writeJson(response, 200, {
       ok: true,
-      result: await queueDiscordServiceAction(projectRoot, {
-        action: 'reload-config',
-      }),
+      result: await reloadAllDiscordServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/discord-service/start') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await startAllDiscordServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/discord-service/restart') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await restartAllDiscordServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/discord-service/stop') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await stopAllDiscordServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (
+    request.method === 'POST' &&
+    pathname.startsWith('/api/agents/') &&
+    pathname.endsWith('/start')
+  ) {
+    const name = decodeEntityPath(pathname.slice(0, -'/start'.length), '/api/agents/');
+    writeJson(response, 200, {
+      ok: true,
+      result: await startDiscordServiceProcess(projectRoot, name),
+    });
+    return;
+  }
+
+  if (
+    request.method === 'POST' &&
+    pathname.startsWith('/api/agents/') &&
+    pathname.endsWith('/restart')
+  ) {
+    const name = decodeEntityPath(pathname.slice(0, -'/restart'.length), '/api/agents/');
+    writeJson(response, 200, {
+      ok: true,
+      result: await restartDiscordServiceProcess(projectRoot, name),
+    });
+    return;
+  }
+
+  if (
+    request.method === 'POST' &&
+    pathname.startsWith('/api/agents/') &&
+    pathname.endsWith('/stop')
+  ) {
+    const name = decodeEntityPath(pathname.slice(0, -'/stop'.length), '/api/agents/');
+    writeJson(response, 200, {
+      ok: true,
+      result: await stopDiscordServiceProcess(projectRoot, name),
     });
     return;
   }
@@ -527,18 +596,17 @@ async function runOneShotViaCli(projectRoot, payload) {
 }
 
 async function queueDiscordServiceAction(projectRoot, input = {}) {
-  const service = buildDiscordServiceSnapshot(projectRoot);
-  assert(service.running, 'Discord 서비스가 실행 중이 아닙니다.');
-
   const config = loadConfig(projectRoot);
   const agentName = input?.agentName ? String(input.agentName).trim() : null;
-  if (agentName) {
-    assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
-  }
+  assert(agentName, 'Agent name is required.');
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+
+  const service = buildDiscordAgentServiceSnapshot(projectRoot, agentName);
+  assert(service.running, `에이전트 "${agentName}" Discord 프로세스가 실행 중이 아닙니다.`);
 
   const command = enqueueDiscordServiceCommand(projectRoot, {
     action: input?.action,
-    botName: agentName,
+    agentName,
   });
 
   return {
@@ -547,6 +615,235 @@ async function queueDiscordServiceAction(projectRoot, input = {}) {
     agentName: command.botName,
     requestedAt: command.requestedAt,
   };
+}
+
+async function startDiscordServiceProcess(projectRoot, agentName) {
+  const config = loadConfig(projectRoot);
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+  assert(
+    String(config.agents[agentName]?.discordToken || '').trim(),
+    `Agent "${agentName}" does not configure a Discord token.`,
+  );
+
+  const current = buildDiscordAgentServiceSnapshot(projectRoot, agentName);
+  assert(!current.pidAlive, 'Discord 서비스가 이미 실행 중입니다.');
+  if (current.stale || current.state === 'stopped') {
+    normalizeDiscordServiceStoppedState(projectRoot, agentName);
+  }
+
+  const args = buildDiscordServiceStartArgs(projectRoot, {
+    envFilePath: current.envFilePath,
+    agentName,
+  });
+
+  const child = spawn(process.execPath, args, {
+    cwd: projectRoot,
+    env: process.env,
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+
+  const service = await waitForDiscordServiceSnapshot(
+    projectRoot,
+    agentName,
+    (snapshot) => snapshot.running || Boolean(snapshot.lastError),
+    DISCORD_SERVICE_START_TIMEOUT_MS,
+  );
+  assert(service.running, service.lastError || 'Discord 서비스 시작을 확인하지 못했습니다.');
+
+  return {
+    action: 'start',
+    agentName,
+    running: true,
+    pid: service.pid,
+    startedAt: service.startedAt,
+  };
+}
+
+async function restartDiscordServiceProcess(projectRoot, agentName) {
+  const previous = await stopDiscordServiceProcess(projectRoot, agentName, {
+    allowStopped: true,
+  });
+  const next = await startDiscordServiceProcess(projectRoot, agentName);
+  return {
+    action: 'restart',
+    agentName,
+    previous,
+    current: next,
+  };
+}
+
+async function stopDiscordServiceProcess(projectRoot, agentName, { allowStopped = false } = {}) {
+  const config = loadConfig(projectRoot);
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+  const service = buildDiscordAgentServiceSnapshot(projectRoot, agentName);
+  if (!service.pidAlive) {
+    if (service.stale || service.state === 'stopped') {
+      const normalized = normalizeDiscordServiceStoppedState(projectRoot, agentName);
+      if (!allowStopped) {
+        assert(false, 'Discord 서비스가 실행 중이 아닙니다.');
+      }
+      return {
+        action: 'stop',
+        agentName,
+        running: false,
+        pid: normalized.pid,
+        stoppedAt: normalized.stoppedAt,
+      };
+    }
+    assert(false, 'Discord 서비스가 실행 중이 아닙니다.');
+  }
+
+  try {
+    process.kill(service.pid, 'SIGTERM');
+  } catch (error) {
+    if (error?.code !== 'ESRCH') {
+      throw error;
+    }
+  }
+
+  const stopped = await waitForDiscordServiceSnapshot(
+    projectRoot,
+    agentName,
+    (snapshot) => !snapshot.pidAlive && !snapshot.running,
+    DISCORD_SERVICE_STOP_TIMEOUT_MS,
+  );
+  const normalized = stopped.running
+    ? normalizeDiscordServiceStoppedState(projectRoot, agentName)
+    : stopped;
+
+  return {
+    action: 'stop',
+    agentName,
+    running: false,
+    pid: normalized.pid,
+    stoppedAt: normalized.stoppedAt,
+  };
+}
+
+async function startAllDiscordServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredDiscordAgents(projectRoot);
+  assert(agentNames.length > 0, 'Discord 토큰이 설정된 에이전트가 없습니다.');
+  return {
+    action: 'start-all',
+    agents: await Promise.all(
+      agentNames.map((agentName) => startDiscordServiceProcess(projectRoot, agentName)),
+    ),
+  };
+}
+
+async function restartAllDiscordServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredDiscordAgents(projectRoot);
+  assert(agentNames.length > 0, 'Discord 토큰이 설정된 에이전트가 없습니다.');
+  return {
+    action: 'restart-all',
+    agents: await Promise.all(
+      agentNames.map((agentName) => restartDiscordServiceProcess(projectRoot, agentName)),
+    ),
+  };
+}
+
+async function stopAllDiscordServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredDiscordAgents(projectRoot);
+  if (agentNames.length === 0) {
+    return {
+      action: 'stop-all',
+      agents: [],
+    };
+  }
+  return {
+    action: 'stop-all',
+    agents: await Promise.all(
+      agentNames.map((agentName) =>
+        stopDiscordServiceProcess(projectRoot, agentName, {
+          allowStopped: true,
+        }),
+      ),
+    ),
+  };
+}
+
+async function reloadAllDiscordServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredDiscordAgents(projectRoot);
+  assert(agentNames.length > 0, 'Discord 토큰이 설정된 에이전트가 없습니다.');
+  return {
+    action: 'reload-all',
+    agents: await Promise.all(
+      agentNames.map((agentName) =>
+        queueDiscordServiceAction(projectRoot, {
+          action: 'reload-config',
+          agentName,
+        }),
+      ),
+    ),
+  };
+}
+
+function normalizeDiscordServiceStoppedState(projectRoot, agentName = null) {
+  const rawStatus = agentName
+    ? readDiscordAgentServiceStatus(projectRoot, agentName)
+    : readDiscordServiceStatus(projectRoot);
+  if (!rawStatus) {
+    return agentName
+      ? buildDiscordAgentServiceSnapshot(projectRoot, agentName, null)
+      : buildDiscordServiceSnapshot(projectRoot, null);
+  }
+
+  const nextStatus = {
+    ...rawStatus,
+    running: false,
+    stoppedAt: new Date().toISOString(),
+    heartbeatAt: new Date().toISOString(),
+  };
+  if (agentName) {
+    writeDiscordAgentServiceStatus(projectRoot, agentName, nextStatus);
+    return buildDiscordAgentServiceSnapshot(projectRoot, agentName, nextStatus);
+  }
+  writeDiscordServiceStatus(projectRoot, nextStatus);
+  return buildDiscordServiceSnapshot(projectRoot, nextStatus);
+}
+
+function buildDiscordServiceStartArgs(projectRoot, { envFilePath = null, agentName = null } = {}) {
+  const customEntry = String(process.env[DISCORD_SERVICE_ENTRY_ENV] || '').trim();
+  if (customEntry) {
+    return agentName ? [customEntry, projectRoot, agentName] : [customEntry, projectRoot];
+  }
+
+  const args = [CLI_ENTRY_PATH, '--root', projectRoot, 'discord', 'serve'];
+  if (envFilePath) {
+    args.push('--env-file', envFilePath);
+  }
+  if (agentName) {
+    args.push('--agent', agentName);
+  }
+  return args;
+}
+
+async function waitForDiscordServiceSnapshot(projectRoot, agentName, predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot = buildDiscordAgentServiceSnapshot(projectRoot, agentName);
+  while (Date.now() < deadline) {
+    snapshot = buildDiscordAgentServiceSnapshot(projectRoot, agentName);
+    if (predicate(snapshot)) {
+      return snapshot;
+    }
+    await delay(200);
+  }
+  return snapshot;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function listConfiguredDiscordAgents(projectRoot) {
+  const config = loadConfig(projectRoot);
+  return Object.entries(config.agents || {})
+    .filter(([, agent]) => String(agent?.discordToken || '').trim())
+    .map(([agentName]) => agentName);
 }
 
 async function runAgentAuthAction(projectRoot, payload) {

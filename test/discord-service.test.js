@@ -92,8 +92,7 @@ test('discord formatter keeps single channels concise', () => {
     },
   );
 
-  assert.match(text, /\*\*owner 응답 · worker\*\*/u);
-  assert.doesNotMatch(text, /1\/1/u);
+  assert.equal(text, 'done');
 });
 
 test('discord service flushes queued runtime outbox events', async () => {
@@ -221,7 +220,7 @@ test('discord service flushes pending outbox events after restart', async () => 
   const flushed = await flushPendingDiscordOutbox(projectRoot, clients, { limit: 10 });
   assert.equal(flushed, 1);
   assert.equal(sent.length, 1);
-  assert.match(sent[0], /\*\*owner 응답 · owner\*\*/u);
+  assert.equal(sent[0], 'queued text');
 
   const pending = await listPendingRuntimeOutboxEvents(projectRoot, {
     limit: 10,

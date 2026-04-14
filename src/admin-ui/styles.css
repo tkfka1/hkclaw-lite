@@ -727,6 +727,21 @@ button:focus-visible {
   background: rgba(245, 238, 228, 0.72);
 }
 
+.local-llm-current,
+.local-llm-editor {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(21, 34, 44, 0.12);
+  background: #fff;
+}
+
+.local-llm-current span {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
 .token-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }

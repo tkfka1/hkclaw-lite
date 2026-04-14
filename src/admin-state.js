@@ -186,6 +186,7 @@ function buildDiscordStatus(projectRoot, config, channels) {
     singleChannelCount: channels.length - tribunalChannelCount,
     bots: tokenStatus.bots,
     service,
+    agentServices: service.agentServices || {},
   };
 }
 
@@ -440,16 +441,20 @@ export function readWatcherLog(projectRoot, watcherId) {
 
 function buildAgentSummaries(projectRoot, config, channels) {
   const channelsByAgent = buildChannelsByAgent(channels);
-  const discordRuntimeBots = buildDiscordServiceSnapshot(projectRoot).bots || {};
+  const discordService = buildDiscordServiceSnapshot(projectRoot);
+  const discordRuntimeBots = discordService.bots || {};
+  const agentServices = discordService.agentServices || {};
   return listAgents(config).map((agent) => {
     const mappedChannels = channelsByAgent[agent.name] || [];
     const discordRuntime = discordRuntimeBots[agent.name] || {};
+    const service = agentServices[agent.name] || null;
     return {
       ...agent,
       runtime: inspectAgentRuntime(projectRoot, agent),
       discordTokenConfigured: Boolean(agent.discordToken),
       discordConnected: Boolean(discordRuntime.connected),
       discordTag: discordRuntime.tag || '',
+      discordService: service,
       mappedChannels: mappedChannels.map((channel) => ({
         name: channel.name,
         role: resolveAgentRole(channel, agent.name),

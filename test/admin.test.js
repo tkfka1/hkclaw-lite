@@ -9,7 +9,9 @@ import { startAdminServer } from '../src/admin.js';
 import { executeChannelTurn } from '../src/channel-runtime.js';
 import { getCiWatcherLogPath, saveCiWatcher } from '../src/ci-watch-store.js';
 import {
+  buildDiscordServiceSnapshot,
   listDiscordServiceCommands,
+  writeDiscordAgentServiceStatus,
   writeDiscordServiceStatus,
 } from '../src/discord-runtime-state.js';
 import { recordRuntimeUsageEvent } from '../src/runtime-db.js';
@@ -26,6 +28,12 @@ import {
 
 const repoRoot = process.cwd();
 const fixturePath = path.join(repoRoot, 'test', 'fixtures', 'echo-assistant.mjs');
+const fakeDiscordServicePath = path.join(
+  repoRoot,
+  'test',
+  'fixtures',
+  'fake-discord-service.mjs',
+);
 
 function createProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-test-'));
@@ -531,6 +539,20 @@ async function requestJson(url, options = {}) {
   };
 }
 
+async function waitFor(predicate, { timeoutMs = 8_000, intervalMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await predicate();
+    if (result) {
+      return result;
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
+  }
+  return await predicate();
+}
+
 test('admin server exposes project snapshot and watcher logs', async () => {
   const projectRoot = createProject();
   const workspacePath = path.join(projectRoot, 'workspace');
@@ -789,9 +811,10 @@ test('admin server queues manual Discord service commands instead of auto reload
   });
   saveConfig(projectRoot, config);
 
-  writeDiscordServiceStatus(projectRoot, {
+  writeDiscordAgentServiceStatus(projectRoot, 'worker', {
     version: 1,
     projectRoot,
+    agentName: 'worker',
     pid: process.pid,
     running: true,
     startedAt: '2026-04-15T00:00:00.000Z',
@@ -823,10 +846,15 @@ test('admin server queues manual Discord service commands instead of auto reload
       method: 'POST',
     });
     assert.equal(reloadResponse.response.status, 200, JSON.stringify(reloadResponse.payload));
-    assert.equal(reloadResponse.payload.result.queued, true);
-    assert.equal(reloadResponse.payload.result.action, 'reload-config');
+    assert.equal(reloadResponse.payload.result.action, 'reload-all');
+    assert.equal(Array.isArray(reloadResponse.payload.result.agents), true);
+    assert.equal(reloadResponse.payload.result.agents.length, 1);
+    assert.equal(reloadResponse.payload.result.agents[0].queued, true);
+    assert.equal(reloadResponse.payload.result.agents[0].action, 'reload-config');
 
-    const commands = listDiscordServiceCommands(projectRoot);
+    const commands = listDiscordServiceCommands(projectRoot, {
+      agentName: 'worker',
+    });
     assert.deepEqual(
       commands.map((entry) => ({
         action: entry.action,
@@ -839,11 +867,78 @@ test('admin server queues manual Discord service commands instead of auto reload
         },
         {
           action: 'reload-config',
-          botName: null,
+          botName: 'worker',
         },
       ],
     );
   });
+});
+
+test('admin server can start, restart, and stop Discord service', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeDiscordServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'owner-token',
+  });
+  saveConfig(projectRoot, config);
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const startResponse = await requestJson(`${url}/api/agents/worker/start`, {
+        method: 'POST',
+      });
+      assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
+      assert.equal(startResponse.payload.result.action, 'start');
+      assert.equal(startResponse.payload.result.agentName, 'worker');
+
+      const running = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(running?.running), true);
+      assert.equal(Number.isInteger(running?.agentServices?.worker?.pid), true);
+
+      const restartResponse = await requestJson(`${url}/api/agents/worker/restart`, {
+        method: 'POST',
+      });
+      assert.equal(restartResponse.response.status, 200, JSON.stringify(restartResponse.payload));
+      assert.equal(restartResponse.payload.result.action, 'restart');
+      assert.equal(restartResponse.payload.result.agentName, 'worker');
+
+      const restarted = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(restarted?.running), true);
+      assert.equal(Number.isInteger(restarted?.agentServices?.worker?.pid), true);
+
+      const stopResponse = await requestJson(`${url}/api/agents/worker/stop`, {
+        method: 'POST',
+      });
+      assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
+      assert.equal(stopResponse.payload.result.action, 'stop');
+      assert.equal(stopResponse.payload.result.agentName, 'worker');
+
+      const stopped = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        const worker = snapshot.agentServices?.worker;
+        return worker && !worker.running && !worker.pidAlive ? snapshot : null;
+      });
+      assert.equal(stopped?.agentServices?.worker?.running, false);
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousEntry;
+    }
+  }
 });
 
 test('admin server supports lightweight password login via env', async () => {

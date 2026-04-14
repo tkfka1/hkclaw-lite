@@ -376,6 +376,17 @@ test('runAgentTurn strips Gemini env-based auth overrides before invoking the bu
       assert.equal(parsed.googleApplicationCredentials, '');
       assert.equal(parsed.googleCloudAccessToken, '');
       assert.equal(parsed.googleGenAiUseGca, '');
+      assert.equal(
+        fs.existsSync(
+          path.join(
+            path.dirname(fakePackageJson),
+            'bundle',
+            'policies',
+            'sandbox-default.toml',
+          ),
+        ),
+        true,
+      );
     },
   );
 });
