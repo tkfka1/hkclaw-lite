@@ -66,6 +66,7 @@ const ADMIN_SESSION_COOKIE = 'hkclaw_lite_admin_session';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AI_STATUS_AGENT_TYPES = ['codex', 'claude-code', 'gemini-cli', 'local-llm'];
 const moduleRequire = createRequire(import.meta.url);
+const codexAuthFlows = new Map();
 const claudeAuthFlows = new Map();
 const geminiAuthFlows = new Map();
 const CLAUDE_ACP_DISABLED_ENV_KEYS = [
@@ -849,6 +850,12 @@ function listConfiguredDiscordAgents(projectRoot) {
 async function runAgentAuthAction(projectRoot, payload) {
   const agentType = String(payload?.agentType || '').trim();
   const action = String(payload?.action || 'status').trim();
+  if (agentType === 'codex' && action === 'login') {
+    return startCodexAuthFlow(projectRoot, payload);
+  }
+  if (agentType === 'codex' && action === 'logout') {
+    await cleanupCodexAuthFlow(projectRoot);
+  }
   if (agentType === 'claude-code' && action === 'login') {
     return startClaudeAuthFlow(projectRoot, payload);
   }
@@ -920,6 +927,139 @@ async function runAgentAuthAction(projectRoot, payload) {
       });
     });
   });
+}
+
+function getCodexAuthFlowKey(projectRoot) {
+  return path.resolve(projectRoot);
+}
+
+function getCodexAuthFlow(projectRoot) {
+  return codexAuthFlows.get(getCodexAuthFlowKey(projectRoot)) || null;
+}
+
+function setCodexAuthFlow(projectRoot, flow) {
+  codexAuthFlows.set(getCodexAuthFlowKey(projectRoot), flow);
+}
+
+async function cleanupCodexAuthFlow(projectRoot) {
+  const key = getCodexAuthFlowKey(projectRoot);
+  const flow = codexAuthFlows.get(key);
+  codexAuthFlows.delete(key);
+  if (!flow) {
+    return;
+  }
+
+  clearTimeout(flow.captureTimer);
+  flow.child.stdout?.removeAllListeners?.('data');
+  flow.child.stderr?.removeAllListeners?.('data');
+
+  try {
+    if (!flow.child.killed) {
+      flow.child.kill('SIGTERM');
+    }
+  } catch {
+    // Ignore cleanup failures for stale auth helpers.
+  }
+}
+
+async function startCodexAuthFlow(projectRoot, payload = {}) {
+  await cleanupCodexAuthFlow(projectRoot);
+
+  const spec = resolveAgentAuthCommand('codex', 'login', payload);
+  const env = buildManagedAgentEnv(projectRoot, 'codex');
+  const child = spawnResolvedCommand(spec.command, spec.args, {
+    agentType: 'codex',
+    cwd: process.cwd(),
+    env,
+  });
+
+  const stdout = [];
+  const stderr = [];
+  const flow = {
+    id: randomUUID(),
+    child,
+    captureTimer: null,
+    output: '',
+    url: '',
+    code: '',
+  };
+
+  const updateFlowOutput = () => {
+    const output = [
+      Buffer.concat(stdout).toString('utf8').trim(),
+      Buffer.concat(stderr).toString('utf8').trim(),
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    const cleanedOutput = sanitizeManagedAgentAuthOutput(
+      'codex',
+      stripAnsiEscapeSequences(output),
+    );
+    flow.output = cleanedOutput;
+    flow.url = extractFirstUrl(cleanedOutput);
+    flow.code = parseDeviceAuthCode(cleanedOutput);
+  };
+
+  child.stdout.on('data', (chunk) => {
+    stdout.push(chunk);
+    updateFlowOutput();
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr.push(chunk);
+    updateFlowOutput();
+  });
+
+  child.on('close', () => {
+    updateFlowOutput();
+    const activeFlow = getCodexAuthFlow(projectRoot);
+    if (activeFlow?.id === flow.id) {
+      codexAuthFlows.delete(getCodexAuthFlowKey(projectRoot));
+    }
+  });
+  child.on('error', () => {
+    const activeFlow = getCodexAuthFlow(projectRoot);
+    if (activeFlow?.id === flow.id) {
+      codexAuthFlows.delete(getCodexAuthFlowKey(projectRoot));
+    }
+  });
+
+  setCodexAuthFlow(projectRoot, flow);
+
+  await new Promise((resolve) => {
+    const finish = () => {
+      child.stdout?.off?.('data', maybeFinish);
+      child.stderr?.off?.('data', maybeFinish);
+      clearTimeout(flow.captureTimer);
+      resolve();
+    };
+    const maybeFinish = () => {
+      if (flow.url && flow.code) {
+        finish();
+      }
+    };
+
+    child.stdout.on('data', maybeFinish);
+    child.stderr.on('data', maybeFinish);
+    flow.captureTimer = setTimeout(finish, spec.timeoutMs);
+  });
+
+  return {
+    agentType: 'codex',
+    action: 'login',
+    command: [spec.command, ...spec.args].join(' '),
+    output: flow.output || '(출력 없음)',
+    details: {
+      summary: flow.code ? '링크를 열고 코드를 입력하세요.' : '로그인을 시작했습니다.',
+      url: flow.url,
+      code: flow.code,
+      loginStarted: true,
+      pendingLogin: true,
+    },
+    exitCode: null,
+    signal: null,
+    timedOut: false,
+  };
 }
 
 function spawnResolvedCommand(command, args, options) {
@@ -1598,14 +1738,21 @@ async function readGeminiAuthState(projectRoot) {
 async function readAgentStatus(projectRoot, agentType, payload = {}) {
   if (agentType === 'codex') {
     const authResult = await runManagedCliAuthAction(projectRoot, agentType, 'status', payload);
+    const loggedIn = Boolean(authResult?.details?.loggedIn);
+    if (loggedIn && getCodexAuthFlow(projectRoot)) {
+      await cleanupCodexAuthFlow(projectRoot);
+    }
+    const pendingFlow = loggedIn ? null : getCodexAuthFlow(projectRoot);
     return {
       ...authResult,
       output: [
         authResult.output,
+        pendingFlow ? '브라우저 로그인: 진행 중' : '',
         '인증 저장소: 이 머신의 로컬 Codex 로그인 상태를 그대로 사용합니다.',
       ].filter(Boolean).join('\n'),
       details: {
         ...(authResult.details || {}),
+        pendingLogin: Boolean(pendingFlow),
         sharedLogin: true,
         authScope: 'local-user',
       },

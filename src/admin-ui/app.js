@@ -1949,12 +1949,12 @@ function renderAiWorkflowGuide(agentType, authResult, testResult, ready, testSup
       : [
           {
             label: '1. 로그인',
-            state: loggedIn ? '완료' : '대기',
-            hint: 'Codex 로그인 플로우를 시작합니다.',
+            state: loggedIn ? '완료' : (pendingLogin ? '진행 중' : '대기'),
+            hint: 'Codex 디바이스 로그인 플로우를 시작하고 브라우저 완료까지 기다립니다.',
           },
           {
             label: '2. 상태 확인',
-            state: loggedIn ? '완료' : '대기',
+            state: loggedIn ? '완료' : (pendingLogin ? '확인 필요' : '대기'),
             hint: '현재 로그인 상태를 다시 읽습니다.',
           },
           {

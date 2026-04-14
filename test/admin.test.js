@@ -72,7 +72,10 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 
 if (args[0] === 'login' && args[1] === 'status') {
-  if (process.env.HKCLAW_LITE_TEST_CODEX_STATUS_OUTPUT) {
+  const statusFile = process.env.HKCLAW_LITE_TEST_CODEX_STATUS_FILE;
+  if (statusFile) {
+    process.stdout.write((fs.existsSync(statusFile) ? 'Logged in using ChatGPT' : 'Not logged in') + '\\n');
+  } else if (process.env.HKCLAW_LITE_TEST_CODEX_STATUS_OUTPUT) {
     process.stdout.write(process.env.HKCLAW_LITE_TEST_CODEX_STATUS_OUTPUT + '\\n');
   } else {
     process.stdout.write('logged in\\n');
@@ -90,6 +93,15 @@ if (args[0] === 'login' && args[1] === '--device-auth') {
   process.stdout.write('   https://example.test/codex/device\\u001b[0m\\n\\n');
   process.stdout.write('2. Enter this one-time code (expires in 15 minutes)\\n');
   process.stdout.write('   CODE-12345\\n');
+  const statusFile = process.env.HKCLAW_LITE_TEST_CODEX_STATUS_FILE;
+  const delayMs = Number(process.env.HKCLAW_LITE_TEST_CODEX_LOGIN_DELAY_MS || '0');
+  if (statusFile && Number.isFinite(delayMs) && delayMs > 0) {
+    setTimeout(() => {
+      fs.writeFileSync(statusFile, 'logged-in\\n');
+      process.exit(0);
+    }, delayMs);
+    return;
+  }
   process.exit(0);
 }
 
@@ -1286,6 +1298,48 @@ test('admin server reports codex, Claude ACP, Gemini, and local LLM status detai
             },
           ],
         );
+      });
+    },
+  );
+});
+
+test('admin server keeps the Codex device login helper alive until browser auth completes', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const fakePackageJson = createFakeCodexBundle();
+  const statusFile = path.join(projectRoot, 'codex-login-status.txt');
+  await withEnv(
+    {
+      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_TEST_CODEX_STATUS_FILE: statusFile,
+      HKCLAW_LITE_TEST_CODEX_LOGIN_DELAY_MS: '3000',
+    },
+    async () => {
+      await withAdminServer(projectRoot, async ({ url }) => {
+        const login = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'codex',
+            action: 'login',
+          },
+        });
+        assert.equal(login.response.status, 200, JSON.stringify(login.payload));
+        assert.equal(login.payload.result.details.pendingLogin, true);
+        assert.equal(fs.existsSync(statusFile), false);
+
+        await new Promise((resolve) => setTimeout(resolve, 3_300));
+
+        const status = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'codex',
+            action: 'status',
+          },
+        });
+        assert.equal(status.response.status, 200, JSON.stringify(status.payload));
+        assert.equal(status.payload.result.details.loggedIn, true);
+        assert.equal(status.payload.result.details.pendingLogin, false);
       });
     },
   );
