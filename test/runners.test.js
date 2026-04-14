@@ -19,6 +19,7 @@ function createFakeClaudeAgentSdkBundle() {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-runners-claude-sdk-'));
   const packageDir = path.join(rootDir, '@anthropic-ai', 'claude-agent-sdk');
   const modulePath = path.join(packageDir, 'sdk.mjs');
+  const cliPath = path.join(packageDir, 'cli.js');
   fs.mkdirSync(path.dirname(modulePath), { recursive: true });
   fs.writeFileSync(
     path.join(packageDir, 'package.json'),
@@ -52,6 +53,64 @@ function createFakeClaudeAgentSdkBundle() {
   iterator.close = () => {};
   return iterator;
 }
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    cliPath,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+
+if (args[0] === 'auth' && args[1] === 'status' && args[2] === '--json') {
+  process.stdout.write(JSON.stringify({
+    loggedIn: true,
+    authMethod: 'claudeai',
+    apiProvider: 'firstParty',
+  }));
+  process.exit(0);
+}
+
+if (args[0] === 'auth' && args[1] === 'logout') {
+  process.stdout.write('Logged out\\n');
+  process.exit(0);
+}
+
+if (args.includes('-p') && args.includes('--output-format') && args.includes('stream-json')) {
+  const modelIndex = args.indexOf('--model');
+  const permissionIndex = args.indexOf('--permission-mode');
+  const sessionIdIndex = args.indexOf('--session-id');
+  const resumeIndex = args.indexOf('--resume');
+  const effortIndex = args.indexOf('--effort');
+  const model = modelIndex >= 0 ? args[modelIndex + 1] : null;
+  const permissionMode = permissionIndex >= 0 ? args[permissionIndex + 1] : null;
+  const dangerous = args.includes('--dangerously-skip-permissions');
+  const sessionId =
+    (sessionIdIndex >= 0 ? args[sessionIdIndex + 1] : null) ||
+    (resumeIndex >= 0 ? args[resumeIndex + 1] : null) ||
+    '11111111-1111-1111-1111-111111111111';
+
+  process.stdout.write(JSON.stringify({
+    type: 'system',
+    subtype: 'init',
+    session_id: sessionId,
+    model: model || 'sonnet',
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    session_id: sessionId,
+    result: JSON.stringify({
+      model,
+      permissionMode,
+      dangerous,
+      effort: effortIndex >= 0 ? args[effortIndex + 1] : null,
+    }),
+  }) + '\\n');
+  process.exit(0);
+}
+
+process.stderr.write(\`unexpected args: \${args.join(' ')}\\n\`);
+process.exit(1);
 `,
     { mode: 0o755 },
   );
@@ -188,7 +247,7 @@ test('resolveManagedAgentCli ignores PATH when the bundled cli is missing', () =
   assert.equal(resolved, null);
 });
 
-test('runAgentTurn uses the bundled Claude Code ACP runtime override', async () => {
+test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () => {
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
@@ -217,6 +276,7 @@ test('runAgentTurn uses the bundled Claude Code ACP runtime override', async () 
         model: 'claude-sonnet-4-20250514',
         permissionMode: 'acceptEdits',
         dangerous: false,
+        effort: null,
       });
     },
   );

@@ -213,6 +213,31 @@ if (args[0] === 'auth' && args[1] === 'logout') {
   process.exit(0);
 }
 
+if (args.includes('-p') && args.includes('--output-format') && args.includes('stream-json')) {
+  const sessionIdIndex = args.indexOf('--session-id');
+  const resumeIndex = args.indexOf('--resume');
+  const permissionIndex = args.indexOf('--permission-mode');
+  const sessionId =
+    (sessionIdIndex >= 0 ? args[sessionIdIndex + 1] : null) ||
+    (resumeIndex >= 0 ? args[resumeIndex + 1] : null) ||
+    '22222222-2222-2222-2222-222222222222';
+  const permissionMode = permissionIndex >= 0 ? args[permissionIndex + 1] : 'default';
+
+  process.stdout.write(JSON.stringify({
+    type: 'system',
+    subtype: 'init',
+    session_id: sessionId,
+    model: 'claude-sonnet-test',
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    session_id: sessionId,
+    result: process.env.HKCLAW_LITE_FAKE_CLAUDE_RESULT || \`OK:\${permissionMode}\`,
+  }) + '\\n');
+  process.exit(0);
+}
+
 process.stderr.write(\`unexpected args: \${args.join(' ')}\\n\`);
 process.exit(1);
 `,
@@ -1144,7 +1169,7 @@ test('admin server starts and completes Claude ACP login flow through the bundle
   );
 });
 
-test('admin server runs claude test calls through the bundled agent sdk', async () => {
+test('admin server runs claude test calls through the bundled cli stream-json runtime', async () => {
   const projectRoot = createProject();
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
   initProject(projectRoot);

@@ -238,10 +238,12 @@ export async function recordRuntimeRoleSession(projectRoot, { channel, runId, en
         last_verdict,
         last_prompt_at,
         last_completed_at,
+        runtime_backend,
+        runtime_session_id,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_key) DO UPDATE SET
         agent_name = excluded.agent_name,
         mode = excluded.mode,
@@ -252,6 +254,8 @@ export async function recordRuntimeRoleSession(projectRoot, { channel, runId, en
         last_verdict = excluded.last_verdict,
         last_prompt_at = excluded.last_prompt_at,
         last_completed_at = excluded.last_completed_at,
+        runtime_backend = excluded.runtime_backend,
+        runtime_session_id = excluded.runtime_session_id,
         updated_at = excluded.updated_at
     `,
   ).run(
@@ -267,9 +271,70 @@ export async function recordRuntimeRoleSession(projectRoot, { channel, runId, en
     normalizeNullableString(entry?.verdict),
     now,
     entry?.final ? now : null,
+    normalizeNullableString(entry?.runtimeBackend),
+    normalizeNullableString(entry?.runtimeSessionId),
     existing?.created_at || now,
     now,
   );
+}
+
+export async function getRuntimeRoleSession(projectRoot, { channelName, role }) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedChannelName = normalizeNullableString(channelName);
+  const normalizedRole = normalizeNullableString(role);
+  if (!normalizedChannelName || !normalizedRole) {
+    return null;
+  }
+
+  const sessionKey = `${normalizedChannelName}:${normalizedRole}`;
+  const row = db
+    .prepare(
+      `
+        SELECT
+          session_key,
+          channel_name,
+          role,
+          agent_name,
+          mode,
+          session_policy,
+          run_count,
+          last_run_id,
+          last_status,
+          last_verdict,
+          last_prompt_at,
+          last_completed_at,
+          runtime_backend,
+          runtime_session_id,
+          created_at,
+          updated_at
+        FROM runtime_role_sessions
+        WHERE session_key = ?
+      `,
+    )
+    .get(sessionKey);
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    sessionKey: row.session_key,
+    channelName: row.channel_name,
+    role: row.role,
+    agentName: row.agent_name,
+    mode: row.mode,
+    sessionPolicy: row.session_policy,
+    runCount: row.run_count,
+    lastRunId: row.last_run_id,
+    lastStatus: row.last_status,
+    lastVerdict: row.last_verdict ?? null,
+    lastPromptAt: row.last_prompt_at ?? null,
+    lastCompletedAt: row.last_completed_at ?? null,
+    runtimeBackend: row.runtime_backend ?? null,
+    runtimeSessionId: row.runtime_session_id ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export async function completeRuntimeRun(projectRoot, runId, result) {
@@ -450,6 +515,8 @@ export async function listRuntimeRoleSessions(
               last_verdict,
               last_prompt_at,
               last_completed_at,
+              runtime_backend,
+              runtime_session_id,
               created_at,
               updated_at
             FROM runtime_role_sessions
@@ -475,6 +542,8 @@ export async function listRuntimeRoleSessions(
               last_verdict,
               last_prompt_at,
               last_completed_at,
+              runtime_backend,
+              runtime_session_id,
               created_at,
               updated_at
             FROM runtime_role_sessions
@@ -497,6 +566,8 @@ export async function listRuntimeRoleSessions(
     lastVerdict: row.last_verdict ?? null,
     lastPromptAt: row.last_prompt_at ?? null,
     lastCompletedAt: row.last_completed_at ?? null,
+    runtimeBackend: row.runtime_backend ?? null,
+    runtimeSessionId: row.runtime_session_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
@@ -881,6 +952,8 @@ async function getRuntimeDb(projectRoot) {
       last_verdict TEXT,
       last_prompt_at TEXT,
       last_completed_at TEXT,
+      runtime_backend TEXT,
+      runtime_session_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -930,6 +1003,8 @@ async function getRuntimeDb(projectRoot) {
   ensureRunColumn(db, 'max_rounds', 'INTEGER NOT NULL DEFAULT 1');
   ensureRunColumn(db, 'reviewer_verdict', 'TEXT');
   ensureRunColumn(db, 'final_disposition', 'TEXT');
+  ensureRoleSessionColumn(db, 'runtime_backend', 'TEXT');
+  ensureRoleSessionColumn(db, 'runtime_session_id', 'TEXT');
 
   DB_CACHE.set(dbPath, db);
   return db;
@@ -941,6 +1016,14 @@ function ensureRunColumn(db, columnName, columnSql) {
     return;
   }
   db.exec(`ALTER TABLE runtime_runs ADD COLUMN ${columnName} ${columnSql}`);
+}
+
+function ensureRoleSessionColumn(db, columnName, columnSql) {
+  const columns = db.prepare(`PRAGMA table_info(runtime_role_sessions)`).all();
+  if (columns.some((entry) => entry.name === columnName)) {
+    return;
+  }
+  db.exec(`ALTER TABLE runtime_role_sessions ADD COLUMN ${columnName} ${columnSql}`);
 }
 
 function insertRunEvent(db, runId, entry) {

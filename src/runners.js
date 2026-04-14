@@ -1,11 +1,11 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { createClaudeWorkerBridge } from './claude-bridge.js';
 import {
   DEFAULT_CLAUDE_PERMISSION_MODE,
   DEFAULT_CODEX_SANDBOX,
@@ -82,10 +82,15 @@ export async function runAgentTurn({
   rawPrompt,
   workdir,
   sharedEnv = {},
+  channel = null,
+  role = null,
+  runtimeSession = null,
+  captureRuntimeMetadata = false,
 }) {
+  let result;
   switch (agent.agent) {
     case 'codex':
-      return runCodex({
+      result = await runCodex({
         projectRoot,
         service: agent,
         prompt,
@@ -93,17 +98,22 @@ export async function runAgentTurn({
         workdir,
         sharedEnv,
       });
+      break;
     case 'claude-code':
-      return runClaude({
+      result = await runClaude({
         projectRoot,
         service: agent,
         prompt,
         rawPrompt,
         workdir,
         sharedEnv,
+        channel,
+        role,
+        runtimeSession,
       });
+      break;
     case 'gemini-cli':
-      return runGeminiCli({
+      result = await runGeminiCli({
         projectRoot,
         service: agent,
         prompt,
@@ -111,8 +121,9 @@ export async function runAgentTurn({
         workdir,
         sharedEnv,
       });
+      break;
     case 'local-llm':
-      return runLocalLlm({
+      result = await runLocalLlm({
         projectRoot,
         service: agent,
         prompt,
@@ -120,8 +131,9 @@ export async function runAgentTurn({
         workdir,
         sharedEnv,
       });
+      break;
     case 'command':
-      return runCommand({
+      result = await runCommand({
         projectRoot,
         service: agent,
         prompt,
@@ -129,9 +141,12 @@ export async function runAgentTurn({
         workdir,
         sharedEnv,
       });
+      break;
     default:
       throw new Error(`Unsupported agent "${agent.agent}".`);
   }
+
+  return normalizeAgentTurnResult(result, { captureRuntimeMetadata });
 }
 
 export function inspectAgentRuntime(projectRoot, agent, workdirOverride = null) {
@@ -264,6 +279,9 @@ async function runClaude({
   rawPrompt,
   workdir,
   sharedEnv,
+  channel,
+  role,
+  runtimeSession,
 }) {
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const env = stripClaudeAcpEnv(buildChildEnv({
@@ -274,65 +292,54 @@ async function runClaude({
     fullPrompt: prompt,
     sharedEnv,
   }));
+  const cli = requireClaudeCli(env);
   const permissionMode = service.dangerous
     ? 'bypassPermissions'
     : (service.permissionMode || DEFAULT_CLAUDE_PERMISSION_MODE);
-  const options = {
-    cwd: executionWorkdir,
-    env,
-    tools: {
-      type: 'preset',
-      preset: 'claude_code',
-    },
-    permissionMode,
-    allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
-  };
+  const args = [
+    ...cli.argsPrefix,
+    '-p',
+    '--output-format',
+    'stream-json',
+  ];
+
+  const sessionSpec = buildClaudeCliSessionSpec({
+    channel,
+    role,
+    runtimeSession,
+  });
+  if (sessionSpec.resumeSessionId) {
+    args.push('--resume', sessionSpec.resumeSessionId);
+  } else if (sessionSpec.newSessionId) {
+    args.push('--session-id', sessionSpec.newSessionId);
+  } else {
+    args.push('--no-session-persistence');
+  }
+
+  if (permissionMode === 'bypassPermissions') {
+    args.push('--dangerously-skip-permissions');
+  } else if (permissionMode) {
+    args.push('--permission-mode', permissionMode);
+  }
 
   if (service.model) {
-    options.model = service.model;
+    args.push('--model', service.model);
   }
   if (service.effort) {
-    options.effort = service.effort;
+    args.push('--effort', service.effort);
   }
 
-  const bridge = createClaudeWorkerBridge({
+  const result = await runChildProcess({
+    command: cli.command,
+    args,
     cwd: executionWorkdir,
-    env,
+    env: applyEnvPatch(env, cli.envPatch),
+    input: prompt,
+    timeoutMs: service.timeoutMs,
   });
-  let timeout = null;
-  let timedOut = false;
-
-  try {
-    const result = await new Promise((resolve, reject) => {
-      if (service.timeoutMs) {
-        timeout = setTimeout(() => {
-          timedOut = true;
-          bridge.close();
-          reject(new Error(`claude timed out after ${service.timeoutMs}ms.`));
-        }, service.timeoutMs);
-      }
-
-      bridge.request('turn.run', {
-        prompt,
-        options,
-      })
-        .then(resolve)
-        .catch((error) => {
-          reject(error);
-        });
-    });
-    return trimTrailingWhitespace(String(result?.text || '')).trim();
-  } catch (error) {
-    if (timedOut) {
-      throw error;
-    }
-    throw new Error(toErrorMessage(error));
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-    bridge.close();
-  }
+  return parseClaudeCliStreamJson(result.stdout, {
+    fallbackSessionId: sessionSpec.newSessionId || sessionSpec.resumeSessionId || null,
+  });
 }
 
 async function runGeminiCli({
@@ -600,6 +607,104 @@ function resolvePosixShell(env) {
   return '/bin/sh';
 }
 
+function normalizeAgentTurnResult(result, { captureRuntimeMetadata = false } = {}) {
+  if (result && typeof result === 'object' && 'text' in result) {
+    return captureRuntimeMetadata
+      ? {
+          text: String(result.text || ''),
+          runtimeMeta: result.runtimeMeta || null,
+        }
+      : String(result.text || '');
+  }
+
+  return captureRuntimeMetadata
+    ? {
+        text: String(result || ''),
+        runtimeMeta: null,
+      }
+    : String(result || '');
+}
+
+function buildClaudeCliSessionSpec({ channel, role, runtimeSession }) {
+  const stickyRole = Boolean(channel?.name) && ['owner', 'reviewer'].includes(role || '');
+  const storedSessionId =
+    runtimeSession?.runtimeBackend === 'claude-cli'
+      ? String(runtimeSession.runtimeSessionId || '').trim()
+      : '';
+
+  if (!stickyRole) {
+    return {
+      sessionPolicy: 'ephemeral',
+      newSessionId: null,
+      resumeSessionId: null,
+    };
+  }
+
+  if (storedSessionId) {
+    return {
+      sessionPolicy: 'sticky',
+      newSessionId: null,
+      resumeSessionId: storedSessionId,
+    };
+  }
+
+  return {
+    sessionPolicy: 'sticky',
+    newSessionId: crypto.randomUUID(),
+    resumeSessionId: null,
+  };
+}
+
+function parseClaudeCliStreamJson(stdout, { fallbackSessionId = null } = {}) {
+  const lines = String(stdout || '')
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  let finalText = '';
+  let sessionId = String(fallbackSessionId || '').trim() || null;
+
+  for (const line of lines) {
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch (error) {
+      throw new Error(`Invalid Claude stream-json output: ${toErrorMessage(error)}`);
+    }
+
+    if (!sessionId && typeof message?.session_id === 'string' && message.session_id.trim()) {
+      sessionId = message.session_id.trim();
+    }
+
+    if (message?.type !== 'result') {
+      continue;
+    }
+
+    if (message.subtype === 'success') {
+      finalText = String(message.result || '');
+      continue;
+    }
+
+    const errors = Array.isArray(message.errors)
+      ? message.errors.map((entry) => String(entry || '').trim()).filter(Boolean)
+      : [];
+    throw new Error(errors.join('\n') || 'claude execution failed.');
+  }
+
+  if (!finalText && lines.length > 0) {
+    throw new Error('Claude CLI completed without a result message.');
+  }
+
+  return {
+    text: trimTrailingWhitespace(finalText).trim(),
+    runtimeMeta: sessionId
+      ? {
+          runtimeBackend: 'claude-cli',
+          runtimeSessionId: sessionId,
+        }
+      : null,
+  };
+}
+
 export function resolveManagedAgentCli(agentType, env = process.env) {
   const spec = MANAGED_AGENT_RUNTIMES[agentType];
   if (!spec || spec.kind !== 'cli') {
@@ -635,6 +740,51 @@ export function resolveManagedAgentCli(agentType, env = process.env) {
 function requireManagedAgentCli(agentType, env = process.env) {
   const spec = MANAGED_AGENT_RUNTIMES[agentType];
   const cli = resolveManagedAgentCli(agentType, env);
+  assert(
+    cli,
+    `${spec.binaryName} is unavailable. Bundled dependency ${spec.packageName} is required; reinstall hkclaw-lite without omitting optional dependencies.`,
+  );
+  return cli;
+}
+
+function resolveClaudeCli(env = process.env) {
+  const spec = MANAGED_AGENT_RUNTIMES['claude-code'];
+  const packageJsonOverride = String(env[spec.packageJsonEnv] || '').trim();
+  let packageJsonPath = packageJsonOverride;
+  if (!packageJsonPath) {
+    try {
+      packageJsonPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk/package.json');
+    } catch {
+      try {
+        const entryPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk');
+        const candidate = path.join(path.dirname(entryPath), 'package.json');
+        if (!fs.existsSync(candidate)) {
+          return null;
+        }
+        packageJsonPath = candidate;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  const cliPath = path.resolve(path.dirname(packageJsonPath), 'cli.js');
+  if (!fs.existsSync(cliPath)) {
+    return null;
+  }
+
+  return {
+    source: 'bundled',
+    command: process.execPath,
+    argsPrefix: [cliPath],
+    detail: `@anthropic-ai/claude-agent-sdk (${cliPath})`,
+    envPatch: {},
+  };
+}
+
+function requireClaudeCli(env = process.env) {
+  const spec = MANAGED_AGENT_RUNTIMES['claude-code'];
+  const cli = resolveClaudeCli(env);
   assert(
     cli,
     `${spec.binaryName} is unavailable. Bundled dependency ${spec.packageName} is required; reinstall hkclaw-lite without omitting optional dependencies.`,

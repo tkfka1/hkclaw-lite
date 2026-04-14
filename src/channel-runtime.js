@@ -4,6 +4,7 @@ import {
   completeRuntimeRun,
   enqueueRuntimeOutboxEvent,
   failRuntimeRun,
+  getRuntimeRoleSession,
   listRecentRoleSessionContext,
   recordRuntimeRoleMessage,
   recordRuntimeRoleSession,
@@ -53,7 +54,7 @@ export async function executeChannelTurn({
         maxRounds: 1,
         note: 'Owner is processing the request.',
       });
-      const content = await executeAgentTurnWithFallback({
+      const ownerTurn = await executeAgentTurnWithFallback({
         projectRoot,
         config,
         agent,
@@ -67,11 +68,14 @@ export async function executeChannelTurn({
           runId: recorder.runId,
         }),
       });
+      const content = ownerTurn.content;
 
       await emitPersistedRoleMessage({
         role: 'owner',
         agent,
         content,
+        runtimeBackend: ownerTurn.runtimeMeta?.runtimeBackend || null,
+        runtimeSessionId: ownerTurn.runtimeMeta?.runtimeSessionId || null,
         final: true,
         round: 1,
         maxRounds: 1,
@@ -134,7 +138,7 @@ async function executeTribunalTurn({
       maxRounds,
       note: `Owner round ${round} started.`,
     });
-    ownerResponse = await executeAgentTurnWithFallback({
+    const ownerTurn = await executeAgentTurnWithFallback({
       projectRoot,
       config,
       agent: owner,
@@ -148,10 +152,13 @@ async function executeTribunalTurn({
         runId: recorder.runId,
       }),
     });
+    ownerResponse = ownerTurn.content;
     await emitRoleMessage(onRoleMessage, {
       role: 'owner',
       agent: owner,
       content: ownerResponse,
+      runtimeBackend: ownerTurn.runtimeMeta?.runtimeBackend || null,
+      runtimeSessionId: ownerTurn.runtimeMeta?.runtimeSessionId || null,
       final: false,
       round,
       maxRounds,
@@ -165,7 +172,7 @@ async function executeTribunalTurn({
       maxRounds,
       note: `Reviewer round ${round} started.`,
     });
-    reviewerResponse = await executeAgentTurnWithFallback({
+    const reviewerTurn = await executeAgentTurnWithFallback({
       projectRoot,
       config,
       agent: reviewer,
@@ -184,11 +191,14 @@ async function executeTribunalTurn({
         runId: recorder.runId,
       }),
     });
+    reviewerResponse = reviewerTurn.content;
     const reviewerVerdict = parseReviewerVerdict(reviewerResponse);
     await emitRoleMessage(onRoleMessage, {
       role: 'reviewer',
       agent: reviewer,
       content: reviewerResponse,
+      runtimeBackend: reviewerTurn.runtimeMeta?.runtimeBackend || null,
+      runtimeSessionId: reviewerTurn.runtimeMeta?.runtimeSessionId || null,
       final: reviewerVerdict === 'approved',
       round,
       maxRounds,
@@ -215,7 +225,7 @@ async function executeTribunalTurn({
         reviewerVerdict,
         note: `Arbiter invoked after invalid reviewer verdict in round ${round}.`,
       });
-      const arbiterResponse = await executeAgentTurnWithFallback({
+      const arbiterTurn = await executeAgentTurnWithFallback({
         projectRoot,
         config,
         agent: arbiter,
@@ -230,10 +240,13 @@ async function executeTribunalTurn({
         }),
         workdir,
       });
+      const arbiterResponse = arbiterTurn.content;
       await emitRoleMessage(onRoleMessage, {
         role: 'arbiter',
         agent: arbiter,
         content: arbiterResponse,
+        runtimeBackend: arbiterTurn.runtimeMeta?.runtimeBackend || null,
+        runtimeSessionId: arbiterTurn.runtimeMeta?.runtimeSessionId || null,
         final: true,
         round,
         maxRounds,
@@ -276,7 +289,7 @@ async function executeTribunalTurn({
     reviewerVerdict: 'blocked',
     note: 'Arbiter invoked after review rounds were exhausted.',
   });
-  const arbiterResponse = await executeAgentTurnWithFallback({
+  const arbiterTurn = await executeAgentTurnWithFallback({
     projectRoot,
     config,
     agent: arbiter,
@@ -290,10 +303,13 @@ async function executeTribunalTurn({
     }),
     workdir,
   });
+  const arbiterResponse = arbiterTurn.content;
   await emitRoleMessage(onRoleMessage, {
     role: 'arbiter',
     agent: arbiter,
     content: arbiterResponse,
+    runtimeBackend: arbiterTurn.runtimeMeta?.runtimeBackend || null,
+    runtimeSessionId: arbiterTurn.runtimeMeta?.runtimeSessionId || null,
     final: true,
     round: maxRounds,
     maxRounds,
@@ -325,24 +341,44 @@ async function executeAgentTurnWithFallback({
     `Fallback loop detected: ${[...visitedAgents, agent.name].join(' -> ')}`,
   );
 
-  const fullPrompt = buildPromptEnvelope({
-    projectRoot,
-    agent,
+  const runtimeSession = await loadRoleRuntimeSession(projectRoot, {
     channel,
-    workdirOverride: workdir,
-    userPrompt,
-    sessionHistory,
+    role,
   });
+  const effectiveSessionHistory =
+    agent.agent === 'claude-code' &&
+    runtimeSession?.runtimeBackend === 'claude-cli' &&
+    runtimeSession?.runtimeSessionId
+      ? []
+      : sessionHistory;
+  const fullPrompt =
+    agent.agent === 'claude-code' &&
+    runtimeSession?.runtimeBackend === 'claude-cli' &&
+    runtimeSession?.runtimeSessionId
+      ? String(userPrompt || '').trim()
+      : buildPromptEnvelope({
+          projectRoot,
+          agent,
+          channel,
+          workdirOverride: workdir,
+          userPrompt,
+          sessionHistory: effectiveSessionHistory,
+        });
 
   try {
-    return await runAgentTurn({
+    const result = await runAgentTurn({
       projectRoot,
       agent,
       prompt: fullPrompt,
       rawPrompt: userPrompt,
       workdir,
       sharedEnv: config.sharedEnv,
+      channel,
+      role,
+      runtimeSession,
+      captureRuntimeMetadata: true,
     });
+    return normalizeTurnResult(result);
   } catch (error) {
     if (!agent.fallbackAgent) {
       throw error;
@@ -511,4 +547,33 @@ async function loadRoleSessionHistory(projectRoot, { channel, role, runId }) {
   } catch {
     return [];
   }
+}
+
+async function loadRoleRuntimeSession(projectRoot, { channel, role }) {
+  if (!channel?.name || !role) {
+    return null;
+  }
+
+  try {
+    return await getRuntimeRoleSession(projectRoot, {
+      channelName: channel.name,
+      role,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTurnResult(result) {
+  if (result && typeof result === 'object' && 'text' in result) {
+    return {
+      content: String(result.text || ''),
+      runtimeMeta: result.runtimeMeta || null,
+    };
+  }
+
+  return {
+    content: String(result || ''),
+    runtimeMeta: null,
+  };
 }
