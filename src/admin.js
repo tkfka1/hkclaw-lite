@@ -13,6 +13,7 @@ import {
   deleteDashboardByName,
   readWatcherLog,
   replaceSharedEnv,
+  resetChannelRuntimeSessionsByName,
   upsertAgent,
   upsertChannel,
   upsertDashboard,
@@ -57,6 +58,14 @@ const CLAUDE_ACP_DISABLED_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_VERSION',
+];
+const GEMINI_CLI_DISABLED_ENV_KEYS = [
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'GEMINI_BASE_URL',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'GOOGLE_CLOUD_ACCESS_TOKEN',
+  'GOOGLE_GENAI_USE_GCA',
 ];
 const GEMINI_GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GEMINI_GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -264,6 +273,22 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
         payload.currentName || null,
         payload.definition || payload,
       ),
+    });
+    return;
+  }
+
+  if (
+    request.method === 'DELETE' &&
+    pathname.startsWith('/api/channels/') &&
+    pathname.endsWith('/runtime-sessions')
+  ) {
+    const name = decodeEntityPath(
+      pathname.slice(0, -'/runtime-sessions'.length),
+      '/api/channels/',
+    );
+    writeJson(response, 200, {
+      ok: true,
+      state: await resetChannelRuntimeSessionsByName(projectRoot, name),
     });
     return;
   }
@@ -749,19 +774,13 @@ async function startGeminiAuthFlow(projectRoot) {
 
   const authRuntime = await loadGeminiAuthRuntime(projectRoot);
   const oauthConfig = readGeminiOauthConfig(authRuntime);
-  const codeVerifier = createPkceCodeVerifier();
-  const state = randomBytes(32).toString('hex');
-  const codeChallenge = createPkceCodeChallenge(codeVerifier);
-  const authUrl = buildGeminiGoogleAuthUrl(oauthConfig, {
-    codeChallenge,
-    state,
-  });
+  const pkceParams = createGeminiPkceParams(authRuntime);
+  const authUrl = buildGeminiGoogleAuthUrl(authRuntime, oauthConfig, pkceParams);
 
   const flow = {
     id: randomUUID(),
     createdAt: Date.now(),
-    codeVerifier,
-    state,
+    pkceParams,
     authUrl,
     oauthConfig,
   };
@@ -803,9 +822,9 @@ async function completeGeminiAuthFlow(projectRoot, payload = {}) {
   );
 
   const authRuntime = await loadGeminiAuthRuntime(projectRoot);
-  const tokens = await exchangeGeminiAuthCode(flow.oauthConfig, {
+  const tokens = await exchangeGeminiAuthCode(authRuntime, flow.oauthConfig, {
     authorizationCode,
-    codeVerifier: flow.codeVerifier,
+    codeVerifier: flow.pkceParams?.codeVerifier || '',
   });
 
   const account = await persistGeminiOAuthCredentials(authRuntime, tokens);
@@ -889,6 +908,10 @@ async function loadGeminiAuthRuntime(projectRoot) {
     'Gemini CLI support bundle is missing clearCachedCredentialFile().',
   );
   assert(
+    typeof supportModule.clearOauthClientCache === 'function',
+    'Gemini CLI support bundle is missing clearOauthClientCache().',
+  );
+  assert(
     coreModule?.Storage && typeof coreModule.Storage.getOAuthCredsPath === 'function',
     'Gemini CLI core bundle is missing Storage.getOAuthCredsPath().',
   );
@@ -961,14 +984,45 @@ function createPkceCodeChallenge(codeVerifier) {
   return createHash('sha256').update(codeVerifier).digest('base64url');
 }
 
-function buildGeminiGoogleAuthUrl(oauthConfig, { codeChallenge, state }) {
+function createGeminiPkceParams(authRuntime) {
+  const generated = authRuntime.supportModule.generatePKCEParams?.();
+  const codeVerifier = String(generated?.codeVerifier || '').trim();
+  const codeChallenge = String(generated?.codeChallenge || '').trim();
+  const state = String(generated?.state || '').trim();
+  if (codeVerifier && codeChallenge && state) {
+    return {
+      codeVerifier,
+      codeChallenge,
+      state,
+    };
+  }
+
+  const fallbackCodeVerifier = createPkceCodeVerifier();
+  return {
+    codeVerifier: fallbackCodeVerifier,
+    codeChallenge: createPkceCodeChallenge(fallbackCodeVerifier),
+    state: randomBytes(32).toString('hex'),
+  };
+}
+
+function buildGeminiGoogleAuthUrl(authRuntime, oauthConfig, pkceParams) {
+  if (typeof authRuntime.supportModule.buildAuthorizationUrl === 'function') {
+    const url = new URL(
+      authRuntime.supportModule.buildAuthorizationUrl(oauthConfig, pkceParams, undefined),
+    );
+    if (!url.searchParams.has('access_type')) {
+      url.searchParams.set('access_type', 'offline');
+    }
+    return url.toString();
+  }
+
   const params = new URLSearchParams({
     client_id: oauthConfig.clientId,
     response_type: 'code',
     redirect_uri: oauthConfig.redirectUri,
     access_type: 'offline',
-    state,
-    code_challenge: codeChallenge,
+    state: pkceParams.state,
+    code_challenge: pkceParams.codeChallenge,
     code_challenge_method: 'S256',
     scope: oauthConfig.scopes.join(' '),
   });
@@ -999,19 +1053,34 @@ function parseGeminiAuthorizationCodePayload(payload = {}) {
   }
 }
 
-async function exchangeGeminiAuthCode(oauthConfig, { authorizationCode, codeVerifier }) {
+async function exchangeGeminiAuthCode(authRuntime, oauthConfig, { authorizationCode, codeVerifier }) {
+  if (typeof authRuntime.supportModule.exchangeCodeForToken === 'function') {
+    const tokens = await authRuntime.supportModule.exchangeCodeForToken(
+      oauthConfig,
+      authorizationCode,
+      codeVerifier,
+      undefined,
+    );
+    return normalizeGeminiOAuthTokens(tokens);
+  }
+
   const response = await fetch(oauthConfig.tokenUrl, {
     method: 'POST',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
+      accept: 'application/json, application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({
       code: authorizationCode,
       code_verifier: codeVerifier,
       client_id: oauthConfig.clientId,
-      client_secret: oauthConfig.clientSecret,
       redirect_uri: oauthConfig.redirectUri,
       grant_type: 'authorization_code',
+      ...(oauthConfig.clientSecret
+        ? {
+            client_secret: oauthConfig.clientSecret,
+          }
+        : {}),
     }),
   });
 
@@ -1026,7 +1095,30 @@ async function exchangeGeminiAuthCode(oauthConfig, { authorizationCode, codeVeri
     throw new Error(`Gemini OAuth 토큰 교환에 실패했습니다: ${message}`);
   }
 
-  return payload;
+  return normalizeGeminiOAuthTokens(payload);
+}
+
+function normalizeGeminiOAuthTokens(tokens) {
+  if (!tokens || typeof tokens !== 'object') {
+    return {};
+  }
+
+  const normalized = { ...tokens };
+  const expiresInRaw = normalized.expires_in;
+  const expiresIn =
+    typeof expiresInRaw === 'number'
+      ? expiresInRaw
+      : typeof expiresInRaw === 'string'
+        ? Number.parseInt(expiresInRaw, 10)
+        : Number.NaN;
+  if (
+    !Number.isNaN(expiresIn) &&
+    Number.isFinite(expiresIn) &&
+    typeof normalized.expiry_date !== 'number'
+  ) {
+    normalized.expiry_date = Date.now() + (expiresIn * 1000);
+  }
+  return normalized;
 }
 
 async function persistGeminiOAuthCredentials(authRuntime, tokens) {
@@ -1176,10 +1268,6 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
 
   if (agentType === 'gemini-cli') {
     const runtime = inspectAgentRuntime(projectRoot, { agent: 'gemini-cli' });
-    const credential = resolveCredentialSource(sharedEnv, process.env, [
-      'GEMINI_API_KEY',
-      'GOOGLE_API_KEY',
-    ]);
     const pendingFlow = getGeminiAuthFlow(projectRoot);
     let geminiLogin = {
       loggedIn: false,
@@ -1191,7 +1279,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
       try {
         geminiLogin = await readGeminiAuthState(projectRoot);
       } catch {
-        // Keep status best-effort. Runtime can still be used through API keys.
+        // Keep status best-effort.
       }
     }
 
@@ -1201,17 +1289,13 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
 
     const runtimeReady = Boolean(runtime.ready);
     const loggedIn = Boolean(geminiLogin.loggedIn);
-    const configured = Boolean(credential.key);
-    const ready = runtimeReady && (loggedIn || configured);
+    const ready = runtimeReady && loggedIn;
     const activeFlow = loggedIn ? null : getGeminiAuthFlow(projectRoot);
     const outputLines = [
       runtimeReady ? '런타임: 준비됨' : `런타임: ${runtime.detail || '미설치'}`,
       loggedIn
         ? `Google 로그인: 완료${geminiLogin.email ? ` (${geminiLogin.email})` : ''}`
         : 'Google 로그인: 미완료',
-      configured
-        ? `API 키: ${credential.key} (${localizeCredentialSource(credential.source)})`
-        : 'API 키: 미설정 (선택 사항)',
       activeFlow ? '브라우저 로그인: 진행 중' : '',
       activeFlow ? '완료 방법: 브라우저 로그인 후 authorization code를 붙여넣고 로그인 완료를 누르세요.' : '',
     ].filter(Boolean);
@@ -1223,24 +1307,21 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
       output: outputLines.join('\n'),
       details: {
         summary: ready
-          ? (loggedIn ? 'Gemini CLI Google 로그인됨' : 'Gemini CLI API 자격정보 설정됨')
+          ? 'Gemini CLI Google 로그인됨'
           : activeFlow
             ? 'Gemini CLI 브라우저 로그인 진행 중'
             : runtimeReady
-              ? 'Gemini CLI Google 로그인 또는 API 키가 필요합니다.'
+              ? 'Gemini CLI Google 로그인이 필요합니다.'
               : '런타임 준비 필요',
         loggedIn,
-        configured,
         runtimeReady,
         ready,
-        authMethod: loggedIn ? 'google' : (configured ? 'api-key' : 'none'),
+        authMethod: loggedIn ? 'google' : 'none',
         email: geminiLogin.email || '',
         pendingLogin: Boolean(activeFlow),
         requiresCode: Boolean(activeFlow),
         url: activeFlow?.authUrl || '',
         manualUrl: activeFlow?.authUrl || '',
-        credentialKey: credential.key || null,
-        credentialSource: credential.key ? localizeCredentialSource(credential.source) : null,
       },
       exitCode: 0,
       signal: null,
@@ -1477,7 +1558,13 @@ function buildManagedAgentEnv(projectRoot, agentType = '') {
     ...process.env,
     ...(config.sharedEnv || {}),
   };
-  return agentType === 'claude-code' ? stripClaudeAcpEnv(env) : env;
+  if (agentType === 'claude-code') {
+    return stripClaudeAcpEnv(env);
+  }
+  if (agentType === 'gemini-cli') {
+    return stripGeminiCliEnv(env);
+  }
+  return env;
 }
 
 function buildCredentialStatusResult({
@@ -1560,6 +1647,14 @@ function localizeCredentialSource(source) {
 function stripClaudeAcpEnv(env) {
   const nextEnv = { ...(env || {}) };
   for (const key of CLAUDE_ACP_DISABLED_ENV_KEYS) {
+    delete nextEnv[key];
+  }
+  return nextEnv;
+}
+
+function stripGeminiCliEnv(env) {
+  const nextEnv = { ...(env || {}) };
+  for (const key of GEMINI_CLI_DISABLED_ENV_KEYS) {
     delete nextEnv[key];
   }
   return nextEnv;

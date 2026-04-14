@@ -337,6 +337,37 @@ export async function getRuntimeRoleSession(projectRoot, { channelName, role }) 
   };
 }
 
+export async function clearRuntimeRoleSessions(
+  projectRoot,
+  { channelName = null, role = null, runtimeBackend = null } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const predicates = [];
+  const values = [];
+
+  const normalizedChannelName = normalizeNullableString(channelName);
+  if (normalizedChannelName) {
+    predicates.push('channel_name = ?');
+    values.push(normalizedChannelName);
+  }
+
+  const normalizedRole = normalizeNullableString(role);
+  if (normalizedRole) {
+    predicates.push('role = ?');
+    values.push(normalizedRole);
+  }
+
+  const normalizedRuntimeBackend = normalizeNullableString(runtimeBackend);
+  if (normalizedRuntimeBackend) {
+    predicates.push('runtime_backend = ?');
+    values.push(normalizedRuntimeBackend);
+  }
+
+  const whereClause = predicates.length > 0 ? ` WHERE ${predicates.join(' AND ')}` : '';
+  const result = db.prepare(`DELETE FROM runtime_role_sessions${whereClause}`).run(...values);
+  return Number(result?.changes || 0);
+}
+
 export async function completeRuntimeRun(projectRoot, runId, result) {
   const db = await getRuntimeDb(projectRoot);
   const completedAt = timestamp();

@@ -200,24 +200,27 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'agent-auth-status') {
-    void runAgentWizardAuth('status');
+  if (action === 'add-agent-env-row') {
+    if (!state.agentWizard) {
+      return;
+    }
+    state.agentWizard.draft.envEntries = normalizeEnvEntries(state.agentWizard.draft.envEntries);
+    state.agentWizard.draft.envEntries.push(createEnvEntry());
+    render();
     return;
   }
 
-  if (action === 'agent-auth-login') {
-    const popup = openLoginPopup();
-    void runAgentWizardAuth('login', { popup });
-    return;
-  }
-
-  if (action === 'agent-auth-logout') {
-    void runAgentWizardAuth('logout');
-    return;
-  }
-
-  if (action === 'agent-auth-test') {
-    void runAgentWizardAuth('test');
+  if (action === 'remove-agent-env-row') {
+    if (!state.agentWizard) {
+      return;
+    }
+    const index = Number(button.dataset.index);
+    const entries = normalizeEnvEntries(state.agentWizard.draft.envEntries);
+    if (Number.isInteger(index) && index >= 0 && index < entries.length) {
+      entries.splice(index, 1);
+    }
+    state.agentWizard.draft.envEntries = entries.length ? entries : [createEnvEntry()];
+    render();
     return;
   }
 
@@ -228,6 +231,11 @@ function handleClick(event) {
 
   if (action === 'delete-channel') {
     void deleteEntity('channel', button.dataset.name);
+    return;
+  }
+
+  if (action === 'reset-channel-runtime-sessions') {
+    void resetChannelRuntimeSessions(button.dataset.name);
     return;
   }
 
@@ -254,7 +262,10 @@ function handleInput(event) {
     return;
   }
 
-  if (!state.agentWizard || !target.closest('[data-form="agent-wizard"]') || !target.name) {
+  const isAgentWizardField = Boolean(state.agentWizard && target.closest('[data-form="agent-wizard"]'));
+  const isAgentWizardEnvField = Boolean(target.dataset.envEntryField);
+
+  if (!isAgentWizardField || (!target.name && !isAgentWizardEnvField)) {
     if (
       state.aiManager &&
       target.closest('[data-form="ai-manager"]') &&
@@ -302,6 +313,22 @@ function handleInput(event) {
       if (target.name === 'mode') {
         render();
       }
+    }
+    return;
+  }
+
+  if (target.dataset.envEntryField) {
+    const index = Number(target.dataset.envIndex);
+    const field = target.dataset.envEntryField;
+    const entries = normalizeEnvEntries(state.agentWizard.draft.envEntries);
+    if (
+      Number.isInteger(index) &&
+      index >= 0 &&
+      index < entries.length &&
+      (field === 'key' || field === 'value')
+    ) {
+      entries[index][field] = target.value;
+      state.agentWizard.draft.envEntries = entries;
     }
     return;
   }
@@ -446,10 +473,10 @@ async function saveAgentWizard() {
     systemPromptFile: optionalDraftText(values.systemPromptFile),
     skills: parseListText(values.skillsText),
     contextFiles: parseListText(values.contextFilesText),
-    env: parseEnvText(values.envText),
+    env: parseEnvEntries(values.envEntries),
     sandbox: optionalDraftText(values.sandbox),
     permissionMode: optionalDraftText(values.permissionMode),
-    dangerous: Boolean(values.dangerous),
+    dangerous: values.agent === 'codex' ? Boolean(values.dangerous) : undefined,
     baseUrl: optionalDraftText(values.baseUrl),
     command: optionalDraftText(values.command),
   };
@@ -465,71 +492,6 @@ async function saveAgentWizard() {
   state.agentModalOpen = false;
   state.agentWizard = null;
   setNotice('info', `에이전트 "${definition.name}"을 추가했습니다.`);
-  render();
-}
-
-async function runAgentWizardAuth(action, options = {}) {
-  if (!state.agentWizard) {
-    return;
-  }
-
-  const draft = state.agentWizard.draft;
-  const agentType = optionalDraftText(draft.agent);
-  if (!isAuthRequiredAgent(agentType)) {
-    throw new Error('이 유형은 인증이 필요하지 않습니다.');
-  }
-
-  const body = {
-    agentType,
-    action,
-  };
-
-  if (action === 'test') {
-    body.definition = {
-      name: optionalDraftText(draft.name) || 'wizard-agent',
-      agent: agentType,
-      fallbackAgent: optionalDraftText(draft.fallbackAgent),
-      model: resolveConfiguredModel(agentType, draft),
-      effort: optionalDraftText(draft.effort),
-      timeoutMs: optionalDraftText(draft.timeoutMs),
-      systemPrompt: optionalDraftText(draft.systemPrompt),
-      systemPromptFile: optionalDraftText(draft.systemPromptFile),
-      skills: parseListText(draft.skillsText),
-      contextFiles: parseListText(draft.contextFilesText),
-      env: parseEnvText(draft.envText),
-      sandbox: optionalDraftText(draft.sandbox),
-      permissionMode: optionalDraftText(draft.permissionMode),
-      dangerous: Boolean(draft.dangerous),
-      baseUrl: optionalDraftText(draft.baseUrl),
-      command: optionalDraftText(draft.command),
-    };
-    body.workdir = '.';
-  }
-
-  const response = await mutateJson('/api/agent-auth', {
-    method: 'POST',
-    body,
-  });
-
-  handleLoginLaunch(response.result, options.popup);
-
-  if (!state.agentWizard) {
-    return;
-  }
-
-  if (action === 'test') {
-    state.agentWizard.testResult = response.result;
-  } else {
-    state.agentWizard.authResult = response.result;
-    if (action === 'logout') {
-      state.agentWizard.testResult = null;
-    }
-    if (action === 'status' && !response.result?.details?.loggedIn) {
-      state.agentWizard.testResult = null;
-    }
-  }
-
-  state.notice = null;
   render();
 }
 
@@ -578,6 +540,30 @@ async function deleteEntity(kind, name) {
 
   state.data = response.state;
   setNotice('info', `${localizeKind(kind)} "${name}"을(를) 삭제했습니다.`);
+  render();
+}
+
+async function resetChannelRuntimeSessions(name) {
+  if (!name) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `채널 "${name}"의 Claude 세션 재사용 매핑을 초기화할까요? 다음 실행부터 새 세션으로 시작합니다.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const response = await mutateJson(
+    `/api/channels/${encodeURIComponent(name)}/runtime-sessions`,
+    {
+      method: 'DELETE',
+    },
+  );
+
+  state.data = response.state;
+  setNotice('info', `채널 "${name}"의 Claude 세션 매핑을 초기화했습니다.`);
   render();
 }
 
@@ -845,6 +831,9 @@ function renderChannelList(channels, agents) {
           const mode = channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single');
           const runtime = channel.runtime || {};
           const lastRun = runtime.lastRun || null;
+          const claudeSessions = (runtime.sessions || []).filter(
+            (session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId,
+          );
           return `
             <article class="card card--stack">
               <div class="card-main">
@@ -891,8 +880,29 @@ function renderChannelList(channels, agents) {
                     `
                     : ''
                 }
+                ${
+                  claudeSessions.length > 0
+                    ? `
+                      <div class="field-hint">
+                        Claude 세션:
+                        ${escapeHtml(
+                          claudeSessions
+                            .map((session) => `${session.role}(${session.runCount})`)
+                            .join(', '),
+                        )}
+                      </div>
+                    `
+                    : ''
+                }
               </div>
-              <button type="button" class="btn-danger" data-action="delete-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>삭제</button>
+              <div class="inline-actions">
+                ${
+                  claudeSessions.length > 0
+                    ? `<button type="button" class="btn-secondary" data-action="reset-channel-runtime-sessions" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>세션 초기화</button>`
+                    : ''
+                }
+                <button type="button" class="btn-danger" data-action="delete-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>삭제</button>
+              </div>
             </article>
           `;
         })
@@ -1232,7 +1242,7 @@ function renderAiWorkflowGuide(agentType, authResult, testResult, ready, testSup
       }
       ${
         agentType === 'gemini-cli'
-          ? '<div class="field-hint">Gemini CLI는 브라우저 인증을 마친 뒤 authorization code 붙여넣기까지 해야 완료됩니다. API 키는 대체 경로로 계속 쓸 수 있습니다.</div>'
+          ? '<div class="field-hint">Gemini CLI는 브라우저 인증을 마친 뒤 authorization code 붙여넣기까지 해야 완료됩니다.</div>'
           : ''
       }
       ${
@@ -1457,14 +1467,6 @@ function getAgentWizardSteps(draft) {
     },
   ];
 
-  if (isAuthRequiredAgent(draft.agent)) {
-    steps.push({
-      id: 'auth',
-      question: '인증과 테스트 호출을 먼저 진행할까요?',
-      body: renderAgentWizardAuthStep(),
-    });
-  }
-
   steps.push(
     {
       id: 'model',
@@ -1508,28 +1510,33 @@ function getAgentWizardSteps(draft) {
     },
     {
       id: 'context',
-      question: '프롬프트와 파일, 환경 변수를 넣을까요?',
+      question: '기본 지시와 참고 자료를 정할까요?',
       body: `
         <div class="form-grid">
           <div class="field field-full">
-            <label for="wizard-agent-system">시스템 프롬프트</label>
-            <textarea id="wizard-agent-system" name="systemPrompt">${escapeHtml(draft.systemPrompt)}</textarea>
+            <label for="wizard-agent-system">기본 지시문</label>
+            <div class="field-hint">이 에이전트가 항상 지켜야 할 역할, 말투, 작업 규칙을 적습니다.</div>
+            <textarea id="wizard-agent-system" name="systemPrompt" placeholder="예: 코드 리뷰어처럼 동작하고, 변경 이유와 위험 요소를 먼저 설명하세요.">${escapeHtml(draft.systemPrompt)}</textarea>
           </div>
           <div class="field field-full">
-            <label for="wizard-agent-system-file">시스템 프롬프트 파일</label>
-            <input id="wizard-agent-system-file" name="systemPromptFile" value="${escapeAttr(draft.systemPromptFile)}" />
+            <label for="wizard-agent-system-file">지시문 파일 경로</label>
+            <div class="field-hint">긴 프롬프트를 파일로 관리하고 싶을 때 씁니다. 프로젝트 루트 기준 상대 경로를 넣으세요.</div>
+            <input id="wizard-agent-system-file" name="systemPromptFile" value="${escapeAttr(draft.systemPromptFile)}" placeholder="예: prompts/reviewer.md" />
           </div>
           <div class="field field-full">
-            <label for="wizard-agent-skills">스킬</label>
-            <textarea id="wizard-agent-skills" name="skillsText">${escapeHtml(draft.skillsText)}</textarea>
+            <label for="wizard-agent-skills">불러올 스킬</label>
+            <div class="field-hint">줄바꿈이나 쉼표로 여러 개를 넣을 수 있습니다. 비워두면 스킬 없이 실행합니다.</div>
+            <textarea id="wizard-agent-skills" name="skillsText" placeholder="예: reviewer&#10;backend">${escapeHtml(draft.skillsText)}</textarea>
           </div>
           <div class="field field-full">
-            <label for="wizard-agent-context">컨텍스트 파일</label>
-            <textarea id="wizard-agent-context" name="contextFilesText">${escapeHtml(draft.contextFilesText)}</textarea>
+            <label for="wizard-agent-context">같이 읽을 파일</label>
+            <div class="field-hint">처음 실행할 때 함께 읽게 할 문서나 설정 파일 경로입니다. 줄바꿈이나 쉼표로 구분하세요.</div>
+            <textarea id="wizard-agent-context" name="contextFilesText" placeholder="예: README.md&#10;docs/architecture.md">${escapeHtml(draft.contextFilesText)}</textarea>
           </div>
           <div class="field field-full">
-            <label for="wizard-agent-env">환경 변수</label>
-            <textarea id="wizard-agent-env" name="envText">${escapeHtml(draft.envText)}</textarea>
+            <label>환경 변수</label>
+            <div class="field-hint">필요한 값만 키와 값으로 추가하세요. 빈 줄은 자동으로 무시됩니다.</div>
+            ${renderAgentWizardEnvEditor(draft)}
           </div>
         </div>
       `,
@@ -1578,42 +1585,16 @@ function renderAgentWizardRuntimeStep(draft) {
     `);
   }
 
-  blocks.push(`
-    <label class="checkbox" for="wizard-agent-dangerous">
-      <input id="wizard-agent-dangerous" type="checkbox" name="dangerous" ${draft.dangerous ? 'checked' : ''} />
-      <span>제한 해제</span>
-    </label>
-  `);
+  if (draft.agent === 'codex' && draft.sandbox === 'danger-full-access') {
+    blocks.push(`
+      <label class="checkbox" for="wizard-agent-dangerous">
+        <input id="wizard-agent-dangerous" type="checkbox" name="dangerous" ${draft.dangerous ? 'checked' : ''} />
+        <span>제한 해제</span>
+      </label>
+    `);
+  }
 
   return `<div class="form-grid">${blocks.join('')}</div>`;
-}
-
-function renderAgentWizardAuthStep() {
-  const authResult = state.agentWizard?.authResult;
-  const testResult = state.agentWizard?.testResult;
-  const loggedIn = Boolean(authResult?.details?.loggedIn);
-  const testOk = Boolean(testResult?.details?.success);
-
-  return `
-    <div class="wizard-auth">
-      <div class="wizard-auth-action-stack">
-        <div class="wizard-auth-actions">
-          <button type="button" class="btn-secondary" data-action="agent-auth-login" ${state.busy ? 'disabled' : ''}>로그인</button>
-          <button type="button" class="btn-secondary" data-action="agent-auth-logout" ${state.busy ? 'disabled' : ''}>로그아웃</button>
-        </div>
-        <div class="wizard-auth-actions">
-          <button type="button" class="btn-secondary" data-action="agent-auth-status" ${state.busy ? 'disabled' : ''}>상태 확인</button>
-          <button type="button" class="btn-primary" data-action="agent-auth-test" ${state.busy ? 'disabled' : ''}>테스트 호출</button>
-        </div>
-      </div>
-      <div class="wizard-auth-state">
-        <div class="auth-chip ${loggedIn ? 'is-ok' : ''}">인증 ${loggedIn ? '완료' : '미완료'}</div>
-        <div class="auth-chip ${testOk ? 'is-ok' : ''}">테스트 ${testOk ? '완료' : '미완료'}</div>
-      </div>
-      ${renderAgentWizardResult(authResult)}
-      ${renderAgentWizardResult(testResult)}
-    </div>
-  `;
 }
 
 function renderAgentWizardResult(result) {
@@ -1677,15 +1658,6 @@ function validateAgentWizardStep() {
     assertSelectableAgentType(draft.agent);
   }
 
-  if (currentStep.id === 'auth' && isAuthRequiredAgent(draft.agent)) {
-    if (!state.agentWizard.authResult?.details?.loggedIn) {
-      throw new Error('인증을 먼저 완료하세요.');
-    }
-    if (!state.agentWizard.testResult?.details?.success) {
-      throw new Error('테스트 호출을 먼저 완료하세요.');
-    }
-  }
-
   if (currentStep.id === 'model' && draft.agent === 'local-llm') {
     requiredDraftText(draft.model, 'model');
   }
@@ -1730,7 +1702,7 @@ function validateAgentWizardStep() {
   }
 
   if (currentStep.id === 'context') {
-    parseEnvText(draft.envText);
+    parseEnvEntries(draft.envEntries);
   }
 
   return true;
@@ -1739,6 +1711,10 @@ function validateAgentWizardStep() {
 function createBlankAgent(agentType = null) {
   const selectableAgentTypes = getSelectableAgentTypes();
   const resolvedAgentType = agentType || selectableAgentTypes[0]?.value || '';
+  const defaultClaudePermissionMode =
+    state.data.choices.claudePermissionModes.find((entry) => entry.value === 'bypassPermissions')?.value ||
+    state.data.choices.claudePermissionModes[0]?.value ||
+    '';
   return {
     name: '',
     agent: resolvedAgentType,
@@ -1751,9 +1727,9 @@ function createBlankAgent(agentType = null) {
     systemPromptFile: '',
     skillsText: '',
     contextFilesText: '',
-    envText: '',
+    envEntries: [createEnvEntry()],
     sandbox: state.data.choices.codexSandboxes[0]?.value || '',
-    permissionMode: state.data.choices.claudePermissionModes[0]?.value || '',
+    permissionMode: defaultClaudePermissionMode,
     dangerous: false,
     baseUrl: 'http://127.0.0.1:11434/v1',
     command: '',
@@ -1926,7 +1902,10 @@ function buildAiManagerTestDefinition(agentType) {
   }
 
   if (agentType === 'claude-code') {
-    definition.permissionMode = state.data?.choices?.claudePermissionModes?.[0]?.value || '';
+    definition.permissionMode =
+      state.data?.choices?.claudePermissionModes?.find((entry) => entry.value === 'bypassPermissions')?.value ||
+      state.data?.choices?.claudePermissionModes?.[0]?.value ||
+      '';
   }
 
   if (agentType === 'local-llm') {
@@ -2110,7 +2089,7 @@ function buildAiCredentialDraft(agentType, sharedEnv) {
 }
 
 function supportsAiCredentialEditing(agentType) {
-  return ['gemini-cli', 'local-llm'].includes(agentType);
+  return ['local-llm'].includes(agentType);
 }
 
 function isAiStatusSupported(agentType) {
@@ -2118,9 +2097,6 @@ function isAiStatusSupported(agentType) {
 }
 
 function getAiManagedCredentialKeys(agentType) {
-  if (agentType === 'gemini-cli') {
-    return ['GEMINI_API_KEY', 'GOOGLE_API_KEY'];
-  }
   if (agentType === 'local-llm') {
     return ['LOCAL_LLM_BASE_URL', 'LOCAL_LLM_API_KEY'];
   }
@@ -2128,25 +2104,6 @@ function getAiManagedCredentialKeys(agentType) {
 }
 
 function getAiCredentialFields(agentType) {
-  if (agentType === 'gemini-cli') {
-    return [
-      {
-        envKey: 'GEMINI_API_KEY',
-        inputId: 'ai-manager-gemini-api-key',
-        label: 'GEMINI_API_KEY',
-        type: 'password',
-        placeholder: 'AIza...',
-      },
-      {
-        envKey: 'GOOGLE_API_KEY',
-        inputId: 'ai-manager-google-api-key',
-        label: 'GOOGLE_API_KEY',
-        type: 'password',
-        placeholder: 'AIza...',
-        hint: 'Gemini는 Google 로그인 우선으로 동작하고, API 키는 대체 경로로만 사용합니다.',
-      },
-    ];
-  }
   if (agentType === 'local-llm') {
     return [
       {
@@ -2259,35 +2216,83 @@ function parseListText(rawValue) {
     .filter(Boolean);
 }
 
-function parseEnvText(rawValue) {
-  const output = {};
-  const entries = String(rawValue || '')
-    .split(/\n+/u)
-    .flatMap((line) => line.split(','))
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+function createEnvEntry(key = '', value = '') {
+  return {
+    key: String(key),
+    value: String(value),
+  };
+}
 
-  for (const entry of entries) {
-    const separatorIndex = entry.indexOf('=');
-    if (separatorIndex <= 0) {
-      throw new Error(`환경 변수는 KEY=VALUE 형식이어야 합니다: "${entry}"`);
+function normalizeEnvEntries(entries) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return [createEnvEntry()];
+  }
+  return entries.map((entry) => createEnvEntry(entry?.key, entry?.value));
+}
+
+function parseEnvEntries(entries) {
+  const output = {};
+
+  for (const entry of normalizeEnvEntries(entries)) {
+    const key = String(entry.key || '').trim();
+    const value = String(entry.value || '');
+    if (!key) {
+      if (value) {
+        throw new Error('환경 변수 키를 입력하세요.');
+      }
+      continue;
     }
-    const key = entry.slice(0, separatorIndex).trim();
-    const value = entry.slice(separatorIndex + 1);
     output[key] = value;
   }
 
   return output;
 }
 
-function joinList(values) {
-  return Array.isArray(values) ? values.join('\n') : '';
-}
-
-function joinEnv(env) {
-  return Object.entries(env || {})
-    .map(([key, value]) => `${key}=${value}`)
-    .join('\n');
+function renderAgentWizardEnvEditor(draft) {
+  const entries = normalizeEnvEntries(draft.envEntries);
+  return `
+    <div class="env-editor">
+      <div class="env-editor-head">
+        <span>키</span>
+        <span>값</span>
+        <span></span>
+      </div>
+      <div class="env-editor-rows">
+        ${entries
+          .map(
+            (entry, index) => `
+              <div class="env-entry">
+                <input
+                  data-env-entry-field="key"
+                  data-env-index="${index}"
+                  placeholder="예: OPENAI_BASE_URL"
+                  value="${escapeAttr(entry.key)}"
+                />
+                <input
+                  data-env-entry-field="value"
+                  data-env-index="${index}"
+                  placeholder="예: http://localhost:3000/v1"
+                  value="${escapeAttr(entry.value)}"
+                />
+                <button
+                  type="button"
+                  class="btn-secondary btn-inline"
+                  data-action="remove-agent-env-row"
+                  data-index="${index}"
+                  ${entries.length === 1 ? 'disabled' : ''}
+                >
+                  삭제
+                </button>
+              </div>
+            `,
+          )
+          .join('')}
+      </div>
+      <div class="actions env-editor-actions">
+        <button type="button" class="btn-secondary btn-inline" data-action="add-agent-env-row">환경 변수 추가</button>
+      </div>
+    </div>
+  `;
 }
 
 function requiredText(formData, key) {
@@ -2446,7 +2451,7 @@ function localizeAiMeta(value) {
   const labels = {
     codex: '로컬 Codex 로그인 공유 · 테스트',
     'claude-code': 'ACP 로그인 · 테스트',
-    'gemini-cli': 'Google 로그인 · API 키 대체 경로 · 테스트',
+    'gemini-cli': 'Google 로그인 · 테스트',
     'local-llm': '주소 / API 키 · 테스트',
     command: '명령 테스트',
   };
@@ -2703,9 +2708,6 @@ function localizeErrorMessage(message) {
   }
   if (text === 'OPENAI_API_KEY is required for codex model listing.') {
     return 'OPENAI_API_KEY 가 필요합니다.';
-  }
-  if (text === 'GEMINI_API_KEY is required for gemini-cli model listing.') {
-    return 'GEMINI_API_KEY 또는 GOOGLE_API_KEY 가 필요합니다.';
   }
   if (/^Invalid JSON response from /u.test(text)) {
     return text.replace(/^Invalid JSON response from /u, '모델 목록 응답이 올바르지 않습니다: ');

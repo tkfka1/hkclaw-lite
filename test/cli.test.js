@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { saveCiWatcher } from '../src/ci-watch-store.js';
 import { buildPromptEnvelope } from '../src/prompt.js';
 import { DEFAULT_CHANNEL_WORKSPACE } from '../src/constants.js';
+import { buildAgentDefinition } from '../src/store.js';
 
 const repoRoot = process.cwd();
 const cliPath = path.join(repoRoot, 'bin', 'hkclaw-lite.js');
@@ -129,6 +130,19 @@ test('add agent auto-initializes project metadata when missing', () => {
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   assert.equal(config.version, 3);
   assert.ok(config.agents.worker);
+});
+
+test('legacy Claude dangerous flag is normalized into bypassPermissions', () => {
+  const cwd = createProject();
+
+  const definition = buildAgentDefinition(cwd, 'claude-agent', {
+    name: 'claude-agent',
+    agent: 'claude-code',
+    dangerous: true,
+  });
+
+  assert.equal(definition.permissionMode, 'bypassPermissions');
+  assert.equal('dangerous' in definition, false);
 });
 
 test('add agent and channel use question flow and store mapping', () => {

@@ -254,6 +254,13 @@ h2 {
   min-width: 0;
 }
 
+.inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .card-title {
   font-size: 1rem;
 }
@@ -503,6 +510,43 @@ h2 {
   font-size: 0.82rem;
 }
 
+.env-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.env-editor-head,
+.env-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.2fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.env-editor-head {
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+.env-editor-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.env-entry {
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(21, 34, 44, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.env-editor-actions {
+  justify-content: flex-start;
+}
+
 .option-list {
   display: flex;
   flex-wrap: wrap;
@@ -719,5 +763,13 @@ button:focus-visible {
   .modal-card {
     width: 100%;
     max-height: calc(100vh - 28px);
+  }
+
+  .env-editor-head {
+    display: none;
+  }
+
+  .env-entry {
+    grid-template-columns: 1fr;
   }
 }

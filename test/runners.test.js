@@ -76,6 +76,10 @@ if (args[0] === 'auth' && args[1] === 'logout') {
 }
 
 if (args.includes('-p') && args.includes('--output-format') && args.includes('stream-json')) {
+  if (!args.includes('--verbose')) {
+    process.stderr.write('missing --verbose\\n');
+    process.exit(1);
+  }
   const modelIndex = args.indexOf('--model');
   const permissionIndex = args.indexOf('--permission-mode');
   const sessionIdIndex = args.indexOf('--session-id');
@@ -153,6 +157,41 @@ function createFakeCodexNativeBundle() {
   fs.writeFileSync(bundledScriptPath, '#!/usr/bin/env node\n', { mode: 0o755 });
   fs.writeFileSync(nativeBinaryPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(rgPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+  return path.join(packageDir, 'package.json');
+}
+
+function createFakeGeminiCliBundle() {
+  const rootDir = createTempDir();
+  const packageDir = path.join(rootDir, '@google', 'gemini-cli');
+  const scriptPath = path.join(packageDir, 'bundle', 'gemini.js');
+
+  fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+  fs.writeFileSync(
+    path.join(packageDir, 'package.json'),
+    JSON.stringify({
+      name: '@google/gemini-cli',
+      version: '0.0.0-test',
+      type: 'module',
+      bin: {
+        gemini: './bundle/gemini.js',
+      },
+    }),
+  );
+  fs.writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+const payload = {
+  geminiApiKey: process.env.GEMINI_API_KEY || '',
+  googleApiKey: process.env.GOOGLE_API_KEY || '',
+  googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
+  googleCloudAccessToken: process.env.GOOGLE_CLOUD_ACCESS_TOKEN || '',
+  googleGenAiUseGca: process.env.GOOGLE_GENAI_USE_GCA || '',
+};
+process.stdout.write(JSON.stringify(payload));
+`,
+    { mode: 0o755 },
+  );
 
   return path.join(packageDir, 'package.json');
 }
@@ -277,6 +316,48 @@ test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () 
         permissionMode: 'acceptEdits',
         dangerous: false,
         effort: null,
+      });
+    },
+  );
+});
+
+test('runAgentTurn strips Gemini env-based auth overrides before invoking the bundled cli', async () => {
+  const projectRoot = createTempDir();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  const fakePackageJson = createFakeGeminiCliBundle();
+
+  await withEnv(
+    {
+      HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakePackageJson,
+      GEMINI_API_KEY: 'process-gemini-key',
+      GOOGLE_API_KEY: 'process-google-key',
+      GOOGLE_APPLICATION_CREDENTIALS: '/tmp/google-creds.json',
+      GOOGLE_CLOUD_ACCESS_TOKEN: 'google-cloud-access-token',
+      GOOGLE_GENAI_USE_GCA: 'true',
+    },
+    async () => {
+      const output = await runAgentTurn({
+        projectRoot,
+        agent: {
+          name: 'gemini-agent',
+          agent: 'gemini-cli',
+        },
+        prompt: 'Return exactly OK.',
+        rawPrompt: 'Return exactly OK.',
+        workdir: 'workspace',
+        sharedEnv: {
+          GEMINI_API_KEY: 'shared-gemini-key',
+          GOOGLE_API_KEY: 'shared-google-key',
+        },
+      });
+
+      assert.deepEqual(JSON.parse(output), {
+        geminiApiKey: '',
+        googleApiKey: '',
+        googleApplicationCredentials: '',
+        googleCloudAccessToken: '',
+        googleGenAiUseGca: '',
       });
     },
   );

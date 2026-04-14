@@ -1431,13 +1431,7 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
       'Claude permission mode',
       CLAUDE_PERMISSION_MODE_CHOICES,
       {
-        defaultValue: initial.permissionMode,
-      },
-    );
-    definition.dangerous = await prompter.askConfirm(
-      'Allow dangerously skip permissions?',
-      {
-        defaultValue: initial.dangerous ?? false,
+        defaultValue: initial.permissionMode || (initial.dangerous ? 'bypassPermissions' : undefined),
       },
     );
   }

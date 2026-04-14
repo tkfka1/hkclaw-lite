@@ -2,7 +2,6 @@ import { DEFAULT_LOCAL_LLM_BASE_URL } from './constants.js';
 import { assert } from './utils.js';
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
-const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
 const CURATED_CLAUDE_CODE_MODELS = [
   {
     value: 'claude-opus-4-1-20250805',
@@ -11,6 +10,20 @@ const CURATED_CLAUDE_CODE_MODELS = [
   {
     value: 'claude-sonnet-4-20250514',
     label: 'Claude Sonnet 4',
+  },
+];
+const CURATED_GEMINI_MODELS = [
+  {
+    value: 'gemini-2.5-pro',
+    label: 'Gemini 2.5 Pro',
+  },
+  {
+    value: 'gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+  },
+  {
+    value: 'gemini-3-flash-preview',
+    label: 'Gemini 3 Flash Preview',
   },
 ];
 
@@ -107,25 +120,8 @@ async function listAnthropicModels(env) {
 }
 
 async function listGeminiModels(env) {
-  const apiKey = firstDefined(env.GEMINI_API_KEY, env.GOOGLE_API_KEY);
-  assert(apiKey, 'GEMINI_API_KEY is required for gemini-cli model listing.');
-  const baseUrl = normalizeBaseUrl(env.GEMINI_BASE_URL || DEFAULT_GEMINI_BASE_URL);
-  const payload = await fetchJson(joinApiPath(baseUrl, 'models'), {
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-    },
-  });
-
-  const models = dedupeModelOptions(
-    (payload?.data || [])
-      .map((entry) => ({
-        value: String(entry?.id || '').trim(),
-        label: String(entry?.id || '').trim(),
-        created: Number(entry?.created || 0),
-      }))
-      .filter((entry) => isLikelyGeminiAgentModel(entry.value))
-      .sort((left, right) => right.created - left.created),
-  ).map((entry) => ({
+  void env;
+  const models = CURATED_GEMINI_MODELS.map((entry) => ({
     value: entry.value,
     label: entry.label,
     efforts: resolveAgentEffortChoices('gemini-cli', entry.value),
@@ -134,8 +130,8 @@ async function listGeminiModels(env) {
   return {
     agentType: 'gemini-cli',
     models,
-    source: 'live',
-    summary: models.length > 0 ? `실제 조회 모델 ${models.length}개` : '조회된 모델이 없습니다.',
+    source: 'curated',
+    summary: `권장 모델 ${models.length}개`,
   };
 }
 

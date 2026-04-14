@@ -72,11 +72,6 @@ export const CODEX_SANDBOX_CHOICES = [
 ];
 export const CLAUDE_PERMISSION_MODE_CHOICES = [
   {
-    value: 'bypassPermissions',
-    label: 'Bypass Permissions',
-    description: 'Run without permission prompts',
-  },
-  {
     value: 'default',
     label: 'Default',
     description: 'Use Claude Code ACP default permission behavior',
@@ -87,19 +82,9 @@ export const CLAUDE_PERMISSION_MODE_CHOICES = [
     description: 'Allow edits but keep other checks',
   },
   {
-    value: 'dontAsk',
-    label: 'Do Not Ask',
-    description: 'Avoid approval prompts',
-  },
-  {
-    value: 'plan',
-    label: 'Plan',
-    description: 'Planning-oriented permission mode',
-  },
-  {
-    value: 'auto',
-    label: 'Auto',
-    description: 'Claude chooses how to operate',
+    value: 'bypassPermissions',
+    label: 'Bypass Permissions',
+    description: 'Run without permission prompts',
   },
 ];
 export const DASHBOARD_ALL_AGENTS = '*';

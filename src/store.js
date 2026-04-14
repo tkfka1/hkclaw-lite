@@ -306,6 +306,12 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   if (merged.agent !== 'claude-code') {
     merged.permissionMode = undefined;
   }
+  if (merged.agent === 'claude-code') {
+    if (!merged.permissionMode && merged.dangerous) {
+      merged.permissionMode = 'bypassPermissions';
+    }
+    merged.dangerous = undefined;
+  }
   if (!['codex', 'claude-code'].includes(merged.agent)) {
     merged.dangerous = undefined;
   }

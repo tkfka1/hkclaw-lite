@@ -74,6 +74,14 @@ const CLAUDE_ACP_DISABLED_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_VERSION',
 ];
+const GEMINI_CLI_DISABLED_ENV_KEYS = [
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'GEMINI_BASE_URL',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'GOOGLE_CLOUD_ACCESS_TOKEN',
+  'GOOGLE_GENAI_USE_GCA',
+];
 
 export async function runAgentTurn({
   projectRoot,
@@ -299,6 +307,7 @@ async function runClaude({
   const args = [
     ...cli.argsPrefix,
     '-p',
+    '--verbose',
     '--output-format',
     'stream-json',
   ];
@@ -362,14 +371,14 @@ async function runGeminiCli({
     args,
     cwd: executionWorkdir,
     env: applyEnvPatch(
-      buildChildEnv({
+      stripGeminiCliEnv(buildChildEnv({
         projectRoot,
         workdir: executionWorkdir,
         service,
         rawPrompt,
         fullPrompt: prompt,
         sharedEnv,
-      }),
+      })),
       cli.envPatch,
     ),
     timeoutMs: service.timeoutMs,
@@ -501,6 +510,14 @@ function buildChildEnv({
 function stripClaudeAcpEnv(env) {
   const nextEnv = { ...(env || {}) };
   for (const key of CLAUDE_ACP_DISABLED_ENV_KEYS) {
+    delete nextEnv[key];
+  }
+  return nextEnv;
+}
+
+function stripGeminiCliEnv(env) {
+  const nextEnv = { ...(env || {}) };
+  for (const key of GEMINI_CLI_DISABLED_ENV_KEYS) {
     delete nextEnv[key];
   }
   return nextEnv;

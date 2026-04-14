@@ -14,6 +14,7 @@ import {
 } from './discord-runtime-state.js';
 import { inspectAgentRuntime } from './runners.js';
 import {
+  clearRuntimeRoleSessions,
   listPendingRuntimeOutboxEvents,
   listRecentRuntimeRuns,
   listRuntimeRoleSessions,
@@ -190,6 +191,17 @@ export async function deleteChannelByName(projectRoot, name) {
   getChannel(config, name);
   removeChannel(config, name);
   saveConfig(projectRoot, config);
+  await clearRuntimeRoleSessions(projectRoot, { channelName: name });
+  return await buildAdminSnapshot(projectRoot);
+}
+
+export async function resetChannelRuntimeSessionsByName(projectRoot, name) {
+  const config = loadConfig(projectRoot);
+  getChannel(config, name);
+  await clearRuntimeRoleSessions(projectRoot, {
+    channelName: name,
+    runtimeBackend: 'claude-cli',
+  });
   return await buildAdminSnapshot(projectRoot);
 }
 
@@ -339,6 +351,8 @@ async function buildRuntimeStatus(projectRoot, channels) {
       sessionPolicy: session.sessionPolicy,
       lastStatus: session.lastStatus,
       lastVerdict: session.lastVerdict,
+      runtimeBackend: session.runtimeBackend,
+      runtimeSessionId: session.runtimeSessionId,
     });
     sessionsByChannel.set(key, list);
   }
