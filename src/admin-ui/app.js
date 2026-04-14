@@ -1,7 +1,11 @@
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
+const AI_MANAGER_STATUS_POLL_INTERVAL_MS = 1_500;
+const AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS = 20;
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 let noticeTimer = null;
+let aiManagerStatusPollTimer = null;
+let aiManagerStatusPollSession = 0;
 
 const state = {
   data: null,
@@ -99,14 +103,17 @@ function handleClick(event) {
   }
 
   if (action === 'open-ai-modal') {
+    stopAiManagerStatusPolling();
     state.aiManager = createAiManager(button.dataset.agentType || '', {
       localLlmConnection: button.dataset.localLlmConnection || '',
     });
+    maybeResumeAiManagerStatusPolling(state.aiManager);
     render();
     return;
   }
 
   if (action === 'open-local-llm-manager') {
+    stopAiManagerStatusPolling();
     state.aiManager = createAiManager('local-llm', {
       localLlmConnection: button.dataset.localLlmConnection || '',
     });
@@ -116,6 +123,7 @@ function handleClick(event) {
   }
 
   if (action === 'open-local-llm-create') {
+    stopAiManagerStatusPolling();
     state.aiManager = createAiManager('local-llm');
     state.localLlmModalOpen = false;
     state.localLlmDraft = createLocalLlmConnectionDraft();
@@ -124,6 +132,7 @@ function handleClick(event) {
   }
 
   if (action === 'close-ai-modal') {
+    stopAiManagerStatusPolling();
     state.aiManager = null;
     state.localLlmModalOpen = false;
     state.localLlmDraft = null;
@@ -132,6 +141,7 @@ function handleClick(event) {
   }
 
   if (action === 'open-local-llm-modal') {
+    stopAiManagerStatusPolling();
     if (!state.aiManager || state.aiManager.type !== 'local-llm') {
       state.aiManager = createAiManager('local-llm');
     }
@@ -142,6 +152,7 @@ function handleClick(event) {
   }
 
   if (action === 'edit-local-llm-connection') {
+    stopAiManagerStatusPolling();
     const entry = resolveLocalLlmConnectionEntry(button.dataset.name);
     if (!entry) {
       setNotice('error', '로컬 LLM 연결을 찾지 못했습니다.');
@@ -2822,19 +2833,15 @@ async function runAiManagerAction(action, options = {}) {
       state.aiManager.testResult = response.result;
       state.aiManager.usageSummary = response.result?.details?.usageSummary || state.aiManager.usageSummary;
     } else {
-      state.aiManager.authResult = response.result;
+      applyAiManagerAuthResult(agentType, response.result, action);
       if (action === 'logout') {
-        state.aiManager.testResult = null;
-      }
-      if (
-        action === 'status' &&
-        isAuthRequiredAgent(agentType) &&
-        !response.result?.details?.loggedIn
-      ) {
-        state.aiManager.testResult = null;
+        stopAiManagerStatusPolling();
+      } else if (action === 'login' && agentType === 'codex' && response.result?.details?.pendingLogin) {
+        startAiManagerStatusPolling(agentType);
+      } else if (action === 'status' && !response.result?.details?.pendingLogin) {
+        stopAiManagerStatusPolling();
       }
     }
-    syncAiStatus(agentType, state.aiManager);
 
     if (!(action === 'login' && response.result?.details?.url)) {
       state.notice = null;
@@ -3125,7 +3132,110 @@ function handleLoginLaunch(result, popup) {
     );
     return;
   }
+  if (result?.agentType === 'codex' && result?.details?.pendingLogin) {
+    setNotice('info', '로그인 창을 열었습니다. 브라우저에서 완료하면 상태를 자동으로 다시 확인합니다.');
+    return;
+  }
   setNotice('info', '로그인 창을 열었습니다. 브라우저에서 완료한 뒤 상태 확인을 누르세요.');
+}
+
+function applyAiManagerAuthResult(agentType, result, action = 'status') {
+  if (!state.aiManager || state.aiManager.type !== agentType) {
+    return;
+  }
+
+  state.aiManager.authResult = result;
+  if (action === 'logout') {
+    state.aiManager.testResult = null;
+  }
+  if (action === 'status' && isAuthRequiredAgent(agentType) && !result?.details?.loggedIn) {
+    state.aiManager.testResult = null;
+  }
+  syncAiStatus(agentType, state.aiManager);
+}
+
+function stopAiManagerStatusPolling() {
+  aiManagerStatusPollSession += 1;
+  if (aiManagerStatusPollTimer) {
+    window.clearTimeout(aiManagerStatusPollTimer);
+    aiManagerStatusPollTimer = null;
+  }
+}
+
+function maybeResumeAiManagerStatusPolling(manager = state.aiManager) {
+  if (
+    manager?.type === 'codex' &&
+    manager?.authResult?.details?.pendingLogin &&
+    !manager?.authResult?.details?.loggedIn
+  ) {
+    startAiManagerStatusPolling('codex');
+  }
+}
+
+function startAiManagerStatusPolling(agentType) {
+  stopAiManagerStatusPolling();
+  const sessionId = aiManagerStatusPollSession;
+  let attempts = 0;
+
+  const poll = async () => {
+    if (sessionId !== aiManagerStatusPollSession) {
+      return;
+    }
+    if (!state.aiManager || state.aiManager.type !== agentType) {
+      stopAiManagerStatusPolling();
+      return;
+    }
+
+    attempts += 1;
+    try {
+      const response = await requestJson('/api/agent-auth', {
+        method: 'POST',
+        body: {
+          agentType,
+          action: 'status',
+        },
+      });
+
+      if (sessionId !== aiManagerStatusPollSession) {
+        return;
+      }
+      applyAiManagerAuthResult(agentType, response.result, 'status');
+      render();
+
+      const loggedIn = Boolean(response.result?.details?.loggedIn);
+      const pendingLogin = Boolean(response.result?.details?.pendingLogin);
+      if (loggedIn) {
+        stopAiManagerStatusPolling();
+        setNotice('info', 'Codex 로그인 상태가 확인되었습니다.');
+        render();
+        return;
+      }
+      if (!pendingLogin || attempts >= AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS) {
+        stopAiManagerStatusPolling();
+        render();
+        return;
+      }
+    } catch (error) {
+      if (sessionId !== aiManagerStatusPollSession) {
+        return;
+      }
+      if (handleAuthError(error)) {
+        stopAiManagerStatusPolling();
+        render();
+        return;
+      }
+      if (attempts >= AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS) {
+        stopAiManagerStatusPolling();
+        setNotice('error', localizeErrorMessage(error.message));
+        render();
+        return;
+      }
+    }
+
+    aiManagerStatusPollTimer = window.setTimeout(poll, AI_MANAGER_STATUS_POLL_INTERVAL_MS);
+  };
+
+  aiManagerStatusPollTimer = window.setTimeout(poll, AI_MANAGER_STATUS_POLL_INTERVAL_MS);
 }
 
 function buildAiCredentialDraft(agentType, sharedEnv) {
