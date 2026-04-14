@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   CHANNEL_MODE_CHOICES,
+  CONTAINER_CHANNEL_WORKSPACE,
   CONFIG_FILENAME,
   CURRENT_CONFIG_VERSION,
   DASHBOARD_ALL_AGENTS,
@@ -33,6 +34,12 @@ export function getProjectLayout(projectRoot) {
     configPath: path.join(toolRoot, CONFIG_FILENAME),
     watchersRoot: path.join(toolRoot, 'watchers'),
   };
+}
+
+export function getDefaultChannelWorkspace() {
+  return fs.existsSync(CONTAINER_CHANNEL_WORKSPACE)
+    ? CONTAINER_CHANNEL_WORKSPACE
+    : DEFAULT_CHANNEL_WORKSPACE;
 }
 
 export function findProjectRoot(startDir) {
@@ -456,7 +463,7 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
         input['workdir'] ??
         existing.workspace ??
         existing.workdir ??
-        DEFAULT_CHANNEL_WORKSPACE,
+        getDefaultChannelWorkspace(),
     ),
     agent: resolveChannelAgentName(config, input.agent ?? existing.agent, input.bot ?? input.ownerBot ?? existing.bot ?? existing.ownerBot),
     reviewer: resolveOptionalChannelAgentName(
@@ -871,7 +878,7 @@ function normalizeLegacyChannelRecords(channels, rawAgents, rawBots = {}) {
             ? rawAgents[next.agent]
             : null;
         next.workspace =
-          next.workdir || ownerAgent?.workdir || DEFAULT_CHANNEL_WORKSPACE;
+          next.workdir || ownerAgent?.workdir || getDefaultChannelWorkspace();
       }
       if (!next.mode) {
         next.mode = next.reviewer || next.arbiter ? 'tribunal' : 'single';

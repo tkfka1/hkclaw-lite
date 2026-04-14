@@ -26,6 +26,7 @@ import {
   buildChannelDefinition,
   buildDashboardDefinition,
   buildLocalLlmConnectionDefinition,
+  getDefaultChannelWorkspace,
   getAgent,
   getBot,
   getChannel,
@@ -63,7 +64,10 @@ export async function buildAdminSnapshot(projectRoot) {
   return {
     projectRoot,
     configVersion: config.version,
-    defaults: config.defaults,
+    defaults: {
+      ...config.defaults,
+      channelWorkspace: getDefaultChannelWorkspace(),
+    },
     sharedEnv: config.sharedEnv || {},
     localLlmConnections: listLocalLlmConnections(config),
     agents,

@@ -33,7 +33,6 @@ import {
   CODEX_SANDBOX_CHOICES,
   DASHBOARD_ALL_AGENTS,
   DEFAULT_ADMIN_PORT,
-  DEFAULT_CHANNEL_WORKSPACE,
 } from './constants.js';
 import { withPrompter } from './interactive.js';
 import { inspectAgentRuntime } from './runners.js';
@@ -45,6 +44,7 @@ import {
   getAgent,
   getChannel,
   getDashboard,
+  getDefaultChannelWorkspace,
   getProjectLayout,
   initProject,
   listAgents,
@@ -1578,7 +1578,7 @@ async function promptForChannelDefinition(prompter, config, options) {
     allowEmpty: true,
   });
   const workspace = await prompter.askText('Channel workspace directory', {
-    defaultValue: initial.workspace ?? initial.workdir ?? DEFAULT_CHANNEL_WORKSPACE,
+    defaultValue: initial.workspace ?? initial.workdir ?? getDefaultChannelWorkspace(),
     validate: (value) => {
       const resolved = resolveProjectPath(projectRoot, value);
       if (!fs.existsSync(resolved)) {

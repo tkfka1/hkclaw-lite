@@ -1,5 +1,5 @@
 const app = document.getElementById('app');
-const DEFAULT_CHANNEL_WORKSPACE = '~';
+const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 let noticeTimer = null;
 
@@ -1516,7 +1516,7 @@ function renderChannelList(channels, agents) {
             <article class="card card--stack">
               <div class="card-main">
                 <strong class="card-title">${escapeHtml(channel.name)}</strong>
-                <span class="card-meta">${escapeHtml(localizeChannelMode(mode))} · ${escapeHtml(channel.discordChannelId)} · ${escapeHtml(channel.workspace || DEFAULT_CHANNEL_WORKSPACE)}</span>
+                <span class="card-meta">${escapeHtml(localizeChannelMode(mode))} · ${escapeHtml(channel.discordChannelId)} · ${escapeHtml(channel.workspace || getDefaultChannelWorkspace())}</span>
                 <div class="role-list">
                   <span class="role-item"><strong>owner</strong><span>${escapeHtml(channel.agent)}</span></span>
                   ${
@@ -2699,7 +2699,7 @@ function createChannelDraft(channel) {
     mode: channel?.mode || 'single',
     discordChannelId: channel?.discordChannelId || '',
     guildId: channel?.guildId || '',
-    workspace: channel?.workspace || DEFAULT_CHANNEL_WORKSPACE,
+    workspace: channel?.workspace || getDefaultChannelWorkspace(),
     agent: channel?.agent || '',
     reviewer: channel?.reviewer || '',
     arbiter: channel?.arbiter || '',
@@ -3409,13 +3409,17 @@ function createBlankChannel() {
     mode: 'single',
     discordChannelId: '',
     guildId: '',
-    workspace: DEFAULT_CHANNEL_WORKSPACE,
+    workspace: getDefaultChannelWorkspace(),
     agent: state.data.agents?.[0]?.name || '',
     reviewer: '',
     arbiter: '',
     reviewRounds: '',
     description: '',
   };
+}
+
+function getDefaultChannelWorkspace() {
+  return state.data?.defaults?.channelWorkspace || DEFAULT_CHANNEL_WORKSPACE;
 }
 
 function createBlankBot() {
