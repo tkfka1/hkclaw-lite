@@ -100,6 +100,16 @@ if (args.includes('-p') && args.includes('--output-format') && args.includes('st
     model: model || 'sonnet',
   }) + '\\n');
   process.stdout.write(JSON.stringify({
+    type: 'message_delta',
+    session_id: sessionId,
+    usage: {
+      input_tokens: 11,
+      output_tokens: 7,
+      cache_creation_input_tokens: 3,
+      cache_read_input_tokens: 2,
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
     type: 'result',
     subtype: 'success',
     session_id: sessionId,
@@ -187,6 +197,14 @@ const payload = {
   googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
   googleCloudAccessToken: process.env.GOOGLE_CLOUD_ACCESS_TOKEN || '',
   googleGenAiUseGca: process.env.GOOGLE_GENAI_USE_GCA || '',
+  _meta: {
+    quota: {
+      token_count: {
+        input_tokens: 5,
+        output_tokens: 2,
+      },
+    },
+  },
 };
 process.stdout.write(JSON.stringify(payload));
 `,
@@ -302,7 +320,7 @@ test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () 
         agent: {
           name: 'claude-agent',
           agent: 'claude-code',
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           permissionMode: 'acceptEdits',
         },
         prompt: 'Return exactly OK.',
@@ -312,7 +330,7 @@ test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () 
       });
 
       assert.deepEqual(JSON.parse(output), {
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         permissionMode: 'acceptEdits',
         dangerous: false,
         effort: null,
@@ -352,13 +370,50 @@ test('runAgentTurn strips Gemini env-based auth overrides before invoking the bu
         },
       });
 
-      assert.deepEqual(JSON.parse(output), {
-        geminiApiKey: '',
-        googleApiKey: '',
-        googleApplicationCredentials: '',
-        googleCloudAccessToken: '',
-        googleGenAiUseGca: '',
+      const parsed = JSON.parse(output);
+      assert.equal(parsed.geminiApiKey, '');
+      assert.equal(parsed.googleApiKey, '');
+      assert.equal(parsed.googleApplicationCredentials, '');
+      assert.equal(parsed.googleCloudAccessToken, '');
+      assert.equal(parsed.googleGenAiUseGca, '');
+    },
+  );
+});
+
+test('runAgentTurn returns Claude usage metadata when captureRuntimeMetadata is enabled', async () => {
+  const projectRoot = createTempDir();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      const output = await runAgentTurn({
+        projectRoot,
+        agent: {
+          name: 'claude-agent',
+          agent: 'claude-code',
+        },
+        prompt: 'Return exactly OK.',
+        rawPrompt: 'Return exactly OK.',
+        workdir: 'workspace',
+        sharedEnv: {},
+        captureRuntimeMetadata: true,
       });
+
+      assert.equal(typeof output.text, 'string');
+      assert.equal(output.text.length > 0, true);
+      assert.deepEqual(output.usage, {
+        inputTokens: 11,
+        outputTokens: 7,
+        totalTokens: 18,
+        cacheCreationInputTokens: 3,
+        cacheReadInputTokens: 2,
+      });
+      assert.equal(output.runtimeMeta?.runtimeBackend, 'claude-cli');
     },
   );
 });

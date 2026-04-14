@@ -438,7 +438,7 @@ test('single channel reuses Claude CLI sessions per channel role', async () => {
   config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
     name: 'owner',
     agent: 'claude-code',
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
   });
   config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
     name: 'main',

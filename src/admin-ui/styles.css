@@ -111,7 +111,7 @@ h2 {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   width: 100%;
 }
@@ -523,7 +523,23 @@ h2 {
   align-items: center;
 }
 
+.llm-connection-head,
+.llm-connection-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
 .env-editor-head {
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+.llm-connection-head {
   color: var(--ink-soft);
   font-size: 0.74rem;
   text-transform: uppercase;
@@ -537,6 +553,13 @@ h2 {
 }
 
 .env-entry {
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(21, 34, 44, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.llm-connection-entry {
   padding: 10px;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(21, 34, 44, 0.08);
@@ -631,13 +654,24 @@ button:focus-visible {
   justify-content: space-between;
 }
 
+.notice-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 90;
+  width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
 .notice {
-  position: sticky;
-  top: 12px;
-  z-index: 40;
   border-radius: var(--radius-md);
-  padding: 14px 16px;
+  padding: 14px 14px 14px 16px;
   border: 1px solid var(--line);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  pointer-events: auto;
 }
 
 .notice.is-info {
@@ -650,6 +684,28 @@ button:focus-visible {
   border-color: rgba(193, 72, 72, 0.18);
 }
 
+.notice-body {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.45;
+}
+
+.notice-close {
+  border: 0;
+  border-radius: 999px;
+  background: rgba(21, 34, 44, 0.08);
+  color: var(--ink-soft);
+  padding: 7px 10px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.notice.is-error .notice-close {
+  background: rgba(193, 72, 72, 0.12);
+  color: #8b2d2d;
+}
+
 .empty-inline,
 .empty-state {
   color: var(--ink-soft);
@@ -660,6 +716,87 @@ button:focus-visible {
 
 .empty-inline {
   padding: 18px;
+}
+
+.usage-summary-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(21, 34, 44, 0.1);
+  background: rgba(245, 238, 228, 0.72);
+}
+
+.token-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.token-breakdown-list,
+.token-chart,
+.token-table-body {
+  display: grid;
+  gap: 8px;
+}
+
+.token-breakdown-row,
+.token-table-head,
+.token-table-row,
+.token-chart-row {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+}
+
+.token-breakdown-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.token-chart-row {
+  grid-template-columns: 120px minmax(0, 1fr) 90px;
+}
+
+.token-chart-date,
+.token-chart-value {
+  font-size: 0.84rem;
+}
+
+.token-chart-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(21, 34, 44, 0.08);
+  overflow: hidden;
+}
+
+.token-chart-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(214, 95, 54, 0.86), rgba(181, 67, 29, 0.96));
+  min-width: 0;
+}
+
+.token-table {
+  display: grid;
+  gap: 8px;
+}
+
+.token-table-head,
+.token-table-row {
+  grid-template-columns: 120px 80px 100px 100px 100px;
+}
+
+.token-table-head {
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+.token-table-row {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(21, 34, 44, 0.08);
 }
 
 .empty-state {
@@ -731,6 +868,10 @@ button:focus-visible {
   .form-grid {
     grid-template-columns: 1fr;
   }
+
+  .token-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -747,6 +888,10 @@ button:focus-visible {
 
   .tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .token-metrics {
+    grid-template-columns: 1fr;
   }
 
   .actions,
@@ -769,7 +914,25 @@ button:focus-visible {
     display: none;
   }
 
+  .llm-connection-head {
+    display: none;
+  }
+
   .env-entry {
     grid-template-columns: 1fr;
+  }
+
+  .llm-connection-entry {
+    grid-template-columns: 1fr;
+  }
+
+  .token-chart-row,
+  .token-table-head,
+  .token-table-row {
+    grid-template-columns: 1fr;
+  }
+
+  .token-table-head {
+    display: none;
   }
 }

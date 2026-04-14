@@ -9,6 +9,7 @@ import {
   DASHBOARD_ALL_AGENTS,
   DEFAULT_DASHBOARD_REFRESH_MS,
   DEFAULT_CHANNEL_WORKSPACE,
+  DEFAULT_LOCAL_LLM_BASE_URL,
   SUPPORTED_AGENTS,
   TOOL_DIRNAME,
 } from './constants.js';
@@ -97,7 +98,9 @@ export function createDefaultConfig() {
       dashboardRefreshMs: DEFAULT_DASHBOARD_REFRESH_MS,
     },
     sharedEnv: {},
+    localLlmConnections: createDefaultLocalLlmConnections(),
     agents: {},
+    bots: {},
     channels: {},
     dashboards: {},
   };
@@ -118,7 +121,9 @@ export function loadConfig(projectRoot) {
   );
   assert(isPlainObject(config.defaults), 'Config defaults must be an object.');
   assert(isPlainObject(config.sharedEnv), 'Config sharedEnv must be an object.');
+  assert(isPlainObject(config.localLlmConnections), 'Config localLlmConnections must be an object.');
   assert(isPlainObject(config.agents), 'Config agents must be an object.');
+  assert(isPlainObject(config.bots), 'Config bots must be an object.');
   assert(isPlainObject(config.channels), 'Config channels must be an object.');
   assert(isPlainObject(config.dashboards), 'Config dashboards must be an object.');
   validateConfigReferences(projectRoot, config);
@@ -140,8 +145,20 @@ function normalizeConfig(rawConfig) {
           rawConfig.defaults?.dashboardRefreshMs ?? DEFAULT_DASHBOARD_REFRESH_MS,
       },
       sharedEnv: rawConfig.sharedEnv ?? {},
-      agents: normalizeLegacyAgentRecords(rawAgents),
-      channels: normalizeLegacyChannelRecords(rawConfig.channels ?? {}, rawAgents),
+      localLlmConnections: normalizeLocalLlmConnectionRecords(
+        rawConfig.localLlmConnections,
+        rawConfig.sharedEnv ?? {},
+      ),
+      agents: mergeLegacyBotTokensIntoAgents(
+        normalizeLegacyAgentRecords(rawAgents),
+        normalizeLegacyBotRecords(rawConfig.bots ?? {}),
+      ),
+      bots: {},
+      channels: normalizeLegacyChannelRecords(
+        rawConfig.channels ?? {},
+        rawAgents,
+        rawConfig.bots ?? {},
+      ),
       dashboards: normalizeLegacyDashboardRecords(rawConfig.dashboards ?? {}),
     };
   }
@@ -155,8 +172,20 @@ function normalizeConfig(rawConfig) {
           rawConfig.defaults?.dashboardRefreshMs ?? DEFAULT_DASHBOARD_REFRESH_MS,
       },
       sharedEnv: rawConfig.sharedEnv ?? {},
-      agents: normalizeLegacyAgentRecords(rawAgents),
-      channels: normalizeLegacyChannelRecords(rawConfig.channels ?? {}, rawAgents),
+      localLlmConnections: normalizeLocalLlmConnectionRecords(
+        rawConfig.localLlmConnections,
+        rawConfig.sharedEnv ?? {},
+      ),
+      agents: mergeLegacyBotTokensIntoAgents(
+        normalizeLegacyAgentRecords(rawAgents),
+        normalizeLegacyBotRecords(rawConfig.bots ?? {}),
+      ),
+      bots: {},
+      channels: normalizeLegacyChannelRecords(
+        rawConfig.channels ?? {},
+        rawAgents,
+        rawConfig.bots ?? {},
+      ),
       dashboards: normalizeLegacyDashboardRecords(rawConfig.dashboards ?? {}),
     };
   }
@@ -169,7 +198,12 @@ function normalizeConfig(rawConfig) {
         dashboardRefreshMs: DEFAULT_DASHBOARD_REFRESH_MS,
       },
       sharedEnv: rawConfig.sharedEnv ?? {},
+      localLlmConnections: normalizeLocalLlmConnectionRecords(
+        rawConfig.localLlmConnections,
+        rawConfig.sharedEnv ?? {},
+      ),
       agents: normalizeLegacyAgentRecords(rawAgents),
+      bots: {},
       channels: {},
       dashboards: {},
     };
@@ -180,15 +214,26 @@ function normalizeConfig(rawConfig) {
 
 function validateConfigReferences(projectRoot, config) {
   validateEnvObject(config.sharedEnv, 'sharedEnv');
+  validateLocalLlmConnections(config.localLlmConnections);
 
   for (const [name, agent] of Object.entries(config.agents)) {
     validateAgentDefinition(projectRoot, { name, ...agent });
+    if (agent.agent === 'local-llm' && agent.localLlmConnection) {
+      assert(
+        config.localLlmConnections[agent.localLlmConnection],
+        `Agent "${name}" references unknown local LLM connection "${agent.localLlmConnection}".`,
+      );
+    }
     if (agent.fallbackAgent) {
       assert(
         config.agents[agent.fallbackAgent],
         `Agent "${name}" references unknown fallback agent "${agent.fallbackAgent}".`,
       );
     }
+  }
+
+  for (const [name, bot] of Object.entries(config.bots)) {
+    validateBotDefinition(config, { name, ...bot });
   }
 
   for (const channel of Object.values(config.channels)) {
@@ -211,15 +256,38 @@ export function listAgents(config) {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+export function listBots(config) {
+  return Object.entries(config.bots || {})
+    .map(([name, bot]) => ({ name, ...bot }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
 export function getAgent(config, name) {
   const agent = config.agents[name];
   assert(agent, `Unknown agent "${name}".`);
   return { name, ...agent };
 }
 
+export function getBot(config, name) {
+  const bot = config.bots[name];
+  assert(bot, `Unknown bot "${name}".`);
+  return { name, ...bot };
+}
+
 export function removeAgent(config, name) {
   assert(config.agents[name], `Unknown agent "${name}".`);
   delete config.agents[name];
+}
+
+export function removeBot(config, name) {
+  assert(config.bots[name], `Unknown bot "${name}".`);
+  delete config.bots[name];
+}
+
+export function listLocalLlmConnections(config) {
+  return Object.entries(config.localLlmConnections || {})
+    .map(([name, connection]) => ({ name, ...connection }))
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export function listDashboards(config) {
@@ -283,6 +351,15 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
       input.permissionMode ?? input['permission-mode'] ?? existing.permissionMode,
     ),
     dangerous: resolveBooleanValue(input.dangerous, existing.dangerous ?? false),
+    discordToken: normalizeOptionalString(
+      input.discordToken ?? input['discord-token'] ?? existing.discordToken,
+    ),
+    localLlmConnection: normalizeOptionalString(
+      input.localLlmConnection ??
+        input['local-llm-connection'] ??
+        input.connection ??
+        existing.localLlmConnection,
+    ),
     baseUrl: normalizeOptionalString(input.baseUrl ?? input['base-url'] ?? existing.baseUrl),
     command: normalizeOptionalString(input.command ?? existing.command),
     skills: normalizePathEntries(
@@ -316,6 +393,7 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
     merged.dangerous = undefined;
   }
   if (merged.agent !== 'local-llm') {
+    merged.localLlmConnection = undefined;
     merged.baseUrl = undefined;
   }
   if (merged.agent !== 'command') {
@@ -323,6 +401,27 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   }
 
   validateAgentDefinition(projectRoot, merged);
+  return sortObjectKeys(merged);
+}
+
+export function buildBotDefinition(config, name, input, existing = {}) {
+  assert(name, 'Bot name is required.');
+  assert(
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name),
+    'Bot name may only contain letters, numbers, dot, underscore, and dash.',
+  );
+
+  const merged = {
+    ...stripManagedFields(existing),
+    agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
+    discordToken: getRequiredString(
+      input.discordToken ?? input['discord-token'] ?? existing.discordToken,
+      'discordToken',
+    ),
+    description: normalizeOptionalString(input.description ?? existing.description),
+  };
+
+  validateBotDefinition(config, { name, ...merged });
   return sortObjectKeys(merged);
 }
 
@@ -359,9 +458,17 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
         existing.workdir ??
         DEFAULT_CHANNEL_WORKSPACE,
     ),
-    agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
-    reviewer: normalizeOptionalString(input.reviewer ?? existing.reviewer),
-    arbiter: normalizeOptionalString(input.arbiter ?? existing.arbiter),
+    agent: resolveChannelAgentName(config, input.agent ?? existing.agent, input.bot ?? input.ownerBot ?? existing.bot ?? existing.ownerBot),
+    reviewer: resolveOptionalChannelAgentName(
+      config,
+      input.reviewer ?? existing.reviewer,
+      input.reviewerBot ?? existing.reviewerBot,
+    ),
+    arbiter: resolveOptionalChannelAgentName(
+      config,
+      input.arbiter ?? existing.arbiter,
+      input.arbiterBot ?? existing.arbiterBot,
+    ),
     reviewRounds:
       input.reviewRounds ?? input['review-rounds'] ?? existing.reviewRounds,
     description: normalizeOptionalString(input.description ?? existing.description),
@@ -410,6 +517,65 @@ export function buildDashboardDefinition(
   merged.refreshMs = parseInteger(merged.refreshMs, 'refreshMs');
   validateDashboardDefinition(config, merged);
   return sortObjectKeys(merged);
+}
+
+export function buildLocalLlmConnectionDefinition(name, input = {}, existing = {}) {
+  assert(name, 'Local LLM connection name is required.');
+  assert(
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name),
+    'Local LLM connection name may only contain letters, numbers, dot, underscore, and dash.',
+  );
+
+  const merged = {
+    ...stripManagedFields(existing),
+    baseUrl:
+      normalizeOptionalString(input.baseUrl ?? input['base-url'] ?? existing.baseUrl) ||
+      DEFAULT_LOCAL_LLM_BASE_URL,
+    apiKey: normalizeOptionalString(input.apiKey ?? input['api-key'] ?? existing.apiKey),
+    description: normalizeOptionalString(input.description ?? existing.description),
+  };
+
+  validateLocalLlmConnectionDefinition(name, merged);
+  return sortObjectKeys(merged);
+}
+
+export function resolveLocalLlmConnectionConfig(
+  config,
+  agent = {},
+  {
+    sharedEnv = {},
+    processEnv = process.env,
+  } = {},
+) {
+  const connectionName = normalizeOptionalString(agent.localLlmConnection);
+  const configuredConnection =
+    connectionName && isPlainObject(config?.localLlmConnections)
+      ? config.localLlmConnections[connectionName]
+      : null;
+  if (configuredConnection) {
+    return {
+      connectionName,
+      baseUrl: configuredConnection.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL,
+      apiKey:
+        normalizeOptionalString(configuredConnection.apiKey) ||
+        normalizeOptionalString(agent?.env?.LOCAL_LLM_API_KEY) ||
+        normalizeOptionalString(sharedEnv.LOCAL_LLM_API_KEY) ||
+        normalizeOptionalString(processEnv.LOCAL_LLM_API_KEY),
+    };
+  }
+
+  return {
+    connectionName: null,
+    baseUrl:
+      normalizeOptionalString(agent.baseUrl) ||
+      normalizeOptionalString(sharedEnv.LOCAL_LLM_BASE_URL) ||
+      normalizeOptionalString(processEnv.LOCAL_LLM_BASE_URL) ||
+      DEFAULT_LOCAL_LLM_BASE_URL,
+    apiKey:
+      normalizeOptionalString(agent?.env?.LOCAL_LLM_API_KEY) ||
+      normalizeOptionalString(sharedEnv.LOCAL_LLM_API_KEY) ||
+      normalizeOptionalString(processEnv.LOCAL_LLM_API_KEY),
+  };
 }
 
 function validateAgentDefinition(projectRoot, agent) {
@@ -483,7 +649,22 @@ function validateAgentDefinition(projectRoot, agent) {
     );
   }
 
+  if (agent.discordToken !== undefined) {
+    assert(
+      typeof agent.discordToken === 'string' && agent.discordToken.trim().length > 0,
+      'discordToken must be a non-empty string.',
+    );
+  }
+
   validateEnvObject(agent.env ?? {}, `Agent "${agent.name}" env`);
+}
+
+function validateBotDefinition(config, bot) {
+  assert(config.agents[bot.agent], `Bot references unknown agent "${bot.agent}".`);
+  assert(
+    typeof bot.discordToken === 'string' && bot.discordToken.trim().length > 0,
+    'discordToken is required.',
+  );
 }
 
 function validateChannelDefinition(projectRoot, config, channel) {
@@ -623,12 +804,55 @@ function normalizeLegacyAgentRecords(agents) {
       const next = { ...agent };
       delete next.historyWindow;
       delete next.workdir;
+      if (typeof next.token === 'string' && next.discordToken === undefined) {
+        next.discordToken = next.token;
+      }
+      delete next.token;
       return [name, next];
     }),
   );
 }
 
-function normalizeLegacyChannelRecords(channels, rawAgents) {
+function mergeLegacyBotTokensIntoAgents(agents, bots) {
+  const nextAgents = { ...agents };
+  for (const [botName, bot] of Object.entries(bots || {})) {
+    if (!isPlainObject(bot) || !bot.agent || !nextAgents[bot.agent]) {
+      continue;
+    }
+    if (
+      typeof bot.discordToken === 'string' &&
+      bot.discordToken.trim() &&
+      nextAgents[bot.agent].discordToken === undefined
+    ) {
+      nextAgents[bot.agent] = {
+        ...nextAgents[bot.agent],
+        discordToken: bot.discordToken.trim(),
+      };
+    }
+  }
+  return nextAgents;
+}
+
+function normalizeLegacyBotRecords(bots) {
+  if (!isPlainObject(bots)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(bots).map(([name, bot]) => {
+      if (!isPlainObject(bot)) {
+        return [name, bot];
+      }
+      const next = { ...bot };
+      if (typeof next.token === 'string' && next.discordToken === undefined) {
+        next.discordToken = next.token;
+      }
+      delete next.token;
+      return [name, next];
+    }),
+  );
+}
+
+function normalizeLegacyChannelRecords(channels, rawAgents, rawBots = {}) {
   if (!isPlainObject(channels)) {
     return {};
   }
@@ -638,6 +862,9 @@ function normalizeLegacyChannelRecords(channels, rawAgents) {
         return [name, channel];
       }
       const next = { ...channel };
+      if (!next.bot && typeof next.ownerBot === 'string') {
+        next.bot = next.ownerBot;
+      }
       if (!next.workspace) {
         const ownerAgent =
           isPlainObject(rawAgents) && isPlainObject(rawAgents[next.agent])
@@ -649,10 +876,50 @@ function normalizeLegacyChannelRecords(channels, rawAgents) {
       if (!next.mode) {
         next.mode = next.reviewer || next.arbiter ? 'tribunal' : 'single';
       }
+      if (typeof next.ownerBot === 'string' && !next.bot) {
+        next.bot = next.ownerBot;
+      }
+      if (typeof next.bot === 'string' && !next.agent) {
+        next.agent = resolveLegacyBotAgentName(rawBots, next.bot);
+      }
+      if (typeof next.reviewerBot === 'string' && !next.reviewer) {
+        next.reviewer = resolveLegacyBotAgentName(rawBots, next.reviewerBot);
+      }
+      if (typeof next.arbiterBot === 'string' && !next.arbiter) {
+        next.arbiter = resolveLegacyBotAgentName(rawBots, next.arbiterBot);
+      }
+      delete next.ownerBot;
+      delete next.bot;
+      delete next.reviewerBot;
+      delete next.arbiterBot;
       delete next.workdir;
       return [name, next];
     }),
   );
+}
+
+function resolveChannelAgentName(config, explicitAgentName, botName) {
+  if (botName) {
+    assert(config.bots[botName], `Channel references unknown bot "${botName}".`);
+    return config.bots[botName].agent;
+  }
+  return getRequiredString(explicitAgentName, 'agent');
+}
+
+function resolveOptionalChannelAgentName(config, explicitAgentName, botName) {
+  if (botName) {
+    assert(config.bots[botName], `Channel references unknown bot "${botName}".`);
+    return config.bots[botName].agent;
+  }
+  return normalizeOptionalString(explicitAgentName);
+}
+
+function resolveLegacyBotAgentName(rawBots, botName) {
+  const bot = isPlainObject(rawBots) ? rawBots[botName] : null;
+  if (!isPlainObject(bot) || typeof bot.agent !== 'string' || !bot.agent.trim()) {
+    return undefined;
+  }
+  return bot.agent.trim();
 }
 
 function normalizeLegacyDashboardRecords(dashboards) {
@@ -671,6 +938,30 @@ function normalizeLegacyDashboardRecords(dashboards) {
   );
 }
 
+function normalizeLocalLlmConnectionRecords(connections, sharedEnv = {}) {
+  if (!isPlainObject(connections) || Object.keys(connections).length === 0) {
+    return createDefaultLocalLlmConnections(sharedEnv);
+  }
+
+  return Object.fromEntries(
+    Object.entries(connections).map(([name, connection]) => [
+      name,
+      buildLocalLlmConnectionDefinition(name, connection),
+    ]),
+  );
+}
+
+function createDefaultLocalLlmConnections(sharedEnv = {}) {
+  return {
+    LLM1: buildLocalLlmConnectionDefinition('LLM1', {
+      baseUrl:
+        normalizeOptionalString(sharedEnv.LOCAL_LLM_BASE_URL) ||
+        DEFAULT_LOCAL_LLM_BASE_URL,
+      apiKey: normalizeOptionalString(sharedEnv.LOCAL_LLM_API_KEY),
+    }),
+  };
+}
+
 function normalizePathEntries(value) {
   const entries = Array.isArray(value)
     ? value.flatMap((entry) => normalizePathEntries(entry) ?? [])
@@ -686,6 +977,34 @@ function validateEnvObject(value, fieldName) {
     assert(
       typeof entryValue === 'string',
       `${fieldName} values must be strings.`,
+    );
+  }
+}
+
+function validateLocalLlmConnections(value) {
+  assert(isPlainObject(value), 'localLlmConnections must be an object.');
+  const names = Object.keys(value);
+  assert(names.length > 0, 'At least one local LLM connection is required.');
+  for (const [name, connection] of Object.entries(value)) {
+    validateLocalLlmConnectionDefinition(name, connection);
+  }
+}
+
+function validateLocalLlmConnectionDefinition(name, connection) {
+  assert(
+    typeof connection?.baseUrl === 'string' && connection.baseUrl.trim().length > 0,
+    `Local LLM connection "${name}" requires a baseUrl.`,
+  );
+  if (connection?.apiKey !== undefined) {
+    assert(
+      typeof connection.apiKey === 'string',
+      `Local LLM connection "${name}" apiKey must be a string.`,
+    );
+  }
+  if (connection?.description !== undefined) {
+    assert(
+      typeof connection.description === 'string',
+      `Local LLM connection "${name}" description must be a string.`,
     );
   }
 }

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import { getProjectLayout } from './store.js';
 import { assert, readJson, timestamp, writeJson } from './utils.js';
@@ -7,6 +8,7 @@ import { assert, readJson, timestamp, writeJson } from './utils.js';
 export const DISCORD_ROLE_NAMES = ['owner', 'reviewer', 'arbiter'];
 
 const DISCORD_STATUS_FILENAME = 'discord-status.json';
+const DISCORD_COMMANDS_DIRNAME = 'discord-commands';
 const DISCORD_HEARTBEAT_STALE_MS = 45_000;
 const ROLE_TOKEN_ENV_KEYS = {
   owner: [
@@ -28,6 +30,10 @@ const ROLE_TOKEN_ENV_KEYS = {
 
 export function getDiscordStatusPath(projectRoot) {
   return path.join(getProjectLayout(projectRoot).toolRoot, DISCORD_STATUS_FILENAME);
+}
+
+export function getDiscordCommandQueuePath(projectRoot) {
+  return path.join(getProjectLayout(projectRoot).toolRoot, DISCORD_COMMANDS_DIRNAME);
 }
 
 export function parseDotEnv(source) {
@@ -102,6 +108,44 @@ export function resolveDiscordRoleTokens(env, options = {}) {
   return output;
 }
 
+export function resolveChannelBotNames(channel) {
+  return {
+    owner: channel?.agent || null,
+    reviewer: channel?.reviewer || null,
+    arbiter: channel?.arbiter || null,
+  };
+}
+
+export function inspectDiscordBotConfigs(config, channels, runtimeStatus = null) {
+  const tribunalChannelCount = channels.filter(
+    (channel) => channel?.mode === 'tribunal' || Boolean(channel?.reviewer && channel?.arbiter),
+  ).length;
+  const agents = config?.agents || {};
+
+  return {
+    tribunalChannelCount,
+    singleChannelCount: channels.length - tribunalChannelCount,
+    bots: Object.fromEntries(
+      Object.entries(agents).map(([name, agent]) => {
+        const runtimeBot = runtimeStatus?.bots?.[name] || {};
+        return [
+          name,
+          {
+            configured: Boolean(agent?.discordToken || runtimeBot.tokenConfigured),
+            required: true,
+            agent: agent?.agent || '',
+            source: agent?.discordToken ? 'config' : runtimeBot.tokenConfigured ? 'discord serve' : '없음',
+            tokenConfigured: Boolean(agent?.discordToken || runtimeBot.tokenConfigured),
+            connected: Boolean(runtimeBot.connected),
+            tag: runtimeBot.tag || '',
+            userId: runtimeBot.userId || '',
+          },
+        ];
+      }),
+    ),
+  };
+}
+
 export function inspectDiscordRoleTokens(
   projectRoot,
   {
@@ -158,7 +202,7 @@ export function buildDiscordServiceSnapshot(
   projectRoot,
   rawStatus = readDiscordServiceStatus(projectRoot),
 ) {
-  const emptyRoles = buildServiceRoleSummary();
+  const emptyBots = {};
   if (!rawStatus) {
     return {
       state: 'stopped',
@@ -170,7 +214,7 @@ export function buildDiscordServiceSnapshot(
       heartbeatAt: null,
       envFilePath: null,
       lastError: null,
-      roles: emptyRoles,
+      bots: emptyBots,
     };
   }
 
@@ -198,7 +242,7 @@ export function buildDiscordServiceSnapshot(
     heartbeatAt: rawStatus.heartbeatAt || null,
     envFilePath: rawStatus.envFilePath || null,
     lastError: rawStatus.lastError || null,
-    roles: buildServiceRoleSummary(rawStatus.roles),
+    bots: buildServiceBotSummary(rawStatus.bots),
   };
 }
 
@@ -213,8 +257,57 @@ export function createDiscordServiceStatus(projectRoot, options = {}) {
     heartbeatAt: options.heartbeatAt || timestamp(),
     envFilePath: options.envFilePath || null,
     lastError: options.lastError || null,
-    roles: buildServiceRoleSummary(options.roles),
+    bots: buildServiceBotSummary(options.bots),
   };
+}
+
+export function enqueueDiscordServiceCommand(projectRoot, input = {}) {
+  const action = String(input?.action || '').trim();
+  assert(action, 'Discord service command action is required.');
+
+  const command = {
+    version: 1,
+    id: randomUUID(),
+    action,
+    botName: input?.botName ? String(input.botName).trim() : null,
+    requestedAt: timestamp(),
+  };
+  const filePath = path.join(
+    getDiscordCommandQueuePath(projectRoot),
+    `${Date.now()}-${command.id}.json`,
+  );
+  writeJson(filePath, command);
+  return command;
+}
+
+export function listDiscordServiceCommands(projectRoot) {
+  const queuePath = getDiscordCommandQueuePath(projectRoot);
+  if (!fs.existsSync(queuePath)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(queuePath)
+    .filter((fileName) => fileName.endsWith('.json'))
+    .sort((left, right) => left.localeCompare(right))
+    .map((fileName) => {
+      const filePath = path.join(queuePath, fileName);
+      return {
+        ...readJson(filePath, {}),
+        fileName,
+        filePath,
+      };
+    });
+}
+
+export function deleteDiscordServiceCommand(commandOrPath) {
+  const filePath =
+    typeof commandOrPath === 'string' ? commandOrPath : commandOrPath?.filePath || null;
+  if (!filePath || !fs.existsSync(filePath)) {
+    return false;
+  }
+  fs.rmSync(filePath, { force: true });
+  return true;
 }
 
 function resolveRoleToken(env, role) {
@@ -240,21 +333,18 @@ function resolveTokenSource({ envKey, envEntries, baseEnv, runtimeConfigured }) 
   return '없음';
 }
 
-function buildServiceRoleSummary(input = {}) {
+function buildServiceBotSummary(input = {}) {
   return Object.fromEntries(
-    DISCORD_ROLE_NAMES.map((role) => {
-      const source = input?.[role] || {};
-      return [
-        role,
-        {
-          tokenConfigured: Boolean(source.tokenConfigured),
-          connected: Boolean(source.connected),
-          envKey: source.envKey || null,
-          tag: source.tag || '',
-          userId: source.userId || '',
-        },
-      ];
-    }),
+    Object.entries(input || {}).map(([name, source]) => [
+      name,
+      {
+        tokenConfigured: Boolean(source?.tokenConfigured),
+        connected: Boolean(source?.connected),
+        tag: source?.tag || '',
+        userId: source?.userId || '',
+        agent: source?.agent || '',
+      },
+    ]),
   );
 }
 

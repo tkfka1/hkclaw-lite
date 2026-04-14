@@ -8,7 +8,11 @@ import path from 'node:path';
 import { startAdminServer } from '../src/admin.js';
 import { executeChannelTurn } from '../src/channel-runtime.js';
 import { getCiWatcherLogPath, saveCiWatcher } from '../src/ci-watch-store.js';
-import { writeDiscordServiceStatus } from '../src/discord-runtime-state.js';
+import {
+  listDiscordServiceCommands,
+  writeDiscordServiceStatus,
+} from '../src/discord-runtime-state.js';
+import { recordRuntimeUsageEvent } from '../src/runtime-db.js';
 import {
   buildAgentDefinition,
   buildChannelDefinition,
@@ -60,7 +64,14 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 
 if (args[0] === 'login' && args[1] === 'status') {
-  process.stdout.write('logged in\\n');
+  if (process.env.HKCLAW_LITE_TEST_CODEX_STATUS_OUTPUT) {
+    process.stdout.write(process.env.HKCLAW_LITE_TEST_CODEX_STATUS_OUTPUT + '\\n');
+  } else {
+    process.stdout.write('logged in\\n');
+  }
+  if (process.env.HKCLAW_LITE_TEST_CODEX_STATUS_WARNING) {
+    process.stderr.write(process.env.HKCLAW_LITE_TEST_CODEX_STATUS_WARNING + '\\n');
+  }
   process.exit(0);
 }
 
@@ -234,6 +245,16 @@ if (args.includes('-p') && args.includes('--output-format') && args.includes('st
     model: 'claude-sonnet-test',
   }) + '\\n');
   process.stdout.write(JSON.stringify({
+    type: 'message_delta',
+    session_id: sessionId,
+    usage: {
+      input_tokens: 13,
+      output_tokens: 9,
+      cache_creation_input_tokens: 4,
+      cache_read_input_tokens: 1,
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
     type: 'result',
     subtype: 'success',
     session_id: sessionId,
@@ -403,7 +424,17 @@ const promptIndex = args.indexOf('-p');
 const prompt = promptIndex >= 0 ? (args[promptIndex + 1] || '') : '';
 
 if (prompt) {
-  process.stdout.write(JSON.stringify({ text: 'OK' }));
+  process.stdout.write(JSON.stringify({
+    text: 'OK',
+    _meta: {
+      quota: {
+        token_count: {
+          input_tokens: 6,
+          output_tokens: 4,
+        },
+      },
+    },
+  }));
   process.exit(0);
 }
 
@@ -514,6 +545,7 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     name: 'worker',
     agent: 'command',
     command: `node ${fixturePath}`,
+    discordToken: 'owner-token',
   });
   config.channels.main = buildChannelDefinition(
     projectRoot,
@@ -546,7 +578,6 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     prompt: 'admin snapshot runtime',
     workdir: workspacePath,
   });
-  fs.writeFileSync(path.join(projectRoot, '.env'), 'OWNER_BOT_TOKEN=owner-token\n');
   writeDiscordServiceStatus(projectRoot, {
     version: 1,
     projectRoot,
@@ -554,8 +585,9 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     running: true,
     startedAt: '2026-04-07T00:00:00.000Z',
     heartbeatAt: new Date().toISOString(),
-    roles: {
-      owner: {
+    bots: {
+      worker: {
+        agent: 'command',
         tokenConfigured: true,
         connected: true,
         tag: 'owner#0001',
@@ -611,11 +643,12 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     assert.equal(payload.channels[0].runtime.lastRun.status, 'completed');
     assert.equal(payload.channels[0].runtime.pendingOutboxCount, 1);
     assert.deepEqual(payload.agents[0].mappedChannelNames, ['main']);
+    assert.equal(payload.agents[0].discordTokenConfigured, true);
     assert.equal(payload.discord.service.state, 'running');
-    assert.equal(payload.discord.tokens.owner.configured, true);
-    assert.equal(payload.discord.tokens.owner.required, true);
-    assert.equal(payload.discord.tokens.reviewer.required, false);
-    assert.equal(payload.discord.service.roles.owner.tag, 'owner#0001');
+    assert.equal(payload.discord.bots.worker.configured, true);
+    assert.equal(payload.discord.bots.worker.required, true);
+    assert.equal(payload.discord.bots.worker.agent, 'command');
+    assert.equal(payload.discord.service.bots.worker.tag, 'owner#0001');
     assert.equal(payload.runtime.pendingOutboxCount, 1);
     assert.equal(payload.runtime.recentRuns.length, 1);
     assert.equal(payload.runtime.recentRuns[0].channelName, 'main');
@@ -741,6 +774,76 @@ test('admin server saves config changes and can run a mapped channel', async () 
   assert.equal(config.channels['discord-main'], undefined);
   assert.equal(config.agents.worker, undefined);
   assert.equal(config.dashboards.ops, undefined);
+});
+
+test('admin server queues manual Discord service commands instead of auto reloading', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'owner-token',
+  });
+  saveConfig(projectRoot, config);
+
+  writeDiscordServiceStatus(projectRoot, {
+    version: 1,
+    projectRoot,
+    pid: process.pid,
+    running: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: new Date().toISOString(),
+    bots: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        tag: 'owner#0001',
+        userId: '1',
+      },
+    },
+  });
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const reconnectResponse = await requestJson(
+      `${url}/api/agents/${encodeURIComponent('worker')}/reconnect`,
+      {
+        method: 'POST',
+      },
+    );
+    assert.equal(reconnectResponse.response.status, 200, JSON.stringify(reconnectResponse.payload));
+    assert.equal(reconnectResponse.payload.result.queued, true);
+    assert.equal(reconnectResponse.payload.result.action, 'reconnect-bot');
+    assert.equal(reconnectResponse.payload.result.agentName, 'worker');
+
+    const reloadResponse = await requestJson(`${url}/api/discord-service/reload`, {
+      method: 'POST',
+    });
+    assert.equal(reloadResponse.response.status, 200, JSON.stringify(reloadResponse.payload));
+    assert.equal(reloadResponse.payload.result.queued, true);
+    assert.equal(reloadResponse.payload.result.action, 'reload-config');
+
+    const commands = listDiscordServiceCommands(projectRoot);
+    assert.deepEqual(
+      commands.map((entry) => ({
+        action: entry.action,
+        botName: entry.botName || null,
+      })),
+      [
+        {
+          action: 'reconnect-bot',
+          botName: 'worker',
+        },
+        {
+          action: 'reload-config',
+          botName: null,
+        },
+      ],
+    );
+  });
 });
 
 test('admin server supports lightweight password login via env', async () => {
@@ -976,13 +1079,58 @@ test('admin server supports agent auth status, login, and test call', async () =
   );
 });
 
+test('admin server strips benign Codex status warnings and detects not logged in correctly', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const fakePackageJson = createFakeCodexBundle();
+  await withEnv(
+    {
+      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_TEST_CODEX_STATUS_OUTPUT: 'Not logged in',
+      HKCLAW_LITE_TEST_CODEX_STATUS_WARNING:
+        'WARNING: failed to clean up stale arg0 temp dirs: Directory not empty (os error 39)',
+    },
+    async () => {
+      await withAdminServer(projectRoot, async ({ url }) => {
+        const status = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'codex',
+            action: 'status',
+          },
+        });
+        assert.equal(status.response.status, 200, JSON.stringify(status.payload));
+        assert.equal(status.payload.result.details.loggedIn, false);
+        assert.equal(status.payload.result.details.summary, '로그인 안 됨');
+        assert.doesNotMatch(status.payload.result.output, /failed to clean up stale arg0 temp dirs/u);
+        assert.match(status.payload.result.output, /Not logged in/u);
+
+        const snapshot = await requestJson(`${url}/api/ai-statuses`);
+        assert.equal(snapshot.response.status, 200, JSON.stringify(snapshot.payload));
+        assert.equal(snapshot.payload.statuses.codex.authResult.details.loggedIn, false);
+        assert.match(snapshot.payload.statuses.codex.authResult.output, /Not logged in/u);
+        assert.doesNotMatch(
+          snapshot.payload.statuses.codex.authResult.output,
+          /failed to clean up stale arg0 temp dirs/u,
+        );
+      });
+    },
+  );
+});
+
 test('admin server reports codex, Claude ACP, Gemini, and local LLM status details', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
   const config = loadConfig(projectRoot);
-  config.sharedEnv = {
-    LOCAL_LLM_BASE_URL: 'http://127.0.0.1:11434/v1',
-    LOCAL_LLM_API_KEY: 'test-local-key',
+  config.localLlmConnections = {
+    LLM1: {
+      baseUrl: 'http://127.0.0.1:11434/v1',
+    },
+    LLM2: {
+      baseUrl: 'http://127.0.0.1:22434/v1',
+      apiKey: 'test-local-key',
+    },
   };
   saveConfig(projectRoot, config);
 
@@ -1020,6 +1168,27 @@ test('admin server reports codex, Claude ACP, Gemini, and local LLM status detai
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.authMethod, 'google');
         assert.equal('credentialKey' in snapshot.payload.statuses['gemini-cli'].authResult.details, false);
         assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.baseUrl, 'http://127.0.0.1:11434/v1');
+        assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.primaryConnection, 'LLM1');
+        assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.connections.length, 2);
+        assert.deepEqual(
+          snapshot.payload.statuses['local-llm'].authResult.details.connections.map((entry) => ({
+            name: entry.name,
+            baseUrl: entry.baseUrl,
+            apiKeyConfigured: entry.apiKeyConfigured,
+          })),
+          [
+            {
+              name: 'LLM1',
+              baseUrl: 'http://127.0.0.1:11434/v1',
+              apiKeyConfigured: false,
+            },
+            {
+              name: 'LLM2',
+              baseUrl: 'http://127.0.0.1:22434/v1',
+              apiKeyConfigured: true,
+            },
+          ],
+        );
       });
     },
   );
@@ -1157,6 +1326,15 @@ test('admin server starts and completes Gemini CLI Google login flow through the
           assert.equal(testCall.response.status, 200, JSON.stringify(testCall.payload));
           assert.equal(testCall.payload.result.details.success, true);
           assert.match(testCall.payload.result.output, /OK/u);
+          assert.deepEqual(testCall.payload.result.details.usage, {
+            inputTokens: 6,
+            outputTokens: 4,
+            totalTokens: 10,
+            cacheCreationInputTokens: 0,
+            cacheReadInputTokens: 0,
+          });
+          assert.equal(testCall.payload.result.details.usageSummary.recordedEvents, 1);
+          assert.equal(testCall.payload.result.details.usageSummary.totalTokens, 10);
 
           const logout = await requestJson(`${url}/api/agent-auth`, {
             method: 'POST',
@@ -1259,6 +1437,15 @@ test('admin server runs claude test calls through the bundled cli stream-json ru
         assert.equal(testCall.response.status, 200, JSON.stringify(testCall.payload));
         assert.equal(testCall.payload.result.details.success, true);
         assert.match(testCall.payload.result.output, /OK:acceptEdits/u);
+        assert.deepEqual(testCall.payload.result.details.usage, {
+          inputTokens: 13,
+          outputTokens: 9,
+          totalTokens: 22,
+          cacheCreationInputTokens: 4,
+          cacheReadInputTokens: 1,
+        });
+        assert.equal(testCall.payload.result.details.usageSummary.recordedEvents, 1);
+        assert.equal(testCall.payload.result.details.usageSummary.totalTokens, 22);
       });
     },
   );
@@ -1274,7 +1461,7 @@ test('admin server can reset stored Claude channel runtime sessions', async () =
   config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
     name: 'owner',
     agent: 'claude-code',
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
   });
   config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
     name: 'main',
@@ -1321,19 +1508,26 @@ test('admin server can reset stored Claude channel runtime sessions', async () =
   );
 });
 
-test('admin server uses shared env credentials for local LLM test calls', async () => {
+test('admin server uses the selected local LLM connection for test calls', async () => {
   const projectRoot = createProject();
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
   initProject(projectRoot);
 
   const config = loadConfig(projectRoot);
-  config.sharedEnv = {
-    LOCAL_LLM_API_KEY: 'local-secret',
+  config.localLlmConnections = {
+    LLM1: {
+      baseUrl: 'http://127.0.0.1:11434/v1',
+    },
+    LLM2: {
+      baseUrl: 'http://127.0.0.1:22434/v1',
+      apiKey: 'local-secret',
+    },
   };
   saveConfig(projectRoot, config);
 
   await withJsonServer((request, response) => {
     if (request.url === '/v1/chat/completions') {
+      assert.equal(request.headers.host?.startsWith('127.0.0.1:'), true);
       assert.equal(request.headers.authorization, 'Bearer local-secret');
       response.writeHead(200, {
         'content-type': 'application/json',
@@ -1347,6 +1541,11 @@ test('admin server uses shared env credentials for local LLM test calls', async 
               },
             },
           ],
+          usage: {
+            prompt_tokens: 17,
+            completion_tokens: 8,
+            total_tokens: 25,
+          },
         }),
       );
       return;
@@ -1358,6 +1557,43 @@ test('admin server uses shared env credentials for local LLM test calls', async 
     response.end(JSON.stringify({ error: 'Not found' }));
   }, async (localLlmUrl) => {
     await withAdminServer(projectRoot, async ({ url }) => {
+      const saveConnections = await requestJson(`${url}/api/local-llm-connections`, {
+        method: 'PUT',
+        body: {
+          connections: [
+            {
+              name: 'LLM1',
+              baseUrl: 'http://127.0.0.1:11434/v1',
+            },
+            {
+              name: 'LLM2',
+              baseUrl: `${localLlmUrl}/v1`,
+              apiKey: 'local-secret',
+            },
+          ],
+        },
+      });
+      assert.equal(saveConnections.response.status, 200, JSON.stringify(saveConnections.payload));
+      assert.deepEqual(
+        saveConnections.payload.state.localLlmConnections.map((entry) => ({
+          name: entry.name,
+          baseUrl: entry.baseUrl,
+          apiKey: entry.apiKey,
+        })),
+        [
+          {
+            name: 'LLM1',
+            baseUrl: 'http://127.0.0.1:11434/v1',
+            apiKey: undefined,
+          },
+          {
+            name: 'LLM2',
+            baseUrl: `${localLlmUrl}/v1`,
+            apiKey: 'local-secret',
+          },
+        ],
+      );
+
       const testCall = await requestJson(`${url}/api/agent-auth`, {
         method: 'POST',
         body: {
@@ -1368,13 +1604,29 @@ test('admin server uses shared env credentials for local LLM test calls', async 
             name: 'wizard-agent',
             agent: 'local-llm',
             model: 'qwen2.5-coder:14b',
-            baseUrl: `${localLlmUrl}/v1`,
+            localLlmConnection: 'LLM2',
           },
         },
       });
       assert.equal(testCall.response.status, 200, JSON.stringify(testCall.payload));
       assert.equal(testCall.payload.result.details.success, true);
       assert.match(testCall.payload.result.output, /OK/u);
+      assert.deepEqual(testCall.payload.result.details.usage, {
+        inputTokens: 17,
+        outputTokens: 8,
+        totalTokens: 25,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+      });
+      assert.equal(testCall.payload.result.details.usageSummary.recordedEvents, 1);
+      assert.equal(testCall.payload.result.details.usageSummary.totalTokens, 25);
+
+      const snapshot = await requestJson(`${url}/api/ai-statuses`);
+      assert.equal(snapshot.response.status, 200, JSON.stringify(snapshot.payload));
+      assert.equal(snapshot.payload.statuses['local-llm'].usageSummary.recordedEvents, 1);
+      assert.equal(snapshot.payload.statuses['local-llm'].usageSummary.totalTokens, 25);
+      assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.connections.length, 2);
+      assert.equal(snapshot.payload.statuses.codex.usageSummary.supported, false);
     });
   });
 });
@@ -1447,6 +1699,7 @@ test('admin server lists model options for provider APIs and curated Claude ACP 
               codex.payload.result.models.map((entry) => entry.value),
               ['gpt-5.3-codex', 'gpt-5.4'],
             );
+            assert.equal(codex.payload.result.defaultModel, 'gpt-5.4');
             assert.deepEqual(codex.payload.result.models[0].efforts, ['low', 'medium', 'high', 'xhigh']);
 
             const claude = await requestJson(`${url}/api/agent-models`, {
@@ -1459,8 +1712,9 @@ test('admin server lists model options for provider APIs and curated Claude ACP 
             assert.equal(claude.payload.result.source, 'curated');
             assert.deepEqual(
               claude.payload.result.models.map((entry) => entry.value),
-              ['claude-opus-4-1-20250805', 'claude-sonnet-4-20250514'],
+              ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
             );
+            assert.equal(claude.payload.result.defaultModel, 'claude-sonnet-4-6');
             assert.deepEqual(claude.payload.result.models[0].efforts, ['low', 'medium', 'high', 'max']);
 
             const gemini = await requestJson(`${url}/api/agent-models`, {
@@ -1502,4 +1756,119 @@ test('admin server lists model options for provider APIs and curated Claude ACP 
       }
     }
   }
+});
+
+test('admin server falls back to curated Codex models when live lookup is unavailable', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const previousEnv = {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+  };
+
+  try {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_BASE_URL;
+
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const codex = await requestJson(`${url}/api/agent-models`, {
+        method: 'POST',
+        body: {
+          agentType: 'codex',
+        },
+      });
+      assert.equal(codex.response.status, 200, JSON.stringify(codex.payload));
+      assert.equal(codex.payload.result.source, 'curated');
+      assert.equal(codex.payload.result.defaultModel, 'gpt-5.4');
+      assert.deepEqual(
+        codex.payload.result.models.map((entry) => entry.value),
+        ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.4-mini'],
+      );
+    });
+  } finally {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});
+
+test('admin server exposes a 90-day token usage dashboard snapshot', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const now = new Date();
+  const withinWindow = new Date(now);
+  withinWindow.setUTCDate(now.getUTCDate() - 20);
+  const outsideWindow = new Date(now);
+  outsideWindow.setUTCDate(now.getUTCDate() - 120);
+
+  await recordRuntimeUsageEvent(projectRoot, {
+    agentType: 'claude-code',
+    agentName: 'owner',
+    usage: {
+      inputTokens: 100,
+      outputTokens: 60,
+      totalTokens: 160,
+      cacheCreationInputTokens: 10,
+      cacheReadInputTokens: 5,
+    },
+    recordedAt: now.toISOString(),
+  });
+  await recordRuntimeUsageEvent(projectRoot, {
+    agentType: 'local-llm',
+    agentName: 'local-1',
+    usage: {
+      inputTokens: 30,
+      outputTokens: 15,
+      totalTokens: 45,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+    },
+    recordedAt: withinWindow.toISOString(),
+  });
+  await recordRuntimeUsageEvent(projectRoot, {
+    agentType: 'gemini-cli',
+    agentName: 'old-one',
+    usage: {
+      inputTokens: 999,
+      outputTokens: 1,
+      totalTokens: 1000,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+    },
+    recordedAt: outsideWindow.toISOString(),
+  });
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const snapshot = await requestJson(`${url}/api/state`);
+    assert.equal(snapshot.response.status, 200, JSON.stringify(snapshot.payload));
+
+    const tokenUsage = snapshot.payload.tokenUsage;
+    assert.equal(tokenUsage.windowDays, 90);
+    assert.equal(tokenUsage.totals.totalTokens, 205);
+    assert.equal(tokenUsage.totals.inputTokens, 130);
+    assert.equal(tokenUsage.totals.outputTokens, 75);
+    assert.equal(tokenUsage.totals.recordedEvents, 2);
+    assert.equal(tokenUsage.totals.activeDays, 2);
+    assert.equal(tokenUsage.byAgentType.length, 2);
+    assert.deepEqual(
+      tokenUsage.byAgentType.map((entry) => ({
+        agentType: entry.agentType,
+        totalTokens: entry.totalTokens,
+      })),
+      [
+        { agentType: 'claude-code', totalTokens: 160 },
+        { agentType: 'local-llm', totalTokens: 45 },
+      ],
+    );
+    assert.equal(
+      tokenUsage.activeDaily.some((entry) => entry.totalTokens === 1000),
+      false,
+    );
+  });
 });

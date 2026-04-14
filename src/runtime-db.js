@@ -368,6 +368,179 @@ export async function clearRuntimeRoleSessions(
   return Number(result?.changes || 0);
 }
 
+export async function recordRuntimeUsageEvent(projectRoot, entry = {}) {
+  const usage = normalizeUsageEntry(entry?.usage);
+  if (!usage) {
+    return null;
+  }
+
+  const db = await getRuntimeDb(projectRoot);
+  const recordedAt = normalizeNullableString(entry?.recordedAt) || timestamp();
+  db.prepare(
+    `
+      INSERT INTO runtime_usage_events (
+        agent_type,
+        agent_name,
+        channel_name,
+        role,
+        source,
+        model,
+        runtime_backend,
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
+        recorded_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    normalizeNullableString(entry?.agentType),
+    normalizeNullableString(entry?.agentName),
+    normalizeNullableString(entry?.channelName),
+    normalizeNullableString(entry?.role),
+    normalizeNullableString(entry?.source) || 'unknown',
+    normalizeNullableString(entry?.model),
+    normalizeNullableString(entry?.runtimeBackend),
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.totalTokens,
+    usage.cacheCreationInputTokens,
+    usage.cacheReadInputTokens,
+    recordedAt,
+  );
+
+  return {
+    ...usage,
+    recordedAt,
+  };
+}
+
+export async function listRuntimeUsageHistory(
+  projectRoot,
+  {
+    days = 90,
+    agentType = null,
+  } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedDays = Number.isInteger(days) && days > 0 ? days : 90;
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+  since.setUTCDate(since.getUTCDate() - (normalizedDays - 1));
+  const sinceIso = since.toISOString();
+
+  const rows = agentType
+    ? db
+        .prepare(
+          `
+            SELECT
+              DATE(recorded_at) AS usage_date,
+              agent_type,
+              COUNT(*) AS recorded_events,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(total_tokens), 0) AS total_tokens,
+              COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+              COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+              MAX(recorded_at) AS last_recorded_at
+            FROM runtime_usage_events
+            WHERE recorded_at >= ? AND agent_type = ?
+            GROUP BY usage_date, agent_type
+            ORDER BY usage_date ASC, agent_type ASC
+          `,
+        )
+        .all(sinceIso, agentType)
+    : db
+        .prepare(
+          `
+            SELECT
+              DATE(recorded_at) AS usage_date,
+              agent_type,
+              COUNT(*) AS recorded_events,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(total_tokens), 0) AS total_tokens,
+              COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+              COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+              MAX(recorded_at) AS last_recorded_at
+            FROM runtime_usage_events
+            WHERE recorded_at >= ?
+            GROUP BY usage_date, agent_type
+            ORDER BY usage_date ASC, agent_type ASC
+          `,
+        )
+        .all(sinceIso);
+
+  return rows.map((row) => ({
+    date: row.usage_date,
+    agentType: row.agent_type,
+    recordedEvents: row.recorded_events,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    totalTokens: row.total_tokens,
+    cacheCreationInputTokens: row.cache_creation_input_tokens,
+    cacheReadInputTokens: row.cache_read_input_tokens,
+    lastRecordedAt: row.last_recorded_at ?? null,
+  }));
+}
+
+export async function summarizeRuntimeUsage(projectRoot, { agentType = null } = {}) {
+  const db = await getRuntimeDb(projectRoot);
+  const rows = agentType
+    ? db
+        .prepare(
+          `
+            SELECT
+              agent_type,
+              COUNT(*) AS recorded_events,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(total_tokens), 0) AS total_tokens,
+              COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+              COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+              MAX(recorded_at) AS last_recorded_at
+            FROM runtime_usage_events
+            WHERE agent_type = ?
+            GROUP BY agent_type
+          `,
+        )
+        .all(agentType)
+    : db
+        .prepare(
+          `
+            SELECT
+              agent_type,
+              COUNT(*) AS recorded_events,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(total_tokens), 0) AS total_tokens,
+              COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+              COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+              MAX(recorded_at) AS last_recorded_at
+            FROM runtime_usage_events
+            GROUP BY agent_type
+          `,
+        )
+        .all();
+
+  return Object.fromEntries(
+    rows.map((row) => [
+      row.agent_type,
+      {
+        recordedEvents: row.recorded_events,
+        inputTokens: row.input_tokens,
+        outputTokens: row.output_tokens,
+        totalTokens: row.total_tokens,
+        cacheCreationInputTokens: row.cache_creation_input_tokens,
+        cacheReadInputTokens: row.cache_read_input_tokens,
+        lastRecordedAt: row.last_recorded_at ?? null,
+      },
+    ]),
+  );
+}
+
 export async function completeRuntimeRun(projectRoot, runId, result) {
   const db = await getRuntimeDb(projectRoot);
   const completedAt = timestamp();
@@ -1015,6 +1188,22 @@ async function getRuntimeDb(projectRoot) {
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS runtime_usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_type TEXT NOT NULL,
+      agent_name TEXT,
+      channel_name TEXT,
+      role TEXT,
+      source TEXT NOT NULL,
+      model TEXT,
+      runtime_backend TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER,
+      cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+      recorded_at TEXT NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS runtime_runs_started_at_idx
       ON runtime_runs(started_at DESC);
     CREATE INDEX IF NOT EXISTS runtime_role_messages_run_id_idx
@@ -1027,6 +1216,8 @@ async function getRuntimeDb(projectRoot) {
       ON runtime_outbox_events(dispatched_at, id);
     CREATE INDEX IF NOT EXISTS admin_auth_sessions_expires_at_idx
       ON admin_auth_sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS runtime_usage_events_agent_type_idx
+      ON runtime_usage_events(agent_type, recorded_at DESC);
   `);
 
   ensureRunColumn(db, 'active_role', 'TEXT');
@@ -1148,6 +1339,51 @@ function normalizeNullableString(value) {
   }
   const normalized = String(value).trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeUsageEntry(usage) {
+  if (!usage || typeof usage !== 'object') {
+    return null;
+  }
+
+  const inputTokens = normalizeUsageInteger(usage.inputTokens);
+  const outputTokens = normalizeUsageInteger(usage.outputTokens);
+  const totalTokens = normalizeUsageInteger(usage.totalTokens);
+  const cacheCreationInputTokens = normalizeUsageInteger(usage.cacheCreationInputTokens);
+  const cacheReadInputTokens = normalizeUsageInteger(usage.cacheReadInputTokens);
+
+  if (
+    inputTokens === null &&
+    outputTokens === null &&
+    totalTokens === null &&
+    cacheCreationInputTokens === null &&
+    cacheReadInputTokens === null
+  ) {
+    return null;
+  }
+
+  return {
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    totalTokens:
+      totalTokens ??
+      (inputTokens !== null || outputTokens !== null
+        ? (inputTokens ?? 0) + (outputTokens ?? 0)
+        : null),
+    cacheCreationInputTokens: cacheCreationInputTokens ?? 0,
+    cacheReadInputTokens: cacheReadInputTokens ?? 0,
+  };
+}
+
+function normalizeUsageInteger(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return Math.round(numeric);
 }
 
 function normalizeBootstrapPassword(password, passwordFile = null) {

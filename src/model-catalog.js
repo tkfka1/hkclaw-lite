@@ -2,14 +2,32 @@ import { DEFAULT_LOCAL_LLM_BASE_URL } from './constants.js';
 import { assert } from './utils.js';
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
-const CURATED_CLAUDE_CODE_MODELS = [
+const CURATED_CODEX_MODELS = [
   {
-    value: 'claude-opus-4-1-20250805',
-    label: 'Claude Opus 4.1',
+    value: 'gpt-5.4',
+    label: 'GPT-5.4',
   },
   {
-    value: 'claude-sonnet-4-20250514',
-    label: 'Claude Sonnet 4',
+    value: 'gpt-5.3-codex',
+    label: 'GPT-5.3 Codex',
+  },
+  {
+    value: 'gpt-5.4-mini',
+    label: 'GPT-5.4 Mini',
+  },
+];
+const CURATED_CLAUDE_CODE_MODELS = [
+  {
+    value: 'claude-opus-4-6',
+    label: 'Claude Opus 4.6',
+  },
+  {
+    value: 'claude-sonnet-4-6',
+    label: 'Claude Sonnet 4.6',
+  },
+  {
+    value: 'claude-haiku-4-5-20251001',
+    label: 'Claude Haiku 4.5',
   },
 ];
 const CURATED_GEMINI_MODELS = [
@@ -67,7 +85,12 @@ export async function listAgentModels(env, payload) {
 
 async function listOpenAiModels(env) {
   const apiKey = firstDefined(env.OPENAI_API_KEY);
-  assert(apiKey, 'OPENAI_API_KEY is required for codex model listing.');
+  if (!apiKey) {
+    return buildCuratedCatalog('codex', CURATED_CODEX_MODELS, {
+      summary: `권장 모델 ${CURATED_CODEX_MODELS.length}개`,
+      defaultModel: 'gpt-5.4',
+    });
+  }
   const baseUrl = normalizeBaseUrl(env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL);
   const headers = {
     authorization: `Bearer ${apiKey}`,
@@ -79,60 +102,52 @@ async function listOpenAiModels(env) {
     headers['OpenAI-Project'] = env.OPENAI_PROJECT_ID;
   }
 
-  const payload = await fetchJson(joinApiPath(baseUrl, 'models'), { headers });
-  const models = dedupeModelOptions(
-    (payload?.data || [])
-      .map((entry) => ({
-        value: String(entry?.id || '').trim(),
-        label: String(entry?.id || '').trim(),
-        created: Number(entry?.created || 0),
-      }))
-      .filter((entry) => isLikelyOpenAiAgentModel(entry.value))
-      .sort((left, right) => right.created - left.created),
-  ).map((entry) => ({
-    value: entry.value,
-    label: entry.label,
-    efforts: resolveAgentEffortChoices('codex', entry.value),
-  }));
+  try {
+    const payload = await fetchJson(joinApiPath(baseUrl, 'models'), { headers });
+    const models = dedupeModelOptions(
+      (payload?.data || [])
+        .map((entry) => ({
+          value: String(entry?.id || '').trim(),
+          label: String(entry?.id || '').trim(),
+          created: Number(entry?.created || 0),
+        }))
+        .filter((entry) => isLikelyOpenAiAgentModel(entry.value))
+        .sort((left, right) => right.created - left.created),
+    ).map((entry) => ({
+      value: entry.value,
+      label: entry.label,
+      efforts: resolveAgentEffortChoices('codex', entry.value),
+    }));
 
-  return {
-    agentType: 'codex',
-    models,
-    source: 'live',
-    summary: models.length > 0 ? `실제 조회 모델 ${models.length}개` : '조회된 모델이 없습니다.',
-  };
+    return {
+      agentType: 'codex',
+      models,
+      source: 'live',
+      summary: models.length > 0 ? `실제 조회 모델 ${models.length}개` : '조회된 모델이 없습니다.',
+      defaultModel: selectRecommendedModel('codex', models),
+    };
+  } catch {
+    return buildCuratedCatalog('codex', CURATED_CODEX_MODELS, {
+      summary: `실시간 조회 실패, 권장 모델 ${CURATED_CODEX_MODELS.length}개`,
+      defaultModel: 'gpt-5.4',
+    });
+  }
 }
 
 async function listAnthropicModels(env) {
   void env;
-  const models = CURATED_CLAUDE_CODE_MODELS.map((entry) => ({
-    value: entry.value,
-    label: entry.label,
-    efforts: resolveAgentEffortChoices('claude-code', entry.value),
-  }));
-
-  return {
-    agentType: 'claude-code',
-    models,
-    source: 'curated',
-    summary: `권장 모델 ${models.length}개`,
-  };
+  return buildCuratedCatalog('claude-code', CURATED_CLAUDE_CODE_MODELS, {
+    summary: `권장 모델 ${CURATED_CLAUDE_CODE_MODELS.length}개`,
+    defaultModel: 'claude-sonnet-4-6',
+  });
 }
 
 async function listGeminiModels(env) {
   void env;
-  const models = CURATED_GEMINI_MODELS.map((entry) => ({
-    value: entry.value,
-    label: entry.label,
-    efforts: resolveAgentEffortChoices('gemini-cli', entry.value),
-  }));
-
-  return {
-    agentType: 'gemini-cli',
-    models,
-    source: 'curated',
-    summary: `권장 모델 ${models.length}개`,
-  };
+  return buildCuratedCatalog('gemini-cli', CURATED_GEMINI_MODELS, {
+    summary: `권장 모델 ${CURATED_GEMINI_MODELS.length}개`,
+    defaultModel: 'gemini-2.5-pro',
+  });
 }
 
 async function listLocalLlmModels(payload, env) {
@@ -174,6 +189,7 @@ async function listLocalLlmModels(payload, env) {
         models,
         source: 'live',
         summary: models.length > 0 ? `실제 조회 모델 ${models.length}개` : '조회된 모델이 없습니다.',
+        defaultModel: selectRecommendedModel('local-llm', models),
       };
     } catch (error) {
       lastError = error;
@@ -338,6 +354,39 @@ function dedupeModelOptions(models) {
     });
   }
   return output;
+}
+
+function buildCuratedCatalog(agentType, entries, { summary, defaultModel } = {}) {
+  const models = entries.map((entry) => ({
+    value: entry.value,
+    label: entry.label,
+    efforts: resolveAgentEffortChoices(agentType, entry.value),
+  }));
+  return {
+    agentType,
+    models,
+    source: 'curated',
+    summary: summary || `권장 모델 ${models.length}개`,
+    defaultModel: defaultModel || selectRecommendedModel(agentType, models),
+  };
+}
+
+function selectRecommendedModel(agentType, models) {
+  const values = (models || []).map((entry) => String(entry?.value || '').trim()).filter(Boolean);
+  const preferences =
+    agentType === 'codex'
+      ? ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.4-mini']
+      : agentType === 'claude-code'
+        ? ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']
+        : agentType === 'gemini-cli'
+          ? ['gemini-2.5-pro', 'gemini-2.5-flash']
+          : [];
+  for (const candidate of preferences) {
+    if (values.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return values[0] || '';
 }
 
 function normalizeBaseUrl(value) {

@@ -9,12 +9,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   buildAdminSnapshot,
   deleteAgentByName,
+  deleteBotByName,
   deleteChannelByName,
   deleteDashboardByName,
   readWatcherLog,
+  replaceLocalLlmConnections,
   replaceSharedEnv,
   resetChannelRuntimeSessionsByName,
   upsertAgent,
+  upsertBot,
   upsertChannel,
   upsertDashboard,
 } from './admin-state.js';
@@ -24,7 +27,9 @@ import {
   deleteAdminSession,
   getAdminAuthStatus,
   isAdminSessionValid,
+  recordRuntimeUsageEvent,
   setAdminPassword,
+  summarizeRuntimeUsage,
   verifyAdminPassword,
 } from './runtime-db.js';
 import {
@@ -37,8 +42,12 @@ import {
   DEFAULT_ADMIN_PORT,
   DEFAULT_LOCAL_LLM_BASE_URL,
 } from './constants.js';
+import {
+  buildDiscordServiceSnapshot,
+  enqueueDiscordServiceCommand,
+} from './discord-runtime-state.js';
 import { listAgentModels } from './model-catalog.js';
-import { buildAgentDefinition, loadConfig } from './store.js';
+import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import { assert, parseInteger, toErrorMessage } from './utils.js';
 
 const ADMIN_HTML = fs.readFileSync(new URL('./admin-ui/index.html', import.meta.url), 'utf8');
@@ -264,6 +273,72 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     return;
   }
 
+  if (request.method === 'POST' && pathname === '/api/bots') {
+    const payload = await readJsonBody(request);
+    writeJson(response, 200, {
+      ok: true,
+      state: await upsertBot(
+        projectRoot,
+        payload.currentName || null,
+        payload.definition || payload,
+      ),
+    });
+    return;
+  }
+
+  if (request.method === 'DELETE' && pathname.startsWith('/api/bots/')) {
+    const name = decodeEntityPath(pathname, '/api/bots/');
+    writeJson(response, 200, {
+      ok: true,
+      state: await deleteBotByName(projectRoot, name),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/discord-service/reload') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await queueDiscordServiceAction(projectRoot, {
+        action: 'reload-config',
+      }),
+    });
+    return;
+  }
+
+  if (
+    request.method === 'POST' &&
+    pathname.startsWith('/api/agents/') &&
+    pathname.endsWith('/reconnect')
+  ) {
+    const name = decodeEntityPath(pathname.slice(0, -'/reconnect'.length), '/api/agents/');
+    writeJson(response, 200, {
+      ok: true,
+      result: await queueDiscordServiceAction(projectRoot, {
+        action: 'reconnect-bot',
+        agentName: name,
+      }),
+    });
+    return;
+  }
+
+  if (
+    request.method === 'POST' &&
+    pathname.startsWith('/api/bots/') &&
+    pathname.endsWith('/reconnect')
+  ) {
+    const name = decodeEntityPath(pathname.slice(0, -'/reconnect'.length), '/api/bots/');
+    const config = loadConfig(projectRoot);
+    const bot = config.bots?.[name];
+    writeJson(response, 200, {
+      ok: true,
+      result: await queueDiscordServiceAction(projectRoot, {
+        action: 'reconnect-bot',
+        agentName: bot?.agent || name,
+      }),
+    });
+    return;
+  }
+
   if (request.method === 'POST' && pathname === '/api/channels') {
     const payload = await readJsonBody(request);
     writeJson(response, 200, {
@@ -329,6 +404,15 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     writeJson(response, 200, {
       ok: true,
       state: await replaceSharedEnv(projectRoot, payload.sharedEnv || payload),
+    });
+    return;
+  }
+
+  if (request.method === 'PUT' && pathname === '/api/local-llm-connections') {
+    const payload = await readJsonBody(request);
+    writeJson(response, 200, {
+      ok: true,
+      state: await replaceLocalLlmConnections(projectRoot, payload.connections || []),
     });
     return;
   }
@@ -440,6 +524,29 @@ async function runOneShotViaCli(projectRoot, payload) {
       });
     });
   });
+}
+
+async function queueDiscordServiceAction(projectRoot, input = {}) {
+  const service = buildDiscordServiceSnapshot(projectRoot);
+  assert(service.running, 'Discord 서비스가 실행 중이 아닙니다.');
+
+  const config = loadConfig(projectRoot);
+  const agentName = input?.agentName ? String(input.agentName).trim() : null;
+  if (agentName) {
+    assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+  }
+
+  const command = enqueueDiscordServiceCommand(projectRoot, {
+    action: input?.action,
+    botName: agentName,
+  });
+
+  return {
+    queued: true,
+    action: command.action,
+    agentName: command.botName,
+    requestedAt: command.requestedAt,
+  };
 }
 
 async function runAgentAuthAction(projectRoot, payload) {
@@ -616,6 +723,7 @@ function resolveClaudeAuthCli(env = process.env) {
 }
 
 async function readAiStatuses(projectRoot) {
+  const usageSummaries = await summarizeRuntimeUsage(projectRoot);
   const entries = await Promise.all(
     AI_STATUS_AGENT_TYPES.map(async (agentType) => {
       try {
@@ -628,6 +736,7 @@ async function readAiStatuses(projectRoot) {
           {
             authResult,
             testResult: null,
+            usageSummary: buildAiUsageSummary(agentType, usageSummaries[agentType] || null),
           },
         ];
       } catch (error) {
@@ -644,6 +753,7 @@ async function readAiStatuses(projectRoot) {
               },
             },
             testResult: null,
+            usageSummary: buildAiUsageSummary(agentType, usageSummaries[agentType] || null),
           },
         ];
       }
@@ -1330,29 +1440,36 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
   }
 
   if (agentType === 'local-llm') {
+    const config = loadConfig(projectRoot);
     const runtime = inspectAgentRuntime(projectRoot, { agent: 'local-llm' });
-    const baseUrl =
-      resolveCredentialSource(sharedEnv, process.env, ['LOCAL_LLM_BASE_URL']).value ||
-      DEFAULT_LOCAL_LLM_BASE_URL;
-    const apiKey = resolveCredentialSource(sharedEnv, process.env, ['LOCAL_LLM_API_KEY']);
+    const connections = listLocalLlmConnections(config);
+    const primaryConnection = connections[0] || {
+      name: 'LLM1',
+      baseUrl: DEFAULT_LOCAL_LLM_BASE_URL,
+      apiKey: '',
+    };
     return {
       agentType,
       action: 'status',
       command: 'config inspection',
       output: [
-        `기본 주소: ${baseUrl}`,
-        apiKey.key
-          ? `API 키: 설정됨 (${localizeCredentialSource(apiKey.source)})`
-          : 'API 키: 미설정 (선택 사항)',
+        `저장된 연결: ${connections.length}개`,
+        `기본 연결: ${primaryConnection.name} (${primaryConnection.baseUrl})`,
       ].join('\n'),
       details: {
-        summary: apiKey.key ? '로컬 LLM 기본 설정됨' : '로컬 LLM 기본 주소 설정됨',
+        summary: `로컬 LLM 연결 ${connections.length}개 설정됨`,
         configured: true,
         runtimeReady: runtime.ready,
         ready: false,
-        baseUrl,
+        baseUrl: primaryConnection.baseUrl,
+        primaryConnection: primaryConnection.name,
+        connections: connections.map((connection) => ({
+          name: connection.name,
+          baseUrl: connection.baseUrl,
+          apiKeyConfigured: Boolean(connection.apiKey),
+        })),
         credentialOptional: true,
-        credentialSource: apiKey.key ? localizeCredentialSource(apiKey.source) : null,
+        credentialSource: null,
       },
       exitCode: 0,
       signal: null,
@@ -1392,14 +1509,13 @@ async function runManagedCliAuthAction(projectRoot, agentType, action, payload =
     });
     child.on('close', (code, signal) => {
       clearTimeout(timeout);
-      const output = [
-        Buffer.concat(stdout).toString('utf8').trim(),
-        Buffer.concat(stderr).toString('utf8').trim(),
-      ]
-        .filter(Boolean)
-        .join('\n')
-        .trim();
-      const cleanedOutput = stripAnsiEscapeSequences(output);
+      const stdoutText = Buffer.concat(stdout).toString('utf8').trim();
+      const stderrText = Buffer.concat(stderr).toString('utf8').trim();
+      const output = [stdoutText, stderrText].filter(Boolean).join('\n').trim();
+      const cleanedOutput = sanitizeManagedAgentAuthOutput(
+        agentType,
+        stripAnsiEscapeSequences(output),
+      );
 
       resolve({
         agentType,
@@ -1441,20 +1557,50 @@ async function runAgentAuthTest(projectRoot, payload) {
     rawPrompt: prompt,
     workdir: String(payload?.workdir || '.').trim() || '.',
     sharedEnv: config.sharedEnv || {},
+    captureRuntimeMetadata: true,
   });
+  const usage = output?.usage || null;
+  await recordRuntimeUsageEvent(projectRoot, {
+    agentType,
+    agentName: service.name,
+    channelName: null,
+    role: null,
+    source: 'ai-test',
+    model: service.model || null,
+    runtimeBackend: output?.runtimeMeta?.runtimeBackend || null,
+    usage,
+  });
+  const usageSummaries = await summarizeRuntimeUsage(projectRoot, { agentType });
+  const usageSummary = buildAiUsageSummary(agentType, usageSummaries[agentType] || null);
 
   return {
     agentType,
     action: 'test',
     command: 'agent test call',
-    output: output || '(출력 없음)',
+    output: output?.text || '(출력 없음)',
     details: {
       summary: '테스트 호출 완료',
       success: true,
+      usage,
+      usageSummary,
     },
     exitCode: 0,
     signal: null,
     timedOut: false,
+  };
+}
+
+function buildAiUsageSummary(agentType, summary) {
+  const usageSupported = ['claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
+  return {
+    supported: usageSupported,
+    recordedEvents: summary?.recordedEvents || 0,
+    inputTokens: summary?.inputTokens || 0,
+    outputTokens: summary?.outputTokens || 0,
+    totalTokens: summary?.totalTokens || 0,
+    cacheCreationInputTokens: summary?.cacheCreationInputTokens || 0,
+    cacheReadInputTokens: summary?.cacheReadInputTokens || 0,
+    lastRecordedAt: summary?.lastRecordedAt || null,
   };
 }
 
@@ -1501,9 +1647,10 @@ function parseAgentAuthOutput(agentType, action, output, exitCode) {
 
   if (agentType === 'codex') {
     if (action === 'status') {
+      const loggedIn = parseCodexLoggedInStatus(trimmed);
       return {
-        summary: /logged in/iu.test(trimmed) ? '로그인됨' : '로그인 안 됨',
-        loggedIn: /logged in/iu.test(trimmed),
+        summary: loggedIn ? '로그인됨' : '로그인 안 됨',
+        loggedIn,
       };
     }
     if (action === 'login') {
@@ -1550,6 +1697,36 @@ function parseAgentAuthOutput(agentType, action, output, exitCode) {
   return {
     summary: trimmed || '완료',
   };
+}
+
+function sanitizeManagedAgentAuthOutput(agentType, output) {
+  const lines = String(output || '')
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (agentType === 'codex') {
+    return lines
+      .filter(
+        (line) =>
+          !/^WARNING:\s*failed to clean up stale arg0 temp dirs:/iu.test(line),
+      )
+      .join('\n')
+      .trim();
+  }
+
+  return lines.join('\n').trim();
+}
+
+function parseCodexLoggedInStatus(output) {
+  const text = String(output || '').trim();
+  if (!text) {
+    return false;
+  }
+  if (/not logged in/iu.test(text)) {
+    return false;
+  }
+  return /logged in/iu.test(text);
 }
 
 function buildManagedAgentEnv(projectRoot, agentType = '') {

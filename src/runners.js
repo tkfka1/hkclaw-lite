@@ -11,7 +11,11 @@ import {
   DEFAULT_CODEX_SANDBOX,
   DEFAULT_LOCAL_LLM_BASE_URL,
 } from './constants.js';
-import { resolveProjectPath } from './store.js';
+import {
+  loadConfig,
+  resolveLocalLlmConnectionConfig,
+  resolveProjectPath,
+} from './store.js';
 import {
   assert,
   resolveExecutable,
@@ -167,11 +171,18 @@ export function inspectAgentRuntime(projectRoot, agent, workdirOverride = null) 
     case 'gemini-cli':
       return buildManagedAgentRuntimeStatus('gemini-cli', workdir);
     case 'local-llm':
-      return {
-        ready: true,
-        detail: agent.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL,
-        workdir,
-      };
+      {
+        const config = loadConfig(projectRoot);
+        const connection = resolveLocalLlmConnectionConfig(config, agent);
+        const detail = connection.connectionName
+          ? `${connection.connectionName} (${connection.baseUrl})`
+          : connection.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL;
+        return {
+          ready: true,
+          detail,
+          workdir,
+        };
+      }
     case 'command':
       return {
         ready: true,
@@ -392,7 +403,10 @@ async function runGeminiCli({
         ?.map((part) => part.text || '')
         .join('\n')
         .trim();
-    return trimTrailingWhitespace(text || result.stdout).trim();
+    return {
+      text: trimTrailingWhitespace(text || result.stdout).trim(),
+      usage: extractGeminiCliUsage(parsed),
+    };
   } catch {
     return trimTrailingWhitespace(result.stdout).trim();
   }
@@ -408,16 +422,17 @@ async function runLocalLlm({
 }) {
   void rawPrompt;
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
-  const effectiveEnv = {
-    ...sharedEnv,
-    ...service.env,
-  };
-  const baseUrl = (service.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL).replace(/\/$/, '');
+  const config = loadConfig(projectRoot);
+  const resolvedConnection = resolveLocalLlmConnectionConfig(config, service, {
+    sharedEnv,
+    processEnv: process.env,
+  });
+  const baseUrl = (resolvedConnection.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL).replace(/\/$/, '');
   const headers = {
     'content-type': 'application/json',
   };
-  if (effectiveEnv.LOCAL_LLM_API_KEY) {
-    headers.authorization = `Bearer ${effectiveEnv.LOCAL_LLM_API_KEY}`;
+  if (resolvedConnection.apiKey) {
+    headers.authorization = `Bearer ${resolvedConnection.apiKey}`;
   }
 
   const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -449,7 +464,14 @@ async function runLocalLlm({
 
   const content = payload.choices?.[0]?.message?.content;
   assert(content, 'local-llm response did not include assistant content.');
-  return trimTrailingWhitespace(content).trim();
+  return {
+    text: trimTrailingWhitespace(content).trim(),
+    usage: normalizeUsageSnapshot({
+      inputTokens: payload?.usage?.prompt_tokens,
+      outputTokens: payload?.usage?.completion_tokens,
+      totalTokens: payload?.usage?.total_tokens,
+    }),
+  };
 }
 
 async function runCommand({
@@ -630,6 +652,7 @@ function normalizeAgentTurnResult(result, { captureRuntimeMetadata = false } = {
       ? {
           text: String(result.text || ''),
           runtimeMeta: result.runtimeMeta || null,
+          usage: result.usage || null,
         }
       : String(result.text || '');
   }
@@ -638,6 +661,7 @@ function normalizeAgentTurnResult(result, { captureRuntimeMetadata = false } = {
     ? {
         text: String(result || ''),
         runtimeMeta: null,
+        usage: null,
       }
     : String(result || '');
 }
@@ -679,6 +703,7 @@ function parseClaudeCliStreamJson(stdout, { fallbackSessionId = null } = {}) {
     .filter(Boolean);
   let finalText = '';
   let sessionId = String(fallbackSessionId || '').trim() || null;
+  let usage = null;
 
   for (const line of lines) {
     let message;
@@ -690,6 +715,11 @@ function parseClaudeCliStreamJson(stdout, { fallbackSessionId = null } = {}) {
 
     if (!sessionId && typeof message?.session_id === 'string' && message.session_id.trim()) {
       sessionId = message.session_id.trim();
+    }
+
+    const messageUsage = extractClaudeCliUsage(message);
+    if (messageUsage) {
+      usage = messageUsage;
     }
 
     if (message?.type !== 'result') {
@@ -713,6 +743,7 @@ function parseClaudeCliStreamJson(stdout, { fallbackSessionId = null } = {}) {
 
   return {
     text: trimTrailingWhitespace(finalText).trim(),
+    usage,
     runtimeMeta: sessionId
       ? {
           runtimeBackend: 'claude-cli',
@@ -720,6 +751,115 @@ function parseClaudeCliStreamJson(stdout, { fallbackSessionId = null } = {}) {
         }
       : null,
   };
+}
+
+function extractClaudeCliUsage(message) {
+  const currentUsage =
+    normalizeUsageSnapshot(message?.usage) ||
+    normalizeUsageSnapshot(message?.message?.usage) ||
+    normalizeUsageSnapshot(message?.context_window?.current_usage);
+  if (currentUsage) {
+    return currentUsage;
+  }
+
+  const quotaUsage = normalizeUsageSnapshot({
+    inputTokens:
+      message?._meta?.quota?.token_count?.input_tokens ??
+      message?.quota?.token_count?.input_tokens,
+    outputTokens:
+      message?._meta?.quota?.token_count?.output_tokens ??
+      message?.quota?.token_count?.output_tokens,
+  });
+  if (quotaUsage) {
+    return quotaUsage;
+  }
+
+  return null;
+}
+
+function extractGeminiCliUsage(parsed) {
+  return (
+    normalizeUsageSnapshot({
+      inputTokens:
+        parsed?._meta?.quota?.token_count?.input_tokens ??
+        parsed?.quota?.token_count?.input_tokens ??
+        parsed?.stats?.token_count?.input_tokens,
+      outputTokens:
+        parsed?._meta?.quota?.token_count?.output_tokens ??
+        parsed?.quota?.token_count?.output_tokens ??
+        parsed?.stats?.token_count?.output_tokens,
+      totalTokens:
+        parsed?._meta?.quota?.total_tokens ??
+        parsed?.quota?.total_tokens ??
+        parsed?.stats?.total_tokens,
+    }) ||
+    normalizeUsageSnapshot({
+      inputTokens:
+        parsed?.usageMetadata?.promptTokenCount ??
+        parsed?.responseJson?.usageMetadata?.promptTokenCount,
+      outputTokens:
+        parsed?.usageMetadata?.candidatesTokenCount ??
+        parsed?.responseJson?.usageMetadata?.candidatesTokenCount,
+      totalTokens:
+        parsed?.usageMetadata?.totalTokenCount ??
+        parsed?.responseJson?.usageMetadata?.totalTokenCount,
+    })
+  );
+}
+
+function normalizeUsageSnapshot(input) {
+  const inputTokens = normalizeUsageNumber(
+    input?.inputTokens ?? input?.input_tokens ?? input?.promptTokenCount,
+  );
+  const outputTokens = normalizeUsageNumber(
+    input?.outputTokens ?? input?.output_tokens ?? input?.candidatesTokenCount,
+  );
+  const totalTokens = normalizeUsageNumber(
+    input?.totalTokens ?? input?.total_tokens ?? input?.totalTokenCount,
+  );
+  const cacheCreationInputTokens = normalizeUsageNumber(
+    input?.cacheCreationInputTokens ??
+      input?.cache_creation_input_tokens ??
+      input?.cacheCreationInputTokenCount,
+  );
+  const cacheReadInputTokens = normalizeUsageNumber(
+    input?.cacheReadInputTokens ??
+      input?.cache_read_input_tokens ??
+      input?.cacheReadInputTokenCount,
+  );
+
+  if (
+    inputTokens === null &&
+    outputTokens === null &&
+    totalTokens === null &&
+    cacheCreationInputTokens === null &&
+    cacheReadInputTokens === null
+  ) {
+    return null;
+  }
+
+  return {
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    totalTokens:
+      totalTokens ??
+      (inputTokens !== null || outputTokens !== null
+        ? (inputTokens ?? 0) + (outputTokens ?? 0)
+        : null),
+    cacheCreationInputTokens: cacheCreationInputTokens ?? 0,
+    cacheReadInputTokens: cacheReadInputTokens ?? 0,
+  };
+}
+
+function normalizeUsageNumber(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return Math.round(numeric);
 }
 
 export function resolveManagedAgentCli(agentType, env = process.env) {

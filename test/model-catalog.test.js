@@ -37,7 +37,7 @@ test('gemini effort choices depend on model family', () => {
 });
 
 test('claude effort choices stay within cli-supported values', () => {
-  assert.deepEqual(resolveAgentEffortChoices('claude-code', 'claude-sonnet-4-20250514'), [
+  assert.deepEqual(resolveAgentEffortChoices('claude-code', 'claude-sonnet-4-6'), [
     'low',
     'medium',
     'high',

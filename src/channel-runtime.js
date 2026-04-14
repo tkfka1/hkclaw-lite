@@ -8,6 +8,7 @@ import {
   listRecentRoleSessionContext,
   recordRuntimeRoleMessage,
   recordRuntimeRoleSession,
+  recordRuntimeUsageEvent,
   startRuntimeRun,
   transitionRuntimeRun,
 } from './runtime-db.js';
@@ -378,7 +379,18 @@ async function executeAgentTurnWithFallback({
       runtimeSession,
       captureRuntimeMetadata: true,
     });
-    return normalizeTurnResult(result);
+    const normalized = normalizeTurnResult(result);
+    await recordRuntimeUsageEvent(projectRoot, {
+      agentType: agent.agent,
+      agentName: agent.name,
+      channelName: channel?.name || null,
+      role,
+      source: 'channel-turn',
+      model: agent.model || null,
+      runtimeBackend: normalized.runtimeMeta?.runtimeBackend || null,
+      usage: normalized.usage,
+    });
+    return normalized;
   } catch (error) {
     if (!agent.fallbackAgent) {
       throw error;
@@ -555,10 +567,19 @@ async function loadRoleRuntimeSession(projectRoot, { channel, role }) {
   }
 
   try {
-    return await getRuntimeRoleSession(projectRoot, {
+    const session = await getRuntimeRoleSession(projectRoot, {
       channelName: channel.name,
       role,
     });
+    if (!session) {
+      return null;
+    }
+    const currentAgentName =
+      role === 'reviewer' ? channel.reviewer : role === 'arbiter' ? channel.arbiter : channel.agent;
+    if (currentAgentName && session.agentName && session.agentName !== currentAgentName) {
+      return null;
+    }
+    return session;
   } catch {
     return null;
   }
@@ -569,11 +590,13 @@ function normalizeTurnResult(result) {
     return {
       content: String(result.text || ''),
       runtimeMeta: result.runtimeMeta || null,
+      usage: result.usage || null,
     };
   }
 
   return {
     content: String(result || ''),
     runtimeMeta: null,
+    usage: null,
   };
 }

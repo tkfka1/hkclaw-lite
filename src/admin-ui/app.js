@@ -1,5 +1,7 @@
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '~';
+const NOTICE_AUTO_DISMISS_MS = 4_500;
+let noticeTimer = null;
 
 const state = {
   data: null,
@@ -13,9 +15,13 @@ const state = {
   },
   activeView: 'home',
   agentModalOpen: false,
+  botModalOpen: false,
   channelModalOpen: false,
+  localLlmModalOpen: false,
   adminPasswordModalOpen: false,
+  botDraft: null,
   channelDraft: null,
+  localLlmDraft: null,
   agentWizard: null,
   aiManager: null,
   aiStatuses: {},
@@ -100,6 +106,35 @@ function handleClick(event) {
 
   if (action === 'close-ai-modal') {
     state.aiManager = null;
+    state.localLlmModalOpen = false;
+    state.localLlmDraft = null;
+    render();
+    return;
+  }
+
+  if (action === 'open-local-llm-modal') {
+    state.localLlmModalOpen = true;
+    state.localLlmDraft = createLocalLlmConnectionDraft();
+    render();
+    return;
+  }
+
+  if (action === 'edit-local-llm-connection') {
+    const entry = resolveLocalLlmConnectionEntry(button.dataset.name);
+    if (!entry) {
+      setNotice('error', '로컬 LLM 연결을 찾지 못했습니다.');
+      render();
+      return;
+    }
+    state.localLlmModalOpen = true;
+    state.localLlmDraft = createLocalLlmConnectionDraft(entry);
+    render();
+    return;
+  }
+
+  if (action === 'close-local-llm-modal') {
+    state.localLlmModalOpen = false;
+    state.localLlmDraft = null;
     render();
     return;
   }
@@ -120,6 +155,12 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'close-notice') {
+    clearNotice();
+    render();
+    return;
+  }
+
   if (action === 'open-agent-modal') {
     const selectableAgentTypes = getSelectableAgentTypes();
     if (!selectableAgentTypes.length) {
@@ -131,6 +172,7 @@ function handleClick(event) {
     state.agentWizard = {
       step: 0,
       draft: createBlankAgent(),
+      modelCatalog: null,
       authResult: null,
       testResult: null,
     };
@@ -138,9 +180,92 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'edit-agent') {
+    const agent = state.data?.agents?.find((entry) => entry.name === button.dataset.name);
+    if (!agent) {
+      setNotice('error', '에이전트를 찾지 못했습니다.');
+      render();
+      return;
+    }
+    state.agentModalOpen = true;
+    state.agentWizard = {
+      currentName: agent.name,
+      step: 0,
+      draft: createAgentDraft(agent),
+      modelCatalog: null,
+      authResult: null,
+      testResult: null,
+    };
+    render();
+    return;
+  }
+
+  if (action === 'open-bot-modal') {
+    state.botModalOpen = true;
+    state.botDraft = createBlankBot();
+    render();
+    return;
+  }
+
+  if (action === 'edit-bot') {
+    const bot = state.data?.bots?.find((entry) => entry.name === button.dataset.name);
+    if (!bot) {
+      setNotice('error', '봇을 찾지 못했습니다.');
+      render();
+      return;
+    }
+    state.botModalOpen = true;
+    state.botDraft = createBotDraft(bot);
+    render();
+    return;
+  }
+
+  if (action === 'reload-discord-service') {
+    void reloadDiscordServiceConfig();
+    return;
+  }
+
+  if (action === 'reconnect-agent') {
+    void reconnectAgent(button.dataset.name);
+    return;
+  }
+
+  if (action === 'reconnect-bot') {
+    void reconnectDiscordBot(button.dataset.name);
+    return;
+  }
+
   if (action === 'ai-auth-status') {
     void runAiManagerAction('status');
     render();
+    return;
+  }
+
+  if (action === 'load-model-catalog') {
+    void loadModelCatalog(button.dataset.scope || '').catch((error) => {
+      setNotice('error', localizeErrorMessage(error.message));
+      render();
+    });
+    return;
+  }
+
+  if (action === 'apply-model-suggestion') {
+    try {
+      applyModelSelection(button.dataset.scope || '', button.dataset.model || '');
+    } catch (error) {
+      setNotice('error', localizeErrorMessage(error.message));
+      render();
+    }
+    return;
+  }
+
+  if (action === 'apply-default-model') {
+    try {
+      applyDefaultModelSelection(button.dataset.scope || '');
+    } catch (error) {
+      setNotice('error', localizeErrorMessage(error.message));
+      render();
+    }
     return;
   }
 
@@ -177,9 +302,29 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'close-bot-modal') {
+    state.botModalOpen = false;
+    state.botDraft = null;
+    render();
+    return;
+  }
+
   if (action === 'open-channel-modal') {
     state.channelModalOpen = true;
     state.channelDraft = createBlankChannel();
+    render();
+    return;
+  }
+
+  if (action === 'edit-channel') {
+    const channel = state.data?.channels?.find((entry) => entry.name === button.dataset.name);
+    if (!channel) {
+      setNotice('error', '채널을 찾지 못했습니다.');
+      render();
+      return;
+    }
+    state.channelModalOpen = true;
+    state.channelDraft = createChannelDraft(channel);
     render();
     return;
   }
@@ -229,8 +374,18 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'delete-bot') {
+    void deleteEntity('bot', button.dataset.name);
+    return;
+  }
+
   if (action === 'delete-channel') {
     void deleteEntity('channel', button.dataset.name);
+    return;
+  }
+
+  if (action === 'delete-local-llm-connection') {
+    void deleteLocalLlmConnection(button.dataset.name);
     return;
   }
 
@@ -264,7 +419,6 @@ function handleInput(event) {
 
   const isAgentWizardField = Boolean(state.agentWizard && target.closest('[data-form="agent-wizard"]'));
   const isAgentWizardEnvField = Boolean(target.dataset.envEntryField);
-
   if (!isAgentWizardField || (!target.name && !isAgentWizardEnvField)) {
     if (
       state.aiManager &&
@@ -282,21 +436,27 @@ function handleInput(event) {
         }
         return;
       }
-      if (target.dataset.aiCredentialKey) {
-        state.aiManager.credentials[target.dataset.aiCredentialKey] = target.value;
-        if (target.dataset.aiCredentialKey === 'LOCAL_LLM_BASE_URL') {
-          state.aiManager.testConfig.baseUrl = target.value;
-        }
-        return;
-      }
       state.aiManager.testConfig[target.name] =
         target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+      if (agentTypeUsesLocalLlmConnections(state.aiManager.type) && target.name === 'localLlmConnection') {
+        state.aiManager.modelCatalog = null;
+        render();
+      }
       if (target.name === 'modelMode') {
         if (state.aiManager.testConfig.modelMode !== 'custom') {
           state.aiManager.testConfig.model = '';
         }
         render();
       }
+    }
+    if (
+      state.localLlmDraft &&
+      target.closest('[data-form="local-llm-connection"]') &&
+      target.name
+    ) {
+      state.localLlmDraft[target.name] =
+        target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+      return;
     }
     if (
       state.channelDraft &&
@@ -339,9 +499,25 @@ function handleInput(event) {
   if (target.name === 'agent') {
     state.agentWizard.authResult = null;
     state.agentWizard.testResult = null;
+    state.agentWizard.modelCatalog = null;
     state.agentWizard.draft.modelMode = defaultModelModeForAgent(state.agentWizard.draft.agent);
     state.agentWizard.draft.model = '';
     state.agentWizard.draft.effort = '';
+    if (state.agentWizard.draft.agent === 'local-llm') {
+      state.agentWizard.draft.localLlmConnection = getDefaultLocalLlmConnectionName();
+      if (state.agentWizard.draft.localLlmConnection) {
+        state.agentWizard.draft.baseUrl = '';
+      }
+    }
+    render();
+    return;
+  }
+
+  if (target.name === 'localLlmConnection') {
+    state.agentWizard.modelCatalog = null;
+    if (optionalDraftText(state.agentWizard.draft.localLlmConnection)) {
+      state.agentWizard.draft.baseUrl = '';
+    }
     render();
     return;
   }
@@ -396,6 +572,16 @@ async function handleSubmit(event) {
 
     if (kind === 'channel') {
       await saveChannel(form);
+      return;
+    }
+
+    if (kind === 'bot') {
+      await saveBot(form);
+      return;
+    }
+
+    if (kind === 'local-llm-connection') {
+      await saveLocalLlmConnection(form);
       return;
     }
 
@@ -462,6 +648,7 @@ async function changeAdminPassword(form) {
 async function saveAgentWizard() {
   validateAgentWizardStep();
   const values = state.agentWizard?.draft || createBlankAgent();
+  const currentName = optionalDraftText(state.agentWizard?.currentName);
   const definition = {
     name: requiredDraftText(values.name, 'name'),
     agent: requiredDraftText(values.agent, 'agent'),
@@ -477,6 +664,8 @@ async function saveAgentWizard() {
     sandbox: optionalDraftText(values.sandbox),
     permissionMode: optionalDraftText(values.permissionMode),
     dangerous: values.agent === 'codex' ? Boolean(values.dangerous) : undefined,
+    discordToken: requiredDraftText(values.discordToken, 'discordToken'),
+    localLlmConnection: optionalDraftText(values.localLlmConnection),
     baseUrl: optionalDraftText(values.baseUrl),
     command: optionalDraftText(values.command),
   };
@@ -484,6 +673,7 @@ async function saveAgentWizard() {
   const response = await mutateJson('/api/agents', {
     method: 'POST',
     body: {
+      currentName,
       definition,
     },
   });
@@ -491,12 +681,13 @@ async function saveAgentWizard() {
   state.data = response.state;
   state.agentModalOpen = false;
   state.agentWizard = null;
-  setNotice('info', `에이전트 "${definition.name}"을 추가했습니다.`);
+  setNotice('info', `에이전트 "${definition.name}"을(를) ${currentName ? '수정' : '추가'}했습니다.`);
   render();
 }
 
 async function saveChannel(form) {
   const values = new FormData(form);
+  const currentName = optionalText(values, 'currentName');
   const definition = {
     name: requiredText(values, 'name'),
     mode: requiredText(values, 'mode'),
@@ -513,6 +704,7 @@ async function saveChannel(form) {
   const response = await mutateJson('/api/channels', {
     method: 'POST',
     body: {
+      currentName,
       definition,
     },
   });
@@ -520,7 +712,59 @@ async function saveChannel(form) {
   state.data = response.state;
   state.channelModalOpen = false;
   state.channelDraft = null;
-  setNotice('info', `채널 "${definition.name}"을 추가했습니다.`);
+  setNotice('info', `채널 "${definition.name}"을(를) ${currentName ? '수정' : '추가'}했습니다.`);
+  render();
+}
+
+async function saveBot(form) {
+  const values = new FormData(form);
+  const currentName = optionalText(values, 'currentName');
+  const definition = {
+    name: requiredText(values, 'name'),
+    agent: requiredText(values, 'agent'),
+    discordToken: requiredText(values, 'discordToken'),
+    description: optionalText(values, 'description'),
+  };
+
+  const response = await mutateJson('/api/bots', {
+    method: 'POST',
+    body: {
+      currentName,
+      definition,
+    },
+  });
+
+  state.data = response.state;
+  state.botModalOpen = false;
+  state.botDraft = null;
+  setNotice('info', `봇 "${definition.name}"을(를) ${currentName ? '수정' : '추가'}했습니다. 실행 중인 Discord 연결 반영은 수동 재연결로 처리합니다.`);
+  render();
+}
+
+async function saveLocalLlmConnection(form) {
+  const values = new FormData(form);
+  const draft = {
+    currentName: optionalText(values, 'currentName'),
+    name: requiredText(values, 'name'),
+    baseUrl: requiredText(values, 'baseUrl'),
+    apiKey: optionalText(values, 'apiKey'),
+    description: optionalText(values, 'description'),
+  };
+  const nextConnections = upsertLocalLlmConnectionEntries(getLocalLlmConnectionEntries(), draft);
+  const response = await mutateJson('/api/local-llm-connections', {
+    method: 'PUT',
+    body: {
+      connections: nextConnections,
+    },
+  });
+
+  state.data = response.state;
+  if (state.aiManager?.type === 'local-llm') {
+    state.aiManager = createAiManager('local-llm');
+  }
+  state.localLlmModalOpen = false;
+  state.localLlmDraft = null;
+  setNotice('info', `로컬 LLM 연결 "${draft.name}"을(를) ${draft.currentName ? '수정' : '추가'}했습니다.`);
   render();
 }
 
@@ -539,7 +783,91 @@ async function deleteEntity(kind, name) {
   });
 
   state.data = response.state;
-  setNotice('info', `${localizeKind(kind)} "${name}"을(를) 삭제했습니다.`);
+  setNotice(
+    'info',
+    kind === 'bot'
+      ? `봇 "${name}"을(를) 삭제했습니다. 실행 중인 Discord 연결 정리는 전체 다시 읽기 때 반영됩니다.`
+      : `${localizeKind(kind)} "${name}"을(를) 삭제했습니다.`,
+  );
+  render();
+}
+
+async function reloadDiscordServiceConfig() {
+  await mutateJson('/api/discord-service/reload', {
+    method: 'POST',
+  });
+  setNotice('info', 'Discord 서비스가 최신 봇 설정을 다시 읽고 있습니다.');
+  void refreshStateAfterDiscordCommand();
+}
+
+async function reconnectDiscordBot(name) {
+  if (!name) {
+    return;
+  }
+  await mutateJson(`/api/bots/${encodeURIComponent(name)}/reconnect`, {
+    method: 'POST',
+  });
+  setNotice('info', `봇 "${name}" 연결을 다시 시도합니다.`);
+  void refreshStateAfterDiscordCommand();
+}
+
+async function reconnectAgent(name) {
+  if (!name) {
+    return;
+  }
+  await mutateJson(`/api/agents/${encodeURIComponent(name)}/reconnect`, {
+    method: 'POST',
+  });
+  setNotice('info', `에이전트 "${name}" Discord 연결을 다시 시도합니다.`);
+  void refreshStateAfterDiscordCommand();
+}
+
+async function refreshStateAfterDiscordCommand() {
+  await new Promise((resolve) => {
+    window.setTimeout(resolve, 1200);
+  });
+  try {
+    state.data = await requestJson('/api/state');
+    render();
+  } catch (error) {
+    if (handleAuthError(error)) {
+      render();
+      return;
+    }
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function deleteLocalLlmConnection(name) {
+  if (!name) {
+    return;
+  }
+  const currentEntries = getLocalLlmConnectionEntries();
+  if (currentEntries.length <= 1) {
+    setNotice('error', '로컬 LLM 연결은 최소 1개가 필요합니다.');
+    render();
+    return;
+  }
+
+  const confirmed = window.confirm(`로컬 LLM 연결 "${name}"을(를) 삭제할까요?`);
+  if (!confirmed) {
+    return;
+  }
+
+  const nextConnections = currentEntries.filter((entry) => entry.name !== name);
+  const response = await mutateJson('/api/local-llm-connections', {
+    method: 'PUT',
+    body: {
+      connections: nextConnections,
+    },
+  });
+
+  state.data = response.state;
+  if (state.aiManager?.type === 'local-llm') {
+    state.aiManager = createAiManager('local-llm');
+  }
+  setNotice('info', `로컬 LLM 연결 "${name}"을(를) 삭제했습니다.`);
   render();
 }
 
@@ -615,7 +943,29 @@ function handleAuthError(error) {
 }
 
 function setNotice(type, text) {
-  state.notice = { type, text };
+  if (noticeTimer) {
+    window.clearTimeout(noticeTimer);
+    noticeTimer = null;
+  }
+  state.notice = {
+    type,
+    text,
+    id: Date.now(),
+  };
+  if (type !== 'error') {
+    noticeTimer = window.setTimeout(() => {
+      clearNotice();
+      render();
+    }, NOTICE_AUTO_DISMISS_MS);
+  }
+}
+
+function clearNotice() {
+  if (noticeTimer) {
+    window.clearTimeout(noticeTimer);
+    noticeTimer = null;
+  }
+  state.notice = null;
 }
 
 function render() {
@@ -638,7 +988,9 @@ function render() {
     ${renderTopBar()}
     ${renderActiveView()}
     ${state.agentModalOpen ? renderAgentModal() : ''}
+    ${state.botModalOpen ? renderBotModal() : ''}
     ${state.channelModalOpen ? renderChannelModal() : ''}
+    ${state.localLlmModalOpen ? renderLocalLlmConnectionModal() : ''}
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
   `);
@@ -648,9 +1000,9 @@ function renderFrame(content, className = '') {
   return `
     <div class="app-shell ${escapeAttr(className)}">
       <div class="shell">
-        ${renderNotice()}
         ${content}
       </div>
+      ${renderNotice()}
     </div>
   `;
 }
@@ -658,9 +1010,10 @@ function renderFrame(content, className = '') {
 function renderTopBar() {
   const tabs = [
     { view: 'home', label: '홈', icon: '⌂' },
-    { view: 'bots', label: '봇', icon: '◎' },
+    { view: 'agents', label: '에이전트', icon: '◍' },
     { view: 'channels', label: '채널', icon: '≡' },
     { view: 'ai', label: 'AI', icon: '◌' },
+    { view: 'tokens', label: '토큰', icon: '◫' },
     { view: 'all', label: '전체', icon: '▦' },
   ];
 
@@ -694,14 +1047,17 @@ function renderActiveView() {
   if (state.activeView === 'home') {
     return renderHomeView();
   }
-  if (state.activeView === 'bots') {
-    return renderBotsView();
+  if (state.activeView === 'agents') {
+    return renderAgentsView();
   }
   if (state.activeView === 'channels') {
     return renderChannelsView();
   }
   if (state.activeView === 'ai') {
     return renderAiView();
+  }
+  if (state.activeView === 'tokens') {
+    return renderTokenView();
   }
   return renderAllView();
 }
@@ -721,14 +1077,19 @@ function renderHomeView() {
   `;
 }
 
-function renderBotsView() {
+function renderAgentsView() {
+  const discordService = state.data?.discord?.service || {};
   return `
     <section class="panel section-panel">
       <div class="section-head">
         <h2>에이전트 목록</h2>
-        <button type="button" class="btn-primary" data-action="open-agent-modal" ${state.busy ? 'disabled' : ''}>추가</button>
+        <div class="inline-actions">
+          <span class="field-hint">Discord 서비스 ${escapeHtml(discordService.label || '중지')}</span>
+          <button type="button" class="btn-secondary" data-action="reload-discord-service" ${state.busy || !discordService.running ? 'disabled' : ''}>전체 다시 읽기</button>
+          <button type="button" class="btn-primary" data-action="open-agent-modal" ${state.busy ? 'disabled' : ''}>추가</button>
+        </div>
       </div>
-      ${renderAgentList(state.data.agents)}
+      ${renderAgentList(state.data.agents, discordService)}
     </section>
   `;
 }
@@ -793,24 +1154,190 @@ function renderAiView() {
   `;
 }
 
-function renderAgentList(agents) {
+function renderTokenView() {
+  const tokenUsage = state.data?.tokenUsage || null;
+  if (!tokenUsage) {
+    return `
+      <section class="panel section-panel">
+        <div class="section-head">
+          <h2>토큰 기록</h2>
+        </div>
+        <div class="empty-inline">토큰 기록을 불러오지 못했습니다.</div>
+      </section>
+    `;
+  }
+
+  const totals = tokenUsage.totals || {};
+  const daily = Array.isArray(tokenUsage.daily) ? tokenUsage.daily : [];
+  const activeDaily = Array.isArray(tokenUsage.activeDaily) ? tokenUsage.activeDaily : [];
+  const byAgentType = Array.isArray(tokenUsage.byAgentType) ? tokenUsage.byAgentType : [];
+  const monthly = Array.isArray(tokenUsage.monthly) ? tokenUsage.monthly : [];
+  const maxDailyTokens = Math.max(...daily.map((entry) => Number(entry.totalTokens || 0)), 1);
+
+  return `
+    <section class="panel section-panel">
+      <div class="section-head">
+        <h2>토큰 기록</h2>
+        <span class="field-hint">최근 ${escapeHtml(String(tokenUsage.windowDays || 90))}일 · ${escapeHtml(tokenUsage.since || '')} ~ ${escapeHtml(tokenUsage.until || '')}</span>
+      </div>
+      <section class="metrics token-metrics">
+        <article class="metric">
+          <span class="metric-label">총 토큰</span>
+          <strong class="metric-value">${escapeHtml(formatTokenCount(totals.totalTokens))}</strong>
+        </article>
+        <article class="metric">
+          <span class="metric-label">입력 / 출력</span>
+          <strong class="metric-value">${escapeHtml(`${formatTokenCount(totals.inputTokens)} / ${formatTokenCount(totals.outputTokens)}`)}</strong>
+        </article>
+        <article class="metric">
+          <span class="metric-label">기록 횟수</span>
+          <strong class="metric-value">${escapeHtml(formatTokenCount(totals.recordedEvents))}</strong>
+        </article>
+        <article class="metric">
+          <span class="metric-label">활동 일수</span>
+          <strong class="metric-value">${escapeHtml(formatTokenCount(totals.activeDays))}</strong>
+        </article>
+      </section>
+      <div class="grid-two">
+        <section class="usage-summary-card">
+          <strong>AI별 합계</strong>
+          ${
+            byAgentType.length
+              ? `
+                  <div class="token-breakdown-list">
+                    ${byAgentType
+                      .map(
+                        (entry) => `
+                          <div class="token-breakdown-row">
+                            <span>${escapeHtml(localizeAgentTypeValue(entry.agentType))}</span>
+                            <strong>${escapeHtml(formatTokenCount(entry.totalTokens))}</strong>
+                          </div>
+                        `,
+                      )
+                      .join('')}
+                  </div>
+                `
+              : '<div class="field-hint">최근 3개월 기록이 없습니다.</div>'
+          }
+        </section>
+        <section class="usage-summary-card">
+          <strong>월별 합계</strong>
+          ${
+            monthly.length
+              ? `
+                  <div class="token-breakdown-list">
+                    ${monthly
+                      .map(
+                        (entry) => `
+                          <div class="token-breakdown-row">
+                            <span>${escapeHtml(entry.date)}</span>
+                            <strong>${escapeHtml(formatTokenCount(entry.totalTokens))}</strong>
+                          </div>
+                        `,
+                      )
+                      .join('')}
+                  </div>
+                `
+              : '<div class="field-hint">최근 3개월 기록이 없습니다.</div>'
+          }
+        </section>
+      </div>
+      <section class="usage-summary-card">
+        <strong>일별 추이</strong>
+        ${
+          activeDaily.length
+            ? `
+                <div class="token-chart">
+                  ${daily
+                    .map((entry) => {
+                      const totalTokens = Number(entry.totalTokens || 0);
+                      const width = totalTokens > 0 ? Math.max(2, Math.round((totalTokens / maxDailyTokens) * 100)) : 0;
+                      return `
+                        <div class="token-chart-row">
+                          <span class="token-chart-date">${escapeHtml(entry.date)}</span>
+                          <div class="token-chart-bar-track">
+                            <div class="token-chart-bar" style="width:${width}%"></div>
+                          </div>
+                          <strong class="token-chart-value">${escapeHtml(formatTokenCount(totalTokens))}</strong>
+                        </div>
+                      `;
+                    })
+                    .join('')}
+                </div>
+              `
+            : '<div class="field-hint">최근 3개월 기록이 없습니다.</div>'
+        }
+      </section>
+      <section class="usage-summary-card">
+        <strong>최근 활동 일자</strong>
+        ${
+          activeDaily.length
+            ? `
+                <div class="token-table">
+                  <div class="token-table-head">
+                    <span>날짜</span>
+                    <span>기록</span>
+                    <span>입력</span>
+                    <span>출력</span>
+                    <span>총합</span>
+                  </div>
+                  <div class="token-table-body">
+                    ${activeDaily
+                      .slice(0, 30)
+                      .map(
+                        (entry) => `
+                          <div class="token-table-row">
+                            <span>${escapeHtml(entry.date)}</span>
+                            <span>${escapeHtml(formatTokenCount(entry.recordedEvents))}</span>
+                            <span>${escapeHtml(formatTokenCount(entry.inputTokens))}</span>
+                            <span>${escapeHtml(formatTokenCount(entry.outputTokens))}</span>
+                            <strong>${escapeHtml(formatTokenCount(entry.totalTokens))}</strong>
+                          </div>
+                        `,
+                      )
+                      .join('')}
+                  </div>
+                </div>
+              `
+            : '<div class="field-hint">최근 3개월 기록이 없습니다.</div>'
+        }
+      </section>
+    </section>
+  `;
+}
+
+function renderAgentList(agents, discordService = {}) {
   if (!agents.length) {
     return '<div class="empty-inline">에이전트가 없습니다.</div>';
   }
 
+  const serviceBots = discordService?.bots || {};
   return `
     <div class="card-list">
       ${agents
         .map(
-          (agent) => `
-            <article class="card">
-              <div class="card-main">
-                <strong class="card-title">${escapeHtml(agent.name)}</strong>
-                <span class="card-meta">${escapeHtml(localizeAgentTypeValue(agent.agent))}${agent.model ? ` · ${escapeHtml(agent.model)}` : ''}</span>
-              </div>
-              <button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>삭제</button>
-            </article>
-          `,
+          (agent) => {
+            const runtimeBot = serviceBots[agent.name] || {};
+            const connectionSummary = runtimeBot.connected
+              ? `연결됨${runtimeBot.tag ? ` · ${runtimeBot.tag}` : ''}`
+              : discordService.running
+                ? '연결 안 됨'
+                : '서비스 중지';
+            return `
+              <article class="card">
+                <div class="card-main">
+                  <strong class="card-title">${escapeHtml(agent.name)}</strong>
+                  <span class="card-meta">${escapeHtml(localizeAgentTypeValue(agent.agent))}${agent.model ? ` · ${escapeHtml(agent.model)}` : ''}</span>
+                  <div class="field-hint">Discord 토큰 ${agent.discordTokenConfigured ? '설정됨' : '미설정'} · ${escapeHtml(connectionSummary)} · 채널 ${escapeHtml(String((agent.mappedChannelNames || []).length))}개</div>
+                </div>
+                <div class="inline-actions">
+                  <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>수정</button>
+                  <button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !discordService.running ? 'disabled' : ''}>재연결</button>
+                  <button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>삭제</button>
+                </div>
+              </article>
+            `;
+          },
         )
         .join('')}
     </div>
@@ -896,6 +1423,7 @@ function renderChannelList(channels, agents) {
                 }
               </div>
               <div class="inline-actions">
+                <button type="button" class="btn-secondary" data-action="edit-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>수정</button>
                 ${
                   claudeSessions.length > 0
                     ? `<button type="button" class="btn-secondary" data-action="reset-channel-runtime-sessions" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>세션 초기화</button>`
@@ -954,12 +1482,13 @@ function renderAgentModal() {
   const steps = getAgentWizardSteps(state.agentWizard?.draft || createBlankAgent());
   const currentStep = state.agentWizard?.step || 0;
   const step = steps[currentStep];
+  const isEditing = Boolean(optionalDraftText(state.agentWizard?.currentName));
   return `
-    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="에이전트 추가">
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="에이전트 ${isEditing ? '수정' : '추가'}">
       <div class="modal-backdrop" data-action="close-agent-modal"></div>
       <div class="panel modal-card">
         <div class="section-head">
-          <h2>에이전트 추가</h2>
+          <h2>에이전트 ${isEditing ? '수정' : '추가'}</h2>
           <button type="button" class="btn-secondary" data-action="close-agent-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
         </div>
         <form data-form="agent-wizard" class="form wizard-form">
@@ -977,7 +1506,7 @@ function renderAgentModal() {
                 : ''
             }
             <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>
-              ${currentStep === steps.length - 1 ? '추가' : '다음'}
+              ${currentStep === steps.length - 1 ? (isEditing ? '저장' : '추가') : '다음'}
             </button>
           </div>
         </form>
@@ -998,6 +1527,10 @@ function renderAiModal() {
   const testSupported = isAiTestSupported(entry.value);
   const authResult = state.aiManager?.authResult;
   const testResult = state.aiManager?.testResult;
+  const usageSummary =
+    state.aiManager?.usageSummary ||
+    state.aiStatuses?.[entry.value]?.usageSummary ||
+    null;
   const ready = isAiReady(entry.value, {
     authResult,
     testResult,
@@ -1013,6 +1546,7 @@ function renderAiModal() {
         </div>
         <form data-form="ai-manager" class="form">
           <div class="ai-modal-body">${renderAiStatusChips(entry.value, authResult, testResult, ready)}</div>
+          ${renderAiUsageSummary(entry.value, usageSummary)}
           ${renderAiWorkflowGuide(entry.value, authResult, testResult, ready, testSupported)}
           ${renderAiAuthFields(entry.value)}
           ${renderAiCredentialFields(entry.value)}
@@ -1049,7 +1583,7 @@ function renderAiModal() {
                   <div class="wizard-auth-actions">
                     <button type="button" class="btn-secondary" data-action="ai-auth-logout" ${state.busy ? 'disabled' : ''}>로그아웃</button>
                     ${
-                      credentialEditingSupported
+                      credentialEditingSupported && entry.value !== 'local-llm'
                         ? `<button
                             type="button"
                             class="btn-secondary"
@@ -1073,7 +1607,7 @@ function renderAiModal() {
             !authSupported
               ? `<div class="wizard-auth-actions">
                   ${
-                    credentialEditingSupported
+                    credentialEditingSupported && entry.value !== 'local-llm'
                       ? `<button
                           type="button"
                           class="btn-secondary"
@@ -1129,7 +1663,7 @@ function renderAiStatusChips(agentType, authResult, testResult, ready) {
   }
   if (authResult?.details?.configured !== undefined && agentType !== 'codex') {
     const configured = Boolean(authResult?.details?.configured);
-    const label = agentType === 'local-llm' ? '기본 설정' : 'API 키';
+    const label = agentType === 'local-llm' ? '연결' : 'API 키';
     chips.push(
       `<div class="auth-chip ${configured ? 'is-ok' : ''}">${escapeHtml(`${label} ${configured ? '완료' : '미완료'}`)}</div>`,
     );
@@ -1254,6 +1788,62 @@ function renderAiWorkflowGuide(agentType, authResult, testResult, ready, testSup
   `;
 }
 
+function renderAiUsageSummary(agentType, usageSummary) {
+  const summary = usageSummary || {
+    supported: ['claude-code', 'gemini-cli', 'local-llm'].includes(agentType),
+    recordedEvents: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    lastRecordedAt: null,
+  };
+
+  if (!summary.supported) {
+    return `
+      <div class="usage-summary-card">
+        <strong>토큰 사용량</strong>
+        <div class="field-hint">이 런타임은 토큰 사용량을 노출하지 않습니다.</div>
+      </div>
+    `;
+  }
+
+  if (!summary.recordedEvents) {
+    return `
+      <div class="usage-summary-card">
+        <strong>토큰 사용량</strong>
+        <div class="field-hint">아직 기록이 없습니다. 이 앱에서 테스트 호출이나 실제 채널 실행을 한 뒤부터 누적됩니다.</div>
+      </div>
+    `;
+  }
+
+  const chips = [
+    `<div class="auth-chip is-ok">총 ${escapeHtml(formatTokenCount(summary.totalTokens))}</div>`,
+    `<div class="auth-chip">입력 ${escapeHtml(formatTokenCount(summary.inputTokens))}</div>`,
+    `<div class="auth-chip">출력 ${escapeHtml(formatTokenCount(summary.outputTokens))}</div>`,
+  ];
+  if (summary.cacheCreationInputTokens > 0) {
+    chips.push(
+      `<div class="auth-chip">캐시 작성 ${escapeHtml(formatTokenCount(summary.cacheCreationInputTokens))}</div>`,
+    );
+  }
+  if (summary.cacheReadInputTokens > 0) {
+    chips.push(
+      `<div class="auth-chip">캐시 읽기 ${escapeHtml(formatTokenCount(summary.cacheReadInputTokens))}</div>`,
+    );
+  }
+
+  return `
+    <div class="usage-summary-card">
+      <strong>토큰 사용량</strong>
+      <div class="ai-modal-body">${chips.join('')}</div>
+      <div class="field-hint">이 앱이 관측한 누적값만 집계합니다. 외부에서 직접 사용한 내역은 포함되지 않습니다.</div>
+      <div class="field-hint">기록 횟수 ${escapeHtml(formatTokenCount(summary.recordedEvents))}${summary.lastRecordedAt ? ` · 마지막 기록 ${escapeHtml(formatRelativeDateTime(summary.lastRecordedAt))}` : ''}</div>
+    </div>
+  `;
+}
+
 function isAiCompleteLoginDisabled(agentType, authResult) {
   if (agentType === 'claude-code') {
     const authorizationCode = optionalDraftText(state.aiManager?.authConfig?.authorizationCode);
@@ -1284,7 +1874,7 @@ function buildAiPrimaryStatusChip(agentType, authResult) {
   }
 
   const configured = Boolean(authResult?.details?.configured);
-  const label = agentType === 'local-llm' ? '기본 설정' : '자격정보';
+  const label = agentType === 'local-llm' ? '연결' : '자격정보';
   return `<div class="auth-chip ${configured ? 'is-ok' : ''}">${escapeHtml(`${label} ${configured ? '완료' : '미완료'}`)}</div>`;
 }
 
@@ -1330,15 +1920,18 @@ function renderAdminPasswordModal() {
 function renderChannelModal() {
   const current = state.channelDraft || createBlankChannel();
   const isTribunal = current.mode === 'tribunal';
+  const agentNames = (state.data.agents || []).map((entry) => entry.name);
+  const isEditing = Boolean(optionalDraftText(current.currentName));
   return `
-    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="채널 추가">
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="채널 ${isEditing ? '수정' : '추가'}">
       <div class="modal-backdrop" data-action="close-channel-modal"></div>
       <div class="panel modal-card">
         <div class="section-head">
-          <h2>채널 추가</h2>
+          <h2>채널 ${isEditing ? '수정' : '추가'}</h2>
           <button type="button" class="btn-secondary" data-action="close-channel-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
         </div>
         <form data-form="channel" class="form">
+          <input type="hidden" name="currentName" value="${escapeAttr(current.currentName || '')}" />
           <div class="form-grid">
             <div class="field">
               <label for="channel-name">이름</label>
@@ -1362,7 +1955,7 @@ function renderChannelModal() {
             </div>
             <div class="field">
               <label for="channel-agent">owner 에이전트</label>
-              <select id="channel-agent" name="agent">${renderNameOptions(state.data.agents.map((entry) => entry.name), current.agent)}</select>
+              <select id="channel-agent" name="agent">${renderNameOptions(agentNames, current.agent)}</select>
             </div>
             ${
               isTribunal
@@ -1377,11 +1970,11 @@ function renderChannelModal() {
                     </div>
                     <div class="field">
                       <label for="channel-reviewer">reviewer 에이전트</label>
-                      <select id="channel-reviewer" name="reviewer">${renderNameOptions(state.data.agents.map((entry) => entry.name), current.reviewer, true)}</select>
+                      <select id="channel-reviewer" name="reviewer">${renderNameOptions(agentNames, current.reviewer, true)}</select>
                     </div>
                     <div class="field">
                       <label for="channel-arbiter">arbiter 에이전트</label>
-                      <select id="channel-arbiter" name="arbiter">${renderNameOptions(state.data.agents.map((entry) => entry.name), current.arbiter, true)}</select>
+                      <select id="channel-arbiter" name="arbiter">${renderNameOptions(agentNames, current.arbiter, true)}</select>
                     </div>
                     <div class="field">
                       <label for="channel-rounds">검토 회차</label>
@@ -1396,7 +1989,87 @@ function renderChannelModal() {
             </div>
           </div>
           <div class="actions">
-            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>추가</button>
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${isEditing ? '저장' : '추가'}</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderBotModal() {
+  const current = state.botDraft || createBlankBot();
+  const isEditing = Boolean(optionalDraftText(current.currentName));
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="봇 ${isEditing ? '수정' : '추가'}">
+      <div class="modal-backdrop" data-action="close-bot-modal"></div>
+      <div class="panel modal-card">
+        <div class="section-head">
+          <h2>봇 ${isEditing ? '수정' : '추가'}</h2>
+          <button type="button" class="btn-secondary" data-action="close-bot-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
+        </div>
+        <form data-form="bot" class="form">
+          <input type="hidden" name="currentName" value="${escapeAttr(current.currentName || '')}" />
+          <div class="form-grid">
+            <div class="field">
+              <label for="bot-name">이름</label>
+              <input id="bot-name" name="name" value="${escapeAttr(current.name)}" />
+            </div>
+            <div class="field">
+              <label for="bot-agent">에이전트</label>
+              <select id="bot-agent" name="agent">${renderNameOptions(state.data.agents.map((entry) => entry.name), current.agent)}</select>
+            </div>
+            <div class="field field-full">
+              <label for="bot-discord-token">Discord 토큰</label>
+              <input id="bot-discord-token" name="discordToken" value="${escapeAttr(current.discordToken)}" />
+            </div>
+            <div class="field field-full">
+              <label for="bot-description">설명</label>
+              <textarea id="bot-description" name="description">${escapeHtml(current.description)}</textarea>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${isEditing ? '저장' : '추가'}</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderLocalLlmConnectionModal() {
+  const current = state.localLlmDraft || createLocalLlmConnectionDraft();
+  const isEditing = Boolean(optionalDraftText(current.currentName));
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="로컬 LLM 연결 ${isEditing ? '수정' : '추가'}">
+      <div class="modal-backdrop" data-action="close-local-llm-modal"></div>
+      <div class="panel modal-card">
+        <div class="section-head">
+          <h2>로컬 LLM 연결 ${isEditing ? '수정' : '추가'}</h2>
+          <button type="button" class="btn-secondary" data-action="close-local-llm-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
+        </div>
+        <form data-form="local-llm-connection" class="form">
+          <input type="hidden" name="currentName" value="${escapeAttr(current.currentName || '')}" />
+          <div class="form-grid">
+            <div class="field">
+              <label for="local-llm-name">이름</label>
+              <input id="local-llm-name" name="name" value="${escapeAttr(current.name)}" />
+            </div>
+            <div class="field field-full">
+              <label for="local-llm-base-url">주소</label>
+              <input id="local-llm-base-url" name="baseUrl" value="${escapeAttr(current.baseUrl)}" placeholder="예: http://127.0.0.1:11434/v1" />
+            </div>
+            <div class="field field-full">
+              <label for="local-llm-api-key">API 키</label>
+              <input id="local-llm-api-key" name="apiKey" value="${escapeAttr(current.apiKey)}" placeholder="선택 사항" />
+            </div>
+            <div class="field field-full">
+              <label for="local-llm-description">설명</label>
+              <textarea id="local-llm-description" name="description">${escapeHtml(current.description)}</textarea>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${isEditing ? '저장' : '추가'}</button>
           </div>
         </form>
       </div>
@@ -1436,14 +2109,17 @@ function renderNotice() {
     return '';
   }
   return `
-    <div class="notice ${state.notice.type === 'error' ? 'is-error' : 'is-info'}">
-      ${escapeHtml(state.notice.text)}
+    <div class="notice-stack" aria-live="polite" aria-atomic="true">
+      <div class="notice ${state.notice.type === 'error' ? 'is-error' : 'is-info'}">
+        <div class="notice-body">${escapeHtml(state.notice.text)}</div>
+        <button type="button" class="notice-close" data-action="close-notice" aria-label="알림 닫기">닫기</button>
+      </div>
     </div>
   `;
 }
 
 function getAgentWizardSteps(draft) {
-  const selectableAgentTypes = getSelectableAgentTypes();
+  const selectableAgentTypes = getAgentTypeChoicesForDraft(draft);
   const steps = [
     {
       id: 'name',
@@ -1478,6 +2154,8 @@ function getAgentWizardSteps(draft) {
         value: draft.model,
         modelMode: draft.modelMode,
         modelModeInputName: 'modelMode',
+        catalogScope: 'agent-wizard',
+        modelCatalog: state.agentWizard?.modelCatalog || null,
       }),
     },
     {
@@ -1547,7 +2225,20 @@ function getAgentWizardSteps(draft) {
 }
 
 function renderAgentWizardRuntimeStep(draft) {
-  const blocks = [];
+  const blocks = [
+    `
+      <div class="field field-full">
+        <label for="wizard-agent-discord-token">Discord 토큰</label>
+        <input
+          id="wizard-agent-discord-token"
+          name="discordToken"
+          value="${escapeAttr(draft.discordToken || '')}"
+          placeholder="Discord bot token"
+        />
+        <div class="field-hint">에이전트 하나가 Discord 서비스 연결 하나를 가집니다. 이 토큰으로 해당 에이전트 메시지를 받습니다.</div>
+      </div>
+    `,
+  ];
 
   if (draft.agent === 'codex') {
     blocks.push(`
@@ -1570,10 +2261,20 @@ function renderAgentWizardRuntimeStep(draft) {
   if (draft.agent === 'local-llm') {
     blocks.push(`
       <div class="field">
-        <label for="wizard-agent-base-url">로컬 LLM 주소</label>
-        <input id="wizard-agent-base-url" name="baseUrl" value="${escapeAttr(draft.baseUrl)}" />
+        <label for="wizard-agent-local-llm-connection">로컬 LLM 연결</label>
+        <select id="wizard-agent-local-llm-connection" name="localLlmConnection">
+          ${renderLocalLlmConnectionOptions(draft.localLlmConnection, true)}
+        </select>
       </div>
     `);
+    if (!optionalDraftText(draft.localLlmConnection)) {
+      blocks.push(`
+        <div class="field">
+          <label for="wizard-agent-base-url">직접 입력 주소</label>
+          <input id="wizard-agent-base-url" name="baseUrl" value="${escapeAttr(draft.baseUrl)}" />
+        </div>
+      `);
+    }
   }
 
   if (draft.agent === 'command') {
@@ -1693,11 +2394,16 @@ function validateAgentWizardStep() {
   }
 
   if (currentStep.id === 'runtime') {
+    requiredDraftText(draft.discordToken, 'discordToken');
     if (draft.agent === 'command') {
       requiredDraftText(draft.command, 'command');
     }
-    if (draft.agent === 'local-llm' && !optionalDraftText(draft.baseUrl)) {
-      throw new Error('로컬 LLM 주소를 입력하세요.');
+    if (
+      draft.agent === 'local-llm' &&
+      !optionalDraftText(draft.localLlmConnection) &&
+      !optionalDraftText(draft.baseUrl)
+    ) {
+      throw new Error('로컬 LLM 연결을 고르거나 직접 입력 주소를 넣으세요.');
     }
   }
 
@@ -1731,8 +2437,66 @@ function createBlankAgent(agentType = null) {
     sandbox: state.data.choices.codexSandboxes[0]?.value || '',
     permissionMode: defaultClaudePermissionMode,
     dangerous: false,
-    baseUrl: 'http://127.0.0.1:11434/v1',
+    discordToken: '',
+    localLlmConnection: getDefaultLocalLlmConnectionName(),
+    baseUrl: '',
     command: '',
+  };
+}
+
+function createAgentDraft(agent) {
+  const resolvedAgentType = optionalDraftText(agent?.agent) || getSelectableAgentTypes()[0]?.value || '';
+  const model = optionalDraftText(agent?.model);
+  return {
+    name: agent?.name || '',
+    agent: resolvedAgentType,
+    fallbackAgent: optionalDraftText(agent?.fallbackAgent),
+    modelMode: supportsDefaultModelMode(resolvedAgentType) ? (model ? 'custom' : 'default') : 'custom',
+    model: model || '',
+    effort: optionalDraftText(agent?.effort),
+    timeoutMs: agent?.timeoutMs ? String(agent.timeoutMs) : '',
+    systemPrompt: agent?.systemPrompt || '',
+    systemPromptFile: agent?.systemPromptFile || '',
+    skillsText: Array.isArray(agent?.skills) ? agent.skills.join('\n') : '',
+    contextFilesText: Array.isArray(agent?.contextFiles) ? agent.contextFiles.join('\n') : '',
+    envEntries: Object.entries(agent?.env || {}).map(([key, value]) => createEnvEntry(key, value)),
+    sandbox: optionalDraftText(agent?.sandbox) || state.data?.choices?.codexSandboxes?.[0]?.value || '',
+    permissionMode:
+      optionalDraftText(agent?.permissionMode) ||
+      state.data?.choices?.claudePermissionModes?.find((entry) => entry.value === 'bypassPermissions')?.value ||
+      state.data?.choices?.claudePermissionModes?.[0]?.value ||
+      '',
+    dangerous: Boolean(agent?.dangerous),
+    discordToken: optionalDraftText(agent?.discordToken),
+    localLlmConnection: optionalDraftText(agent?.localLlmConnection) || getDefaultLocalLlmConnectionName(),
+    baseUrl: optionalDraftText(agent?.baseUrl),
+    command: agent?.command || '',
+  };
+}
+
+function createBotDraft(bot) {
+  return {
+    currentName: bot?.name || '',
+    name: bot?.name || '',
+    agent: bot?.agent || state.data?.agents?.[0]?.name || '',
+    discordToken: bot?.discordToken || '',
+    description: bot?.description || '',
+  };
+}
+
+function createChannelDraft(channel) {
+  return {
+    currentName: channel?.name || '',
+    name: channel?.name || '',
+    mode: channel?.mode || 'single',
+    discordChannelId: channel?.discordChannelId || '',
+    guildId: channel?.guildId || '',
+    workspace: channel?.workspace || DEFAULT_CHANNEL_WORKSPACE,
+    agent: channel?.agent || '',
+    reviewer: channel?.reviewer || '',
+    arbiter: channel?.arbiter || '',
+    reviewRounds: channel?.reviewRounds ? String(channel.reviewRounds) : '',
+    description: channel?.description || '',
   };
 }
 
@@ -1752,8 +2516,18 @@ function getSelectableAgentTypes() {
   });
 }
 
+function getAgentTypeChoicesForDraft(draft) {
+  const choices = getSelectableAgentTypes();
+  const currentAgentType = optionalDraftText(draft?.agent);
+  if (!currentAgentType || choices.some((entry) => entry.value === currentAgentType)) {
+    return choices;
+  }
+  const currentEntry = getAgentTypeChoice(currentAgentType);
+  return currentEntry ? [...choices, currentEntry] : choices;
+}
+
 function assertSelectableAgentType(agentType) {
-  const exists = getSelectableAgentTypes().some((entry) => entry.value === agentType);
+  const exists = getAgentTypeChoicesForDraft(state.agentWizard?.draft).some((entry) => entry.value === agentType);
   if (!exists) {
     throw new Error('사용 가능한 AI만 선택할 수 있습니다.');
   }
@@ -1761,18 +2535,20 @@ function assertSelectableAgentType(agentType) {
 
 function createAiManager(agentType) {
   const cached = state.aiStatuses[agentType] || {};
-  const sharedEnv = state.data?.sharedEnv || {};
-  const localLlmBaseUrl = optionalDraftText(sharedEnv.LOCAL_LLM_BASE_URL) || 'http://127.0.0.1:11434/v1';
+  const localLlmConnections = getLocalLlmConnectionEntries();
+  const defaultLocalLlmConnection = localLlmConnections[0]?.name || '';
   return {
     type: agentType,
     authResult: cached.authResult || null,
     testResult: cached.testResult || null,
+    usageSummary: cached.usageSummary || null,
+    modelCatalog: null,
     authConfig: buildAiAuthDraft(agentType),
-    credentials: buildAiCredentialDraft(agentType, sharedEnv),
+    credentials: buildAiCredentialDraft(agentType),
     testConfig: {
       modelMode: defaultModelModeForAgent(agentType),
       model: '',
-      baseUrl: localLlmBaseUrl,
+      localLlmConnection: defaultLocalLlmConnection,
     },
   };
 }
@@ -1831,6 +2607,7 @@ async function runAiManagerAction(action, options = {}) {
 
     if (action === 'test') {
       state.aiManager.testResult = response.result;
+      state.aiManager.usageSummary = response.result?.details?.usageSummary || state.aiManager.usageSummary;
     } else {
       state.aiManager.authResult = response.result;
       if (action === 'logout') {
@@ -1862,30 +2639,40 @@ async function saveAiCredentials() {
   }
 
   const agentType = optionalDraftText(state.aiManager.type);
-  const nextSharedEnv = {
-    ...(state.data?.sharedEnv || {}),
-  };
+  let response;
+  if (agentType === 'local-llm') {
+    response = await mutateJson('/api/local-llm-connections', {
+      method: 'PUT',
+      body: {
+        connections: parseLocalLlmConnectionEntries(state.aiManager.credentials.connections),
+      },
+    });
+  } else {
+    const nextSharedEnv = {
+      ...(state.data?.sharedEnv || {}),
+    };
 
-  for (const key of getAiManagedCredentialKeys(agentType)) {
-    const value = optionalDraftText(state.aiManager.credentials?.[key]);
-    if (value) {
-      nextSharedEnv[key] = value;
-    } else {
-      delete nextSharedEnv[key];
+    for (const key of getAiManagedCredentialKeys(agentType)) {
+      const value = optionalDraftText(state.aiManager.credentials?.[key]);
+      if (value) {
+        nextSharedEnv[key] = value;
+      } else {
+        delete nextSharedEnv[key];
+      }
     }
-  }
 
-  const response = await mutateJson('/api/shared-env', {
-    method: 'PUT',
-    body: {
-      sharedEnv: nextSharedEnv,
-    },
-  });
+    response = await mutateJson('/api/shared-env', {
+      method: 'PUT',
+      body: {
+        sharedEnv: nextSharedEnv,
+      },
+    });
+  }
 
   state.data = response.state;
   await refreshAiStatuses();
   state.aiManager = createAiManager(agentType);
-  setNotice('info', `${localizeAgentTypeValue(agentType)} 자격정보를 저장했습니다.`);
+  setNotice('info', agentType === 'local-llm' ? '로컬 LLM 연결 목록을 저장했습니다.' : `${localizeAgentTypeValue(agentType)} 자격정보를 저장했습니다.`);
   render();
 }
 
@@ -1909,7 +2696,7 @@ function buildAiManagerTestDefinition(agentType) {
   }
 
   if (agentType === 'local-llm') {
-    definition.baseUrl = optionalDraftText(config.baseUrl) || 'http://127.0.0.1:11434/v1';
+    definition.localLlmConnection = optionalDraftText(config.localLlmConnection);
   }
 
   return definition;
@@ -1932,6 +2719,8 @@ function renderAiTestFields(agentType) {
         value: config.model || '',
         modelMode: config.modelMode,
         modelModeInputName: 'modelMode',
+        catalogScope: 'ai-manager',
+        modelCatalog: state.aiManager?.modelCatalog || null,
       }),
     );
   }
@@ -1939,8 +2728,19 @@ function renderAiTestFields(agentType) {
   if (agentType === 'local-llm') {
     fields.push(`
       <div class="field field-full">
-        <label for="ai-manager-base-url">주소</label>
-        <input id="ai-manager-base-url" name="baseUrl" value="${escapeAttr(config.baseUrl || 'http://127.0.0.1:11434/v1')}" />
+        <label for="ai-manager-local-llm-connection">테스트 대상 연결</label>
+        <select id="ai-manager-local-llm-connection" name="localLlmConnection">
+          ${renderLocalLlmConnectionOptions(config.localLlmConnection, false)}
+        </select>
+        <div class="field-hint">${escapeHtml(describeSelectedLocalLlmConnection(config.localLlmConnection))}</div>
+      </div>
+    `);
+  }
+
+  if (agentType === 'local-llm' && !getLocalLlmConnectionEntries().length) {
+    fields.push(`
+      <div class="field field-full">
+        <div class="field-hint">저장된 연결이 없습니다. 먼저 위에서 연결을 추가하세요.</div>
       </div>
     `);
   }
@@ -1951,6 +2751,22 @@ function renderAiTestFields(agentType) {
 function renderAiCredentialFields(agentType) {
   if (!supportsAiCredentialEditing(agentType)) {
     return '';
+  }
+
+  if (agentType === 'local-llm') {
+    const connections = getLocalLlmConnectionEntries();
+    return `
+      <div class="form-grid">
+        <div class="field field-full">
+          <label>로컬 LLM 연결</label>
+          <div class="field-hint">연결은 한 번에 하나씩 추가하거나 수정합니다. 에이전트와 테스트에서 이 목록 중 하나를 선택해 씁니다.</div>
+          ${renderLocalLlmConnectionList(connections)}
+          <div class="actions env-editor-actions">
+            <button type="button" class="btn-secondary btn-inline" data-action="open-local-llm-modal" ${state.busy ? 'disabled' : ''}>연결 추가</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   const credentials = state.aiManager?.credentials || {};
@@ -2083,13 +2899,163 @@ function handleLoginLaunch(result, popup) {
 }
 
 function buildAiCredentialDraft(agentType, sharedEnv) {
+  if (agentType === 'local-llm') {
+    return {
+      connections: getLocalLlmConnectionEntries().map((entry) =>
+        createLocalLlmConnectionEntry(entry.name, entry.baseUrl, entry.apiKey, entry.description),
+      ),
+    };
+  }
   return Object.fromEntries(
     getAiManagedCredentialKeys(agentType).map((key) => [key, sharedEnv?.[key] || '']),
   );
 }
 
+async function loadModelCatalog(scope) {
+  const payload = buildModelCatalogRequest(scope);
+  const response = await mutateJson('/api/agent-models', {
+    method: 'POST',
+    body: payload,
+  });
+
+  if (scope === 'agent-wizard' && state.agentWizard) {
+    state.agentWizard.modelCatalog = response.result;
+  } else if (scope === 'ai-manager' && state.aiManager) {
+    state.aiManager.modelCatalog = response.result;
+  }
+
+  setNotice('info', response.result?.summary || '모델 목록을 불러왔습니다.');
+  render();
+}
+
+function buildModelCatalogRequest(scope) {
+  if (scope === 'agent-wizard' && state.agentWizard) {
+    const draft = state.agentWizard.draft || {};
+    const payload = {
+      agentType: optionalDraftText(draft.agent),
+    };
+    if (draft.agent === 'local-llm') {
+      const selectedConnection = resolveLocalLlmConnectionEntry(
+        optionalDraftText(draft.localLlmConnection),
+      );
+      const baseUrl = selectedConnection?.baseUrl || optionalDraftText(draft.baseUrl);
+      if (baseUrl) {
+        payload.baseUrl = baseUrl;
+      }
+    }
+    return payload;
+  }
+
+  if (scope === 'ai-manager' && state.aiManager) {
+    const payload = {
+      agentType: optionalDraftText(state.aiManager.type),
+    };
+    if (state.aiManager.type === 'local-llm') {
+      const selectedConnection = resolveLocalLlmConnectionEntry(
+        optionalDraftText(state.aiManager.testConfig?.localLlmConnection),
+      );
+      if (selectedConnection?.baseUrl) {
+        payload.baseUrl = selectedConnection.baseUrl;
+      }
+    }
+    return payload;
+  }
+
+  throw new Error('모델 목록을 불러올 대상을 찾지 못했습니다.');
+}
+
+function applyDefaultModelSelection(scope) {
+  const catalog =
+    scope === 'agent-wizard'
+      ? state.agentWizard?.modelCatalog
+      : scope === 'ai-manager'
+        ? state.aiManager?.modelCatalog
+        : null;
+  const model =
+    optionalDraftText(catalog?.defaultModel) ||
+    optionalDraftText(catalog?.models?.[0]?.value);
+  if (!model) {
+    throw new Error('적용할 기본 모델이 없습니다.');
+  }
+  applyModelSelection(scope, model);
+}
+
+function applyModelSelection(scope, model) {
+  const resolvedModel = optionalDraftText(model);
+  if (!resolvedModel) {
+    return;
+  }
+
+  if (scope === 'agent-wizard' && state.agentWizard) {
+    state.agentWizard.draft.modelMode = 'custom';
+    state.agentWizard.draft.model = resolvedModel;
+    state.agentWizard.draft.effort = normalizeEffortValue(
+      state.agentWizard.draft.agent,
+      resolvedModel,
+      state.agentWizard.draft.effort,
+    );
+    render();
+    return;
+  }
+
+  if (scope === 'ai-manager' && state.aiManager) {
+    state.aiManager.testConfig.modelMode = 'custom';
+    state.aiManager.testConfig.model = resolvedModel;
+    render();
+  }
+}
+
+function renderModelCatalogResult(modelCatalog, scope, selectedModel) {
+  if (!modelCatalog) {
+    return '';
+  }
+
+  const models = Array.isArray(modelCatalog.models) ? modelCatalog.models : [];
+  if (!models.length) {
+    return `
+      <div class="wizard-result">
+        <strong>${escapeHtml(modelCatalog.summary || '조회된 모델이 없습니다.')}</strong>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="wizard-result">
+      <strong>${escapeHtml(modelCatalog.summary || '모델 목록')}</strong>
+      <div class="field-hint">
+        ${escapeHtml(modelCatalog.source === 'live' ? '실시간 조회 결과' : '권장 기본값 목록')}
+        ${modelCatalog.defaultModel ? ` · 기본 추천 ${escapeHtml(modelCatalog.defaultModel)}` : ''}
+      </div>
+      <div class="option-list">
+        ${models
+          .map((entry) => {
+            const modelValue = optionalDraftText(entry?.value);
+            const isActive = optionalDraftText(selectedModel) === modelValue;
+            return `
+              <button
+                type="button"
+                class="option-chip ${isActive ? 'is-active' : ''}"
+                data-action="apply-model-suggestion"
+                data-scope="${escapeAttr(scope)}"
+                data-model="${escapeAttr(modelValue)}"
+                ${state.busy ? 'disabled' : ''}
+              >
+                ${escapeHtml(entry?.label || modelValue)}
+              </button>
+            `;
+          })
+          .join('')}
+      </div>
+    </div>
+  `;
+}
+
 function supportsAiCredentialEditing(agentType) {
   return ['local-llm'].includes(agentType);
+}
+
+function supportsModelCatalogLookup(agentType) {
+  return ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
 }
 
 function isAiStatusSupported(agentType) {
@@ -2097,31 +3063,12 @@ function isAiStatusSupported(agentType) {
 }
 
 function getAiManagedCredentialKeys(agentType) {
-  if (agentType === 'local-llm') {
-    return ['LOCAL_LLM_BASE_URL', 'LOCAL_LLM_API_KEY'];
-  }
   return [];
 }
 
 function getAiCredentialFields(agentType) {
   if (agentType === 'local-llm') {
-    return [
-      {
-        envKey: 'LOCAL_LLM_BASE_URL',
-        inputId: 'ai-manager-local-llm-base-url',
-        label: 'LOCAL_LLM_BASE_URL',
-        type: 'text',
-        placeholder: 'http://127.0.0.1:11434/v1',
-      },
-      {
-        envKey: 'LOCAL_LLM_API_KEY',
-        inputId: 'ai-manager-local-llm-api-key',
-        label: 'LOCAL_LLM_API_KEY',
-        type: 'password',
-        placeholder: '선택 사항',
-        hint: 'OpenAI 호환 서버가 토큰을 요구할 때만 입력하면 됩니다.',
-      },
-    ];
+    return [];
   }
   return [];
 }
@@ -2133,10 +3080,13 @@ function renderModelField({
   value,
   modelMode = defaultModelModeForAgent(agentType),
   modelModeInputName = 'modelMode',
+  catalogScope = '',
+  modelCatalog = null,
 }) {
   const examples = getModelExamples(agentType);
   const placeholder = examples[0] || '';
   const canUseDefault = supportsDefaultModelMode(agentType);
+  const canLookupCatalog = supportsModelCatalogLookup(agentType);
   return `
     <div class="field field-full">
       <label for="${escapeAttr(inputId)}">모델</label>
@@ -2168,6 +3118,37 @@ function renderModelField({
           : ''
       }
       ${examples.length ? `<div class="field-hint">예: ${escapeHtml(examples.join(', '))}</div>` : ''}
+      ${
+        canLookupCatalog
+          ? `
+              <div class="wizard-auth-actions">
+                <button
+                  type="button"
+                  class="btn-secondary"
+                  data-action="load-model-catalog"
+                  data-scope="${escapeAttr(catalogScope)}"
+                  ${state.busy ? 'disabled' : ''}
+                >
+                  모델 불러오기
+                </button>
+                ${
+                  modelCatalog?.defaultModel
+                    ? `<button
+                        type="button"
+                        class="btn-secondary"
+                        data-action="apply-default-model"
+                        data-scope="${escapeAttr(catalogScope)}"
+                        ${state.busy ? 'disabled' : ''}
+                      >
+                        권장 기본값 적용
+                      </button>`
+                    : ''
+                }
+              </div>
+            `
+          : ''
+      }
+      ${renderModelCatalogResult(modelCatalog, catalogScope, value)}
     </div>
   `;
 }
@@ -2201,10 +3182,19 @@ function createBlankChannel() {
     discordChannelId: '',
     guildId: '',
     workspace: DEFAULT_CHANNEL_WORKSPACE,
-    agent: state.data.agents[0]?.name || '',
+    agent: state.data.agents?.[0]?.name || '',
     reviewer: '',
     arbiter: '',
     reviewRounds: '',
+    description: '',
+  };
+}
+
+function createBlankBot() {
+  return {
+    name: '',
+    agent: state.data.agents[0]?.name || '',
+    discordToken: '',
     description: '',
   };
 }
@@ -2223,11 +3213,50 @@ function createEnvEntry(key = '', value = '') {
   };
 }
 
+function createLocalLlmConnectionEntry(
+  name = 'LLM1',
+  baseUrl = 'http://127.0.0.1:11434/v1',
+  apiKey = '',
+  description = '',
+) {
+  return {
+    name: String(name),
+    baseUrl: String(baseUrl),
+    apiKey: String(apiKey),
+    description: String(description),
+  };
+}
+
+function createLocalLlmConnectionDraft(entry = null) {
+  const source = entry || createLocalLlmConnectionEntry(`LLM${getLocalLlmConnectionEntries().length + 1}`);
+  return {
+    currentName: entry?.name || '',
+    name: source.name || '',
+    baseUrl: source.baseUrl || 'http://127.0.0.1:11434/v1',
+    apiKey: source.apiKey || '',
+    description: source.description || '',
+  };
+}
+
 function normalizeEnvEntries(entries) {
   if (!Array.isArray(entries) || !entries.length) {
     return [createEnvEntry()];
   }
   return entries.map((entry) => createEnvEntry(entry?.key, entry?.value));
+}
+
+function normalizeLocalLlmConnectionEntries(entries) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return [createLocalLlmConnectionEntry()];
+  }
+  return entries.map((entry, index) =>
+    createLocalLlmConnectionEntry(
+      entry?.name || `LLM${index + 1}`,
+      entry?.baseUrl,
+      entry?.apiKey,
+      entry?.description,
+    ),
+  );
 }
 
 function parseEnvEntries(entries) {
@@ -2246,6 +3275,52 @@ function parseEnvEntries(entries) {
   }
 
   return output;
+}
+
+function parseLocalLlmConnectionEntries(entries) {
+  const output = [];
+  const usedNames = new Set();
+
+  for (const [index, entry] of normalizeLocalLlmConnectionEntries(entries).entries()) {
+    const name = String(entry.name || '').trim();
+    const baseUrl = String(entry.baseUrl || '').trim();
+    const apiKey = String(entry.apiKey || '');
+    const description = String(entry.description || '').trim();
+    if (!name) {
+      throw new Error(`로컬 LLM 연결 ${index + 1}의 이름을 입력하세요.`);
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(name)) {
+      throw new Error(`로컬 LLM 연결 "${name}" 이름 형식이 올바르지 않습니다.`);
+    }
+    if (usedNames.has(name)) {
+      throw new Error(`로컬 LLM 연결 이름 "${name}"이 중복되었습니다.`);
+    }
+    if (!baseUrl) {
+      throw new Error(`로컬 LLM 연결 "${name}"의 주소를 입력하세요.`);
+    }
+    usedNames.add(name);
+    output.push({
+      name,
+      baseUrl,
+      apiKey,
+      description,
+    });
+  }
+
+  return output;
+}
+
+function upsertLocalLlmConnectionEntries(entries, draft) {
+  const currentName = optionalDraftText(draft.currentName);
+  const nextEntries = normalizeLocalLlmConnectionEntries(entries).map((entry) =>
+    currentName && entry.name === currentName ? createLocalLlmConnectionEntry(draft.name, draft.baseUrl, draft.apiKey, draft.description) : entry,
+  );
+  if (!currentName) {
+    nextEntries.push(
+      createLocalLlmConnectionEntry(draft.name, draft.baseUrl, draft.apiKey, draft.description),
+    );
+  }
+  return parseLocalLlmConnectionEntries(nextEntries);
 }
 
 function renderAgentWizardEnvEditor(draft) {
@@ -2293,6 +3368,73 @@ function renderAgentWizardEnvEditor(draft) {
       </div>
     </div>
   `;
+}
+
+function renderLocalLlmConnectionList(entries) {
+  const normalized = normalizeLocalLlmConnectionEntries(entries);
+  return `
+    <div class="card-list">
+        ${normalized
+          .map(
+            (entry) => `
+              <article class="card">
+                <div class="card-main">
+                  <strong class="card-title">${escapeHtml(entry.name)}</strong>
+                  <span class="card-meta">${escapeHtml(entry.baseUrl)}</span>
+                  <div class="field-hint">${entry.apiKey ? 'API 키 설정됨' : 'API 키 없음'}${entry.description ? ` · ${escapeHtml(entry.description)}` : ''}</div>
+                </div>
+                <div class="inline-actions">
+                  <button type="button" class="btn-secondary" data-action="edit-local-llm-connection" data-name="${escapeAttr(entry.name)}" ${state.busy ? 'disabled' : ''}>수정</button>
+                  <button type="button" class="btn-danger" data-action="delete-local-llm-connection" data-name="${escapeAttr(entry.name)}" ${state.busy || normalized.length <= 1 ? 'disabled' : ''}>삭제</button>
+                </div>
+              </article>
+            `,
+          )
+          .join('')}
+    </div>
+  `;
+}
+
+function getLocalLlmConnectionEntries() {
+  const entries = state.data?.localLlmConnections;
+  return normalizeLocalLlmConnectionEntries(entries);
+}
+
+function getDefaultLocalLlmConnectionName() {
+  return getLocalLlmConnectionEntries()[0]?.name || '';
+}
+
+function resolveLocalLlmConnectionEntry(name) {
+  const selected = optionalDraftText(name);
+  return getLocalLlmConnectionEntries().find((entry) => entry.name === selected) || null;
+}
+
+function renderLocalLlmConnectionOptions(selectedValue, allowCustom = false) {
+  const selected = optionalDraftText(selectedValue);
+  const entries = getLocalLlmConnectionEntries();
+  const options = entries.map(
+    (entry) =>
+      `<option value="${escapeAttr(entry.name)}" ${selected === entry.name ? 'selected' : ''}>${escapeHtml(entry.name)} · ${escapeHtml(entry.baseUrl)}</option>`,
+  );
+  if (allowCustom) {
+    options.push(
+      `<option value="" ${!selected ? 'selected' : ''}>직접 입력</option>`,
+    );
+  }
+  return options.join('');
+}
+
+function describeSelectedLocalLlmConnection(selectedValue) {
+  const selected = optionalDraftText(selectedValue);
+  const entry = getLocalLlmConnectionEntries().find((item) => item.name === selected);
+  if (!entry) {
+    return '저장된 연결을 고르면 그 주소와 API 키를 그대로 사용합니다.';
+  }
+  return `${entry.name} -> ${entry.baseUrl}${entry.apiKey ? ' · API 키 설정됨' : ''}`;
+}
+
+function agentTypeUsesLocalLlmConnections(agentType) {
+  return agentType === 'local-llm';
 }
 
 function requiredText(formData, key) {
@@ -2355,6 +3497,9 @@ function renderNameOptions(names, selectedValue, allowEmpty = false) {
 function localizeKind(kind) {
   if (kind === 'agent') {
     return '에이전트';
+  }
+  if (kind === 'bot') {
+    return '봇';
   }
   if (kind === 'channel') {
     return '채널';
@@ -2452,7 +3597,7 @@ function localizeAiMeta(value) {
     codex: '로컬 Codex 로그인 공유 · 테스트',
     'claude-code': 'ACP 로그인 · 테스트',
     'gemini-cli': 'Google 로그인 · 테스트',
-    'local-llm': '주소 / API 키 · 테스트',
+    'local-llm': '여러 연결 관리 · 테스트',
     command: '명령 테스트',
   };
   return labels[value] || '';
@@ -2494,6 +3639,7 @@ function syncAiStatus(agentType, value) {
   state.aiStatuses[agentType] = {
     authResult: value?.authResult || null,
     testResult: value?.testResult || null,
+    usageSummary: value?.usageSummary || state.aiStatuses[agentType]?.usageSummary || null,
   };
 }
 
@@ -2503,9 +3649,23 @@ function mergeAiStatuses(currentStatuses, nextStatuses) {
     output[agentType] = {
       authResult: status?.authResult || null,
       testResult: output[agentType]?.testResult || null,
+      usageSummary: status?.usageSummary || output[agentType]?.usageSummary || null,
     };
   }
   return output;
+}
+
+function formatTokenCount(value) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) ? numeric.toLocaleString('ko-KR') : '0';
+}
+
+function formatRelativeDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value || '');
+  }
+  return date.toLocaleString('ko-KR');
 }
 
 function isAiReady(agentType, status) {
@@ -2589,7 +3749,7 @@ function getModelExamples(agentType) {
     return ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.4-mini'];
   }
   if (agentType === 'claude-code') {
-    return ['claude-sonnet-4-20250514', 'claude-opus-4-20250514'];
+    return ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
   }
   if (agentType === 'gemini-cli') {
     return ['gemini-2.5-pro', 'gemini-2.5-flash'];
@@ -2640,6 +3800,10 @@ function localizeFieldName(key) {
     name: '이름',
     mode: '채널 모드',
     agent: '에이전트',
+    bot: '봇',
+    reviewerBot: 'reviewer 봇',
+    arbiterBot: 'arbiter 봇',
+    discordToken: 'Discord 토큰',
     model: '모델',
     command: '명령어',
     discordChannelId: '디스코드 채널 ID',
@@ -2655,7 +3819,7 @@ function localizeErrorMessage(message) {
     return '오류가 발생했습니다.';
   }
 
-  const duplicateMatch = text.match(/^(Agent|Channel|Dashboard) "(.+)" already exists\.$/u);
+  const duplicateMatch = text.match(/^(Agent|Bot|Channel|Dashboard) "(.+)" already exists\.$/u);
   if (duplicateMatch) {
     return `${localizeKind(duplicateMatch[1].toLowerCase())} "${duplicateMatch[2]}"이(가) 이미 있습니다.`;
   }
@@ -2665,9 +3829,19 @@ function localizeErrorMessage(message) {
     return `에이전트 "${referencedMatch[1]}"이(가) 다른 항목에서 사용 중입니다.`;
   }
 
+  const botReferencedMatch = text.match(/^Bot "(.+)" is referenced by channels: (.+)\.$/u);
+  if (botReferencedMatch) {
+    return `봇 "${botReferencedMatch[1]}"이(가) 채널에서 사용 중입니다.`;
+  }
+
   const unknownAgentMatch = text.match(/^Channel references unknown agent "(.+)"\.$/u);
   if (unknownAgentMatch) {
     return `없는 에이전트입니다: "${unknownAgentMatch[1]}".`;
+  }
+
+  const unknownBotMatch = text.match(/^Channel references unknown bot "(.+)"\.$/u);
+  if (unknownBotMatch) {
+    return `없는 봇입니다: "${unknownBotMatch[1]}".`;
   }
 
   if (text === 'Password is required.') {
@@ -2727,6 +3901,15 @@ function localizeErrorMessage(message) {
   if (text === 'Arbiter must be different from the reviewer agent.') {
     return '중재 에이전트는 검토 에이전트와 달라야 합니다.';
   }
+  if (text === 'Reviewer bot must be different from the owner bot.') {
+    return 'reviewer 봇은 owner 봇과 달라야 합니다.';
+  }
+  if (text === 'Arbiter bot must be different from the owner bot.') {
+    return 'arbiter 봇은 owner 봇과 달라야 합니다.';
+  }
+  if (text === 'Arbiter bot must be different from the reviewer bot.') {
+    return 'arbiter 봇은 reviewer 봇과 달라야 합니다.';
+  }
   if (text === 'Tribunal channel requires a reviewer.') {
     return '검토 에이전트가 필요합니다.';
   }
@@ -2739,6 +3922,12 @@ function localizeErrorMessage(message) {
   if (text === 'Single channel cannot define an arbiter.') {
     return '단일 채널에서는 중재 에이전트를 지정할 수 없습니다.';
   }
+  if (text === 'Single channel cannot define a reviewer bot.') {
+    return '단일 채널에서는 reviewer 봇을 지정할 수 없습니다.';
+  }
+  if (text === 'Single channel cannot define an arbiter bot.') {
+    return '단일 채널에서는 arbiter 봇을 지정할 수 없습니다.';
+  }
   if (text === 'reviewRounds must be a positive integer.') {
     return '검토 회차는 1 이상의 정수여야 합니다.';
   }
@@ -2750,6 +3939,24 @@ function localizeErrorMessage(message) {
   }
   if (text === 'timeoutMs must be a positive integer.') {
     return '제한 시간은 1 이상의 정수여야 합니다.';
+  }
+  if (text === 'At least one local LLM connection is required.') {
+    return '로컬 LLM 연결은 최소 하나 이상 필요합니다.';
+  }
+  if (/^Agent "(.+)" references unknown local LLM connection "(.+)"\.$/u.test(text)) {
+    const [, agentName, connectionName] =
+      text.match(/^Agent "(.+)" references unknown local LLM connection "(.+)"\.$/u) || [];
+    return `에이전트 "${agentName}"이(가) 없는 로컬 LLM 연결 "${connectionName}"을 참조합니다.`;
+  }
+  if (/^Local LLM connection "(.+)" requires a baseUrl\.$/u.test(text)) {
+    const [, connectionName] =
+      text.match(/^Local LLM connection "(.+)" requires a baseUrl\.$/u) || [];
+    return `로컬 LLM 연결 "${connectionName}"의 주소가 필요합니다.`;
+  }
+  if (/^Local LLM connection "(.+)" already exists\.$/u.test(text)) {
+    const [, connectionName] =
+      text.match(/^Local LLM connection "(.+)" already exists\.$/u) || [];
+    return `로컬 LLM 연결 "${connectionName}"이(가) 이미 있습니다.`;
   }
   if (/^Unsupported effort ".+" for agent ".+" model ".+"\.$/u.test(text)) {
     return '선택한 모델에서 지원하지 않는 추론 강도입니다.';
