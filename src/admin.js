@@ -24,7 +24,7 @@ import {
   setAdminPassword,
   verifyAdminPassword,
 } from './runtime-db.js';
-import { runAgentTurn } from './runners.js';
+import { resolveManagedAgentCli, runAgentTurn } from './runners.js';
 import {
   DEFAULT_ADMIN_PORT,
 } from './constants.js';
@@ -406,7 +406,8 @@ async function runAgentAuthAction(projectRoot, payload) {
   const spec = resolveAgentAuthCommand(agentType, action);
 
   return new Promise((resolve, reject) => {
-    const child = spawn(spec.command, spec.args, {
+    const child = spawnResolvedCommand(spec.command, spec.args, {
+      agentType,
       cwd: process.cwd(),
       env: process.env,
     });
@@ -447,6 +448,26 @@ async function runAgentAuthAction(projectRoot, payload) {
         timedOut,
       });
     });
+  });
+}
+
+function spawnResolvedCommand(command, args, options) {
+  const managedCli = options?.agentType
+    ? resolveManagedAgentCli(options.agentType, options.env)
+    : null;
+  if (managedCli) {
+    return spawn(managedCli.command, [...managedCli.argsPrefix, ...args], {
+      ...options,
+      shell: false,
+    });
+  }
+
+  const env = options?.env || process.env;
+  const resolvedCommand = command;
+
+  return spawn(resolvedCommand, args, {
+    ...options,
+    shell: process.platform === 'win32' && /\.(cmd|bat)$/iu.test(resolvedCommand),
   });
 }
 

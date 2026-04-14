@@ -1,5 +1,8 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+
+const moduleRequire = createRequire(import.meta.url);
 
 export function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -150,16 +153,151 @@ export function stdinHasData() {
   return !process.stdin.isTTY;
 }
 
-export function resolveExecutable(binary) {
-  const pathValue = process.env.PATH || '';
-  const segments = pathValue.split(path.delimiter).filter(Boolean);
-  for (const segment of segments) {
-    const candidate = path.join(segment, binary);
-    if (fs.existsSync(candidate)) {
-      return candidate;
+export function resolveExecutable(
+  binary,
+  {
+    platform = process.platform,
+    pathValue = process.env.PATH || '',
+    pathext = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
+  } = {},
+) {
+  if (!binary) {
+    return null;
+  }
+
+  const searchPaths = hasPathSeparator(binary)
+    ? ['']
+    : pathValue.split(path.delimiter).filter(Boolean);
+  const candidates = buildExecutableCandidates(binary, platform, pathext);
+
+  for (const segment of searchPaths) {
+    for (const candidate of candidates) {
+      const resolvedPath = segment ? path.join(segment, candidate) : candidate;
+      if (isFilePath(resolvedPath)) {
+        return resolvedPath;
+      }
     }
   }
+
   return null;
+}
+
+export function resolveBundledNodeCli(
+  packageName,
+  binaryName,
+  {
+    resolvePackageJson = defaultResolvePackageJson,
+  } = {},
+) {
+  try {
+    const packageJsonPath = resolvePackageJson(`${packageName}/package.json`);
+    const packageDirectory = path.dirname(packageJsonPath);
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    const relativeBinPath = resolvePackageBinPath(packageJson.bin, binaryName);
+    if (!relativeBinPath) {
+      return null;
+    }
+
+    const scriptPath = path.resolve(packageDirectory, relativeBinPath);
+    if (!isFilePath(scriptPath)) {
+      return null;
+    }
+
+    return {
+      packageName,
+      binaryName,
+      scriptPath,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function resolvePreferredCli(
+  binaryName,
+  {
+    packageName = null,
+    platform = process.platform,
+    pathValue = process.env.PATH || '',
+    pathext = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
+    resolvePackageJson = defaultResolvePackageJson,
+  } = {},
+) {
+  if (packageName) {
+    const bundled = resolveBundledNodeCli(packageName, binaryName, {
+      resolvePackageJson,
+    });
+    if (bundled) {
+      return {
+        source: 'bundled',
+        command: process.execPath,
+        argsPrefix: [bundled.scriptPath],
+        detail: `${packageName} (${bundled.scriptPath})`,
+      };
+    }
+  }
+
+  const resolvedPath = resolveExecutable(binaryName, {
+    platform,
+    pathValue,
+    pathext,
+  });
+  if (!resolvedPath) {
+    return null;
+  }
+
+  return {
+    source: 'path',
+    command: resolvedPath,
+    argsPrefix: [],
+    detail: resolvedPath,
+  };
+}
+
+function hasPathSeparator(value) {
+  return value.includes('/') || value.includes('\\');
+}
+
+function buildExecutableCandidates(binary, platform, pathext) {
+  if (platform !== 'win32') {
+    return [binary];
+  }
+
+  if (path.extname(binary)) {
+    return [binary];
+  }
+
+  const extensions = String(pathext || '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  return [binary, ...extensions.map((entry) => `${binary}${entry}`)];
+}
+
+function isFilePath(filePath) {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function resolvePackageBinPath(binField, binaryName) {
+  if (typeof binField === 'string') {
+    return binField;
+  }
+  if (!binField || typeof binField !== 'object') {
+    return null;
+  }
+  if (typeof binField[binaryName] === 'string') {
+    return binField[binaryName];
+  }
+  return typeof Object.values(binField)[0] === 'string' ? Object.values(binField)[0] : null;
+}
+
+function defaultResolvePackageJson(request) {
+  return moduleRequire.resolve(request);
 }
 
 export function parseKeyValuePairs(entries, fieldName) {

@@ -32,39 +32,48 @@ function createFakeCodexBin() {
   const codexPath = path.join(binDir, 'codex');
   fs.writeFileSync(
     codexPath,
-    `#!/bin/bash
-set -euo pipefail
-if [[ "\${1:-}" == "login" && "\${2:-}" == "status" ]]; then
-  echo "logged in"
-  exit 0
-fi
-if [[ "\${1:-}" == "login" && "\${2:-}" == "--device-auth" ]]; then
-  printf 'Open https://example.test/codex/device\\033[0m and enter CODE-12345\\n'
-  exit 0
-fi
-if [[ "\${1:-}" == "logout" ]]; then
-  echo "logged out"
-  exit 0
-fi
-if [[ "\${1:-}" == "exec" ]]; then
-  output_file=""
-  while [[ $# -gt 0 ]]; do
-    if [[ "\${1:-}" == "-o" ]]; then
-      output_file="\${2:-}"
-      shift 2
-      continue
-    fi
-    shift
-  done
-  cat >/dev/null
-  if [[ -n "$output_file" ]]; then
-    printf 'OK\\n' > "$output_file"
-  fi
-  printf 'OK\\n'
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 1
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+
+const args = process.argv.slice(2);
+
+if (args[0] === 'login' && args[1] === 'status') {
+  process.stdout.write('logged in\\n');
+  process.exit(0);
+}
+
+if (args[0] === 'login' && args[1] === '--device-auth') {
+  process.stdout.write('Open https://example.test/codex/device\\u001b[0m and enter CODE-12345\\n');
+  process.exit(0);
+}
+
+if (args[0] === 'logout') {
+  process.stdout.write('logged out\\n');
+  process.exit(0);
+}
+
+if (args[0] === 'exec') {
+  let outputFile = '';
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === '-o') {
+      outputFile = args[index + 1] || '';
+      index += 1;
+    }
+  }
+
+  process.stdin.resume();
+  process.stdin.on('end', () => {
+    if (outputFile) {
+      fs.writeFileSync(outputFile, 'OK\\n');
+    }
+    process.stdout.write('OK\\n');
+  });
+  process.stdin.on('error', () => process.exit(1));
+  return;
+}
+
+process.stderr.write(\`unexpected args: \${args.join(' ')}\\n\`);
+process.exit(1);
 `,
     { mode: 0o755 },
   );
@@ -76,23 +85,27 @@ function createFakeClaudeBin() {
   const claudePath = path.join(binDir, 'claude');
   fs.writeFileSync(
     claudePath,
-    `#!/bin/bash
-set -euo pipefail
-if [[ "\${1:-}" == "auth" && "\${2:-}" == "status" ]]; then
-  printf '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\\n'
-  exit 1
-fi
-if [[ "\${1:-}" == "auth" && "\${2:-}" == "login" && $# -eq 2 ]]; then
-  echo "Opening browser to sign in…"
-  echo "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true"
-  exit 0
-fi
-if [[ "\${1:-}" == "auth" && "\${2:-}" == "logout" ]]; then
-  echo "logged out"
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 1
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+
+if (args[0] === 'auth' && args[1] === 'status') {
+  process.stdout.write('{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\\n');
+  process.exit(1);
+}
+
+if (args[0] === 'auth' && args[1] === 'login' && args.length === 2) {
+  process.stdout.write("Opening browser to sign in…\\n");
+  process.stdout.write("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true\\n");
+  process.exit(0);
+}
+
+if (args[0] === 'auth' && args[1] === 'logout') {
+  process.stdout.write('logged out\\n');
+  process.exit(0);
+}
+
+process.stderr.write(\`unexpected args: \${args.join(' ')}\\n\`);
+process.exit(1);
 `,
     { mode: 0o755 },
   );

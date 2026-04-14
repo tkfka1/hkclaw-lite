@@ -48,8 +48,18 @@
 ## 요구 사항
 
 - Node.js 24 이상
-- `codex`, `claude`, `gemini` 같은 외부 에이전트 CLI를 쓸 경우 해당 CLI가 로컬에 설치되어 있어야 한다.
+- 기본 설치 시 `codex`, `claude`, `gemini` CLI는 패키지 내부 번들을 우선 사용한다.
+- 번들 설치가 빠졌거나 직접 다른 버전을 쓰고 싶다면, 같은 CLI를 시스템 `PATH`에 따로 설치해도 된다.
 - GitHub / GitLab CI를 private 리포지토리에서 확인할 경우 API 토큰이 필요하다.
+
+## 플랫폼 지원
+
+- macOS / Linux: 네이티브 실행 지원
+- Windows: 네이티브 실행 지원. `npm install` 또는 `npm install -g` 후 바로 쓸 수 있다.
+- `codex` / `claude` / `gemini`는 패키지 내부 번들을 먼저 찾고, 없을 때만 시스템 `PATH`를 본다.
+- Windows에서 `command` 에이전트는 기본적으로 `cmd.exe`를 사용한다. 따라서 명령 문자열은 호스트 OS 셸 문법에 맞춰야 한다.
+- Docker 이미지, Helm 차트, Linux container 배포는 그대로 Linux 기준이다.
+- Windows container mode는 지원하지 않는다. Windows에서는 네이티브 npm 설치 또는 Docker Desktop의 Linux container 모드를 사용하면 된다.
 
 ## 설치
 
@@ -82,17 +92,37 @@ npm install -g hkclaw-lite
 hkclaw-lite --help
 ```
 
+이 경로에서는 `hkclaw-lite`와 함께 기본 AI CLI 번들도 같이 설치된다. 별도로 `npm install -g @openai/codex` 같은 전역 설치를 할 필요는 없다.
+
+### Windows 네이티브 설치
+
+PowerShell 또는 일반 CMD에서도 바로 실행할 수 있다.
+
+```powershell
+npm install -g hkclaw-lite
+hkclaw-lite --help
+```
+
+전역 설치 없이 현재 프로젝트에서만 쓰려면:
+
+```powershell
+npm install hkclaw-lite
+npx hkclaw-lite --help
+```
+
+설치 후 `hkclaw-lite`가 내부 번들을 먼저 사용하므로, 별도 CLI 전역 설치 없이 `admin`, `run`, `agent auth` 흐름을 바로 쓸 수 있다.
+
 ## 빠른 시작
 
-새 프로젝트 디렉터리에서 먼저 초기화한다.
+새 프로젝트 디렉터리로 들어간 뒤 웹 어드민부터 띄우면 된다. `.hkclaw-lite` 상태 디렉터리는 첫 실행 때 자동으로 생성된다.
 
 ```bash
 mkdir my-agent-workspace
 cd my-agent-workspace
-hkclaw-lite init
+hkclaw-lite admin
 ```
 
-프로젝트 루트에는 아래 구조가 생성된다.
+프로젝트 루트에는 아래 구조가 자동으로 생성된다.
 
 ```text
 .hkclaw-lite/
@@ -100,25 +130,32 @@ hkclaw-lite init
   watchers/
 ```
 
-이후 기본 흐름은 `init -> add agent -> add channel -> run` 순서다.
-
-CLI 대신 브라우저에서 관리하고 싶으면 로컬 웹 어드민을 바로 띄울 수도 있다.
-
-```bash
-hkclaw-lite admin
-```
+이후 기본 흐름은 `admin 실행 -> 웹에서 agent/channel/dashboard 설정 -> run 또는 discord serve` 순서다. 원하면 `hkclaw-lite init`으로 상태 디렉터리를 미리 만들어둘 수도 있다.
 
 기본 주소는 `http://127.0.0.1:4622` 이다.
 
 ## 기본 흐름
 
-### 1. 에이전트 추가
+처음 설정은 CLI보다 웹 어드민에서 진행하는 쪽을 권장한다. CLI 명령은 동일한 설정을 스크립트처럼 직접 다루고 싶을 때 쓰면 된다.
+
+### 1. 웹 어드민 실행
 
 ```bash
-hkclaw-lite add agent
+hkclaw-lite admin
 ```
 
-실행하면 질문이 순서대로 나온다.
+브라우저에서 `http://127.0.0.1:4622` 로 접속하면 된다. 여기서 바로 아래 작업을 진행할 수 있다.
+
+- agent 추가/수정
+- channel 추가/수정
+- dashboard 추가/수정
+- shared env 편집
+- one-shot 실행
+- CI watcher 상태 및 로그 확인
+
+### 2. 웹에서 에이전트 추가
+
+웹 어드민에서 agent를 만들 때 주로 채우는 항목은 아래와 같다.
 
 - 에이전트 이름
 - 어떤 에이전트 타입을 만들지
@@ -131,12 +168,6 @@ hkclaw-lite add agent
 - 에이전트 타입별 추가 설정
 
 `system prompt`는 운영 규칙에, `skill path`는 재사용 가능한 작업 규약에, `context file`은 저장소나 프로젝트 기본 배경지식에 쓰는 식으로 분리해서 관리할 수 있다.
-
-추가 직후 설정을 확인하려면:
-
-```bash
-hkclaw-lite show agent <name>
-```
 
 ### Skill / Context 분리
 
@@ -242,15 +273,9 @@ hkclaw-lite env unset GITLAB_TOKEN
 
 이 설정은 디스코드 쪽 owner -> reviewer -> arbiter tribunal 흐름을 표현하기 위한 채널 메타데이터다.
 
-### 2. 채널 추가
+### 3. 웹에서 채널 추가
 
-채널을 먼저 등록해서 에이전트와 연결할 수 있다.
-
-```bash
-hkclaw-lite add channel
-```
-
-질문 예시는 다음과 같다.
+웹 어드민에서 channel을 만들 때 주로 채우는 항목은 아래와 같다.
 
 - 채널 이름
 - 채널 모드 (`single` 또는 `tribunal`)
@@ -262,15 +287,9 @@ hkclaw-lite add channel
 
 `workspace`는 미리 존재하는 디렉터리여야 한다.
 
-추가 직후 설정을 확인하려면:
+### 4. one-shot 실행
 
-```bash
-hkclaw-lite show channel <name>
-```
-
-### 3. one-shot 실행
-
-현재 CLI 실행 진입점은 `run`이다.
+웹 어드민에서도 기존 CLI `run` 흐름을 그대로 실행할 수 있다. CLI로 직접 실행하면 아래와 같다.
 
 채널 기준 실행:
 
@@ -295,7 +314,7 @@ tribunal 채널은 `run --channel ...` 시 아래 순서로 동작한다.
 
 각 단계의 agent는 자기 `fallbackAgent`가 있으면 실패 시 fallback으로 재시도한다.
 
-### 4. Discord 서비스
+### 5. Discord 서비스
 
 실제 Discord 채널과 연결해서 쓰려면 역할별 봇 토큰을 준비한 뒤 서비스 프로세스를 띄우면 된다.
 
@@ -317,20 +336,16 @@ ARBITER_BOT_TOKEN=discord-arbiter-token
 
 역할별 봇 아이덴티티는 전역이고, 어떤 agent/model이 해당 역할을 맡을지는 채널 설정의 owner/reviewer/arbiter가 결정한다.
 
-### 5. 대시보드 추가
+### 6. 대시보드
 
-```bash
-hkclaw-lite add dashboard
-```
-
-질문 예시는 다음과 같다.
+대시보드도 웹 어드민에서 바로 만들고 수정할 수 있다. 설정 항목은 아래와 같다.
 
 - 대시보드 이름
 - 모든 에이전트를 볼지, 특정 에이전트만 볼지
 - refresh interval
 - runtime detail 표시 여부
 
-### 6. 대시보드 보기
+CLI로 직접 보고 싶으면:
 
 ```bash
 hkclaw-lite dashboard ops
@@ -344,7 +359,7 @@ hkclaw-lite dashboard ops --once
 
 ### 6. CI 확인 / 감시
 
-프로젝트 초기화 없이도 GitHub Actions와 GitLab CI 상태를 바로 조회할 수 있다. 다만 `sharedEnv`에 저장된 토큰을 재사용하려면 `hkclaw-lite init`으로 만든 프로젝트 안에서 실행해야 한다.
+프로젝트 상태 없이도 GitHub Actions와 GitLab CI 상태를 바로 조회할 수 있다. 다만 `sharedEnv`에 저장된 토큰을 재사용하려면 `.hkclaw-lite/config.json`이 있는 프로젝트 안에서 실행해야 한다.
 
 한 번만 확인:
 
@@ -445,12 +460,11 @@ HKCLAW_LITE_ADMIN_PASSWORD='change-me' hkclaw-lite admin
 - CI watcher 목록과 로그 확인
 - 기존 CLI `run` 흐름을 그대로 타는 one-shot 실행
 
-즉 웹에서 별도 런타임을 새로 구현한 것이 아니라, 기존 프로젝트 설정과 CLI 동작을 브라우저에서 조작할 수 있게 감싼 관리자다.
+즉 웹에서 별도 런타임을 새로 구현한 것이 아니라, 기존 프로젝트 설정과 CLI 동작을 브라우저에서 조작할 수 있게 감싼 관리자다. 처음 설정은 여기서 끝내고, 필요할 때만 CLI로 세부 작업을 직접 하면 된다.
 
 ## 주요 명령
 
 ```bash
-hkclaw-lite init
 hkclaw-lite admin
 hkclaw-lite backup export ./backups/project.json
 hkclaw-lite backup import ./backups/project.json --root ./restored-project
@@ -509,10 +523,20 @@ hkclaw-lite status dashboard <name>
 
 이 프로젝트는 기본적으로 HTTP 서버가 아니라 CLI 런타임이지만, 기본 Helm chart는 운영 편의를 위해 웹 어드민을 바로 띄우도록 구성돼 있다. 기본값은 `0.0.0.0:4622` 이고 `ClusterIP` Service도 함께 생성된다.
 
-기본 이미지는 이 저장소의 `Dockerfile`로 만들 수 있다.
+기본 이미지는 이 저장소의 `Dockerfile`로 만들 수 있다. 현재 Dockerfile은 `codex`, `claude`, `gemini` CLI를 함께 넣는 all-in-one 이미지를 기준으로 한다.
 
 ```bash
 docker build -t ghcr.io/tkfka1/hkclaw-lite:1.0.0 .
+```
+
+원하면 build arg로 각 CLI 버전을 고정할 수 있다.
+
+```bash
+docker build -t ghcr.io/tkfka1/hkclaw-lite:1.0.0 \
+  --build-arg CODEX_CLI_VERSION=latest \
+  --build-arg CLAUDE_CODE_VERSION=latest \
+  --build-arg GEMINI_CLI_VERSION=latest \
+  .
 ```
 
 Helm chart는 `charts/hkclaw-lite` 아래에 있다.
@@ -548,9 +572,10 @@ helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
   --set-file bootstrapBackup.data=./backups/project.json
 ```
 
-중요한 제약:
+중요한 운영 메모:
 
-- `codex`, `claude-code`, `gemini-cli` 같은 외부 provider CLI를 쓰려면, 그 바이너리와 인증 파일을 포함한 파생 이미지를 직접 만들어야 한다.
+- 이 이미지는 provider CLI 바이너리만 포함한다. 인증 정보는 이미지에 굽지 말고 runtime env, Kubernetes Secret, 또는 `/data` 볼륨 아래의 사용자 홈 상태로 주입해야 한다.
+- 기본 chart는 `HOME=/data`와 state volume을 함께 써서 provider CLI 로그인 상태가 재시작 후에도 남도록 구성돼 있다.
 - chart는 `.hkclaw-lite` 상태와 프로젝트 내부 상대경로 자산을 유지하는 용도이고, 실제 작업 저장소는 별도 PVC나 추가 volume mount로 붙이는 식으로 운영해야 한다.
 
 ## 배포

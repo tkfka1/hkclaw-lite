@@ -9,7 +9,28 @@ import {
   DEFAULT_LOCAL_LLM_BASE_URL,
 } from './constants.js';
 import { resolveProjectPath } from './store.js';
-import { assert, resolveExecutable, toErrorMessage, trimTrailingWhitespace } from './utils.js';
+import {
+  assert,
+  resolveExecutable,
+  resolvePreferredCli,
+  toErrorMessage,
+  trimTrailingWhitespace,
+} from './utils.js';
+
+const MANAGED_AGENT_CLIS = {
+  codex: {
+    binaryName: 'codex',
+    packageName: '@openai/codex',
+  },
+  'claude-code': {
+    binaryName: 'claude',
+    packageName: '@anthropic-ai/claude-code',
+  },
+  'gemini-cli': {
+    binaryName: 'gemini',
+    packageName: '@google/gemini-cli',
+  },
+};
 
 export async function runAgentTurn({
   projectRoot,
@@ -74,23 +95,11 @@ export function inspectAgentRuntime(projectRoot, agent, workdirOverride = null) 
   const workdir = resolveExecutionWorkdir(projectRoot, agent, workdirOverride);
   switch (agent.agent) {
     case 'codex':
-      return {
-        ready: Boolean(resolveExecutable('codex')),
-        detail: resolveExecutable('codex') || 'codex not found in PATH',
-        workdir,
-      };
+      return buildManagedAgentRuntimeStatus('codex', workdir);
     case 'claude-code':
-      return {
-        ready: Boolean(resolveExecutable('claude')),
-        detail: resolveExecutable('claude') || 'claude not found in PATH',
-        workdir,
-      };
+      return buildManagedAgentRuntimeStatus('claude-code', workdir);
     case 'gemini-cli':
-      return {
-        ready: Boolean(resolveExecutable('gemini')),
-        detail: resolveExecutable('gemini') || 'gemini not found in PATH',
-        workdir,
-      };
+      return buildManagedAgentRuntimeStatus('gemini-cli', workdir);
     case 'local-llm':
       return {
         ready: true,
@@ -115,6 +124,26 @@ export function inspectAgentRuntime(projectRoot, agent, workdirOverride = null) 
 export const runServiceTurn = runAgentTurn;
 export const inspectServiceRuntime = inspectAgentRuntime;
 
+export function buildCommandExecutionSpec(
+  command,
+  {
+    platform = process.platform,
+    env = process.env,
+  } = {},
+) {
+  if (platform === 'win32') {
+    return {
+      command: env.ComSpec || 'cmd.exe',
+      args: ['/d', '/s', '/c', command],
+    };
+  }
+
+  return {
+    command: resolvePosixShell(env),
+    args: ['-lc', command],
+  };
+}
+
 async function runCodex({
   projectRoot,
   service,
@@ -123,12 +152,13 @@ async function runCodex({
   workdir,
   sharedEnv,
 }) {
-  assert(resolveExecutable('codex'), 'codex executable was not found in PATH.');
+  const cli = requireManagedAgentCli('codex');
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-codex-'));
   const lastMessageFile = path.join(tempDir, 'last-message.txt');
   const sandbox = service.sandbox || DEFAULT_CODEX_SANDBOX;
   const args = [
+    ...cli.argsPrefix,
     'exec',
     '--skip-git-repo-check',
     '--color',
@@ -165,7 +195,7 @@ async function runCodex({
 
   try {
     const result = await runChildProcess({
-      command: 'codex',
+      command: cli.command,
       args,
       cwd: executionWorkdir,
       env,
@@ -189,9 +219,9 @@ async function runClaude({
   workdir,
   sharedEnv,
 }) {
-  assert(resolveExecutable('claude'), 'claude executable was not found in PATH.');
+  const cli = requireManagedAgentCli('claude-code');
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
-  const args = ['-p', '--output-format', 'text'];
+  const args = [...cli.argsPrefix, '-p', '--output-format', 'text'];
 
   if (service.model) {
     args.push('--model', service.model);
@@ -210,7 +240,7 @@ async function runClaude({
   args.push(prompt);
 
   const result = await runChildProcess({
-    command: 'claude',
+    command: cli.command,
     args,
     cwd: executionWorkdir,
     env: buildChildEnv({
@@ -234,15 +264,15 @@ async function runGeminiCli({
   workdir,
   sharedEnv,
 }) {
-  assert(resolveExecutable('gemini'), 'gemini executable was not found in PATH.');
+  const cli = requireManagedAgentCli('gemini-cli');
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
-  const args = ['-p', prompt, '--output-format', 'json'];
+  const args = [...cli.argsPrefix, '-p', prompt, '--output-format', 'json'];
   if (service.model) {
     args.push('-m', service.model);
   }
 
   const result = await runChildProcess({
-    command: 'gemini',
+    command: cli.command,
     args,
     cwd: executionWorkdir,
     env: buildChildEnv({
@@ -333,18 +363,22 @@ async function runCommand({
   sharedEnv,
 }) {
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
+  const env = buildChildEnv({
+    projectRoot,
+    workdir: executionWorkdir,
+    service,
+    rawPrompt,
+    fullPrompt: prompt,
+    sharedEnv,
+  });
+  const execution = buildCommandExecutionSpec(service.command, {
+    env,
+  });
   const result = await runChildProcess({
-    command: '/bin/bash',
-    args: ['-lc', service.command],
+    command: execution.command,
+    args: execution.args,
     cwd: executionWorkdir,
-    env: buildChildEnv({
-      projectRoot,
-      workdir: executionWorkdir,
-      service,
-      rawPrompt,
-      fullPrompt: prompt,
-      sharedEnv,
-    }),
+    env,
     input: prompt,
     timeoutMs: service.timeoutMs,
   });
@@ -398,7 +432,7 @@ function runChildProcess({
   timeoutMs,
 }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawnResolved(command, args, {
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -463,4 +497,70 @@ function runChildProcess({
   }).catch((error) => {
     throw new Error(toErrorMessage(error));
   });
+}
+
+function resolvePosixShell(env) {
+  const configuredShell = String(env.HKCLAW_LITE_SHELL || env.SHELL || '').trim();
+  if (configuredShell) {
+    return configuredShell;
+  }
+  if (fs.existsSync('/bin/bash')) {
+    return '/bin/bash';
+  }
+  return '/bin/sh';
+}
+
+export function resolveManagedAgentCli(agentType, env = process.env) {
+  const spec = MANAGED_AGENT_CLIS[agentType];
+  if (!spec) {
+    return null;
+  }
+
+  return (
+    resolvePreferredCli(spec.binaryName, {
+      packageName: spec.packageName,
+      pathValue: env.PATH || process.env.PATH || '',
+      pathext: env.PATHEXT || process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
+    }) || null
+  );
+}
+
+function requireManagedAgentCli(agentType, env = process.env) {
+  const spec = MANAGED_AGENT_CLIS[agentType];
+  const cli = resolveManagedAgentCli(agentType, env);
+  assert(
+    cli,
+    `${spec.binaryName} is unavailable. Install bundled dependency ${spec.packageName} or place ${spec.binaryName} on PATH.`,
+  );
+  return cli;
+}
+
+function buildManagedAgentRuntimeStatus(agentType, workdir) {
+  const cli = resolveManagedAgentCli(agentType);
+  const spec = MANAGED_AGENT_CLIS[agentType];
+  return {
+    ready: Boolean(cli),
+    detail:
+      cli?.detail ||
+      `${spec.packageName} not installed and ${spec.binaryName} not found in PATH`,
+    workdir,
+  };
+}
+
+function spawnResolved(command, args, options) {
+  const env = options?.env || process.env;
+  const resolvedCommand =
+    resolveExecutable(command, {
+      pathValue: env.PATH || process.env.PATH || '',
+      pathext: env.PATHEXT || process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
+    }) || command;
+
+  return spawn(resolvedCommand, args, {
+    ...options,
+    shell: shouldUseWindowsCommandShim(resolvedCommand),
+  });
+}
+
+function shouldUseWindowsCommandShim(command) {
+  return process.platform === 'win32' && /\.(cmd|bat)$/iu.test(command);
 }

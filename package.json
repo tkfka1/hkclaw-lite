@@ -1,6 +1,6 @@
 {
   "name": "hkclaw-lite",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Discord-only AI agent runtime managed from the CLI with full host-account privileges",
   "license": "MIT",
   "author": "hankyo",
@@ -23,7 +23,7 @@
   ],
   "type": "module",
   "bin": {
-    "hkclaw-lite": "./bin/hkclaw-lite.js"
+    "hkclaw-lite": "bin/hkclaw-lite.js"
   },
   "files": [
     "README.md",
@@ -42,5 +42,10 @@
   },
   "dependencies": {
     "discord.js": "^14.26.2"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-code": "2.1.104",
+    "@google/gemini-cli": "0.37.1",
+    "@openai/codex": "0.120.0"
   }
 }
