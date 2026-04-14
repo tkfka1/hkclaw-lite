@@ -148,6 +148,10 @@ function createFakeClaudeAgentSdkBundle() {
     `export function query({ prompt, options = {} }) {
   let closed = false;
   let completionResolve = null;
+  let lastAccount = {
+    email: 'dev@example.test',
+    organization: 'Console Org',
+  };
   const completionPromise = new Promise((resolve) => {
     completionResolve = resolve;
   });
@@ -167,23 +171,21 @@ function createFakeClaudeAgentSdkBundle() {
       };
     },
     async claudeOAuthCallback(code, state) {
+      lastAccount = {
+        email: 'dev@example.test',
+        organization: state === 'console-flow' ? 'Console Org' : 'Claude Org',
+        code,
+        state,
+      };
       completionResolve?.({
-        account: {
-          email: 'dev@example.test',
-          organization: state === 'console-flow' ? 'Console Org' : 'Claude Org',
-          code,
-          state,
-        },
+        account: lastAccount,
       });
     },
     async claudeOAuthWaitForCompletion() {
       return await completionPromise;
     },
     async accountInfo() {
-      return {
-        email: 'dev@example.test',
-        organization: 'Console Org',
-      };
+      return lastAccount;
     },
     close() {
       if (!closed) {
@@ -1499,6 +1501,49 @@ test('admin server starts and completes Claude ACP login flow through the bundle
         assert.equal(complete.payload.result.details.loggedIn, true);
         assert.equal(complete.payload.result.details.account.email, 'dev@example.test');
         assert.equal(complete.payload.result.details.account.organization, 'Console Org');
+      });
+    },
+  );
+});
+
+test('admin server accepts a Claude callback URL pasted into the authorizationCode field', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      await withAdminServer(projectRoot, async ({ url }) => {
+        const login = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'claude-code',
+            action: 'login',
+            options: {
+              loginMode: 'claudeai',
+            },
+          },
+        });
+        assert.equal(login.response.status, 200, JSON.stringify(login.payload));
+
+        const complete = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'claude-code',
+            action: 'complete-login',
+            authorizationCode:
+              'http://localhost:4455/callback?code=callback-code-123&state=claudeai-flow',
+          },
+        });
+        assert.equal(complete.response.status, 200, JSON.stringify(complete.payload));
+        assert.equal(complete.payload.result.details.loggedIn, true);
+        assert.equal(complete.payload.result.details.account.email, 'dev@example.test');
+        assert.equal(complete.payload.result.details.account.organization, 'Claude Org');
+        assert.equal(complete.payload.result.details.account.code, 'callback-code-123');
+        assert.equal(complete.payload.result.details.account.state, 'claudeai-flow');
       });
     },
   );

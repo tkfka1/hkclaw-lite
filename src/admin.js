@@ -1098,6 +1098,8 @@ async function startClaudeAuthFlow(projectRoot, payload = {}) {
         summary: '브라우저에서 로그인을 완료하세요.',
         loginStarted: true,
         requiresCode: true,
+        completionHint:
+          '브라우저 인증 뒤 표시된 Authentication Code 또는 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.',
         loginMode,
         sessionId: flow.id,
         url: flow.manualUrl || flow.automaticUrl || '',
@@ -1121,7 +1123,7 @@ async function completeClaudeAuthFlow(projectRoot, payload = {}) {
   const resolvedState = callback.state || resolveClaudeOAuthState(flow);
   assert(
     callback.authorizationCode,
-    '브라우저 완료 후 Authentication Code를 붙여넣으세요.',
+    '브라우저 완료 후 Authentication Code 또는 callback URL 전체를 붙여넣으세요.',
   );
   assert(
     resolvedState,
@@ -1206,6 +1208,7 @@ async function startGeminiAuthFlow(projectRoot) {
       summary: '브라우저에서 Google 로그인을 완료하세요.',
       loginStarted: true,
       requiresCode: true,
+      completionHint: '브라우저 인증 뒤 표시된 authorization code를 붙여넣고 로그인 완료를 누르세요.',
       pendingLogin: true,
       sessionId: flow.id,
       url: authUrl,
@@ -1648,7 +1651,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
         ? `브라우저 로그인: 진행 중 (${activeFlow.loginMode === 'console' ? 'console' : 'claude.ai'})`
         : '',
       activeFlow
-        ? '완료 방법: 브라우저 로그인 후 표시된 Authentication Code를 붙여넣고 로그인 완료를 누르세요.'
+        ? '완료 방법: 브라우저 로그인 후 표시된 Authentication Code 또는 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.'
         : '',
     ].filter(Boolean);
 
@@ -1666,6 +1669,9 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
         ready,
         pendingLogin: Boolean(activeFlow),
         requiresCode: Boolean(activeFlow),
+        completionHint: activeFlow
+          ? '브라우저 인증 뒤 표시된 Authentication Code 또는 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.'
+          : '',
         loginMode: activeFlow?.loginMode || null,
         manualUrl: activeFlow?.manualUrl || '',
         automaticUrl: activeFlow?.automaticUrl || '',
@@ -2146,29 +2152,19 @@ function parseClaudeOAuthCallbackPayload(payload = {}) {
   const callbackUrl =
     String(payload?.callbackUrl || payload?.options?.callbackUrl || '').trim();
   if (callbackUrl) {
-    let parsedUrl;
-    try {
-      parsedUrl = new URL(callbackUrl);
-    } catch {
-      throw new Error('Authentication Code 또는 callback URL 전체를 붙여넣어야 합니다.');
-    }
-    return {
-      callbackUrl,
-      authorizationCode: String(
-        parsedUrl.searchParams.get('code') ||
-        parsedUrl.searchParams.get('authorization_code') ||
-        '',
-      ).trim(),
-      state: String(parsedUrl.searchParams.get('state') || '').trim(),
-    };
+    return parseClaudeOAuthCallbackUrl(callbackUrl);
   }
 
+  const authorizationCode = String(
+    payload?.authorizationCode || payload?.code || payload?.options?.authorizationCode || '',
+  ).trim();
+  const parsedAuthorizationCode = parseClaudeOAuthCodeOrCallbackInput(authorizationCode);
   return {
-    callbackUrl: '',
-    authorizationCode: String(
-      payload?.authorizationCode || payload?.code || payload?.options?.authorizationCode || '',
-    ).trim(),
-    state: String(payload?.state || payload?.options?.state || '').trim(),
+    callbackUrl: parsedAuthorizationCode.callbackUrl,
+    authorizationCode: parsedAuthorizationCode.authorizationCode,
+    state:
+      parsedAuthorizationCode.state ||
+      String(payload?.state || payload?.options?.state || '').trim(),
   };
 }
 
@@ -2189,6 +2185,43 @@ function resolveClaudeOAuthState(flow) {
     }
   }
   return '';
+}
+
+function parseClaudeOAuthCallbackUrl(callbackUrl) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(callbackUrl);
+  } catch {
+    throw new Error('Authentication Code 또는 callback URL 전체를 붙여넣어야 합니다.');
+  }
+  return {
+    callbackUrl,
+    authorizationCode: String(
+      parsedUrl.searchParams.get('code') ||
+      parsedUrl.searchParams.get('authorization_code') ||
+      '',
+    ).trim(),
+    state: String(parsedUrl.searchParams.get('state') || '').trim(),
+  };
+}
+
+function parseClaudeOAuthCodeOrCallbackInput(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return {
+      callbackUrl: '',
+      authorizationCode: '',
+      state: '',
+    };
+  }
+  if (/^https?:\/\//iu.test(text)) {
+    return parseClaudeOAuthCallbackUrl(text);
+  }
+  return {
+    callbackUrl: '',
+    authorizationCode: text,
+    state: '',
+  };
 }
 
 function parseJsonObject(value) {

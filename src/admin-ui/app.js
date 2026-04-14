@@ -1910,7 +1910,7 @@ function renderAiWorkflowGuide(agentType, authResult, testResult, ready, testSup
           {
             label: '2. 로그인 완료',
             state: loggedIn ? '완료' : (pendingLogin ? '필요' : '대기'),
-            hint: '브라우저 인증 뒤 표시되는 Authentication Code를 붙여넣습니다.',
+            hint: '브라우저 인증 뒤 표시되는 Authentication Code 또는 callback URL 전체를 붙여넣습니다.',
           },
         {
           label: '3. 상태 확인',
@@ -1982,7 +1982,7 @@ function renderAiWorkflowGuide(agentType, authResult, testResult, ready, testSup
       }
       ${
         agentType === 'claude-code'
-          ? '<div class="field-hint">Claude Code ACP는 브라우저 인증을 마친 뒤 Authentication Code 붙여넣기까지 해야 완료됩니다.</div>'
+          ? '<div class="field-hint">Claude Code ACP는 브라우저 인증을 마친 뒤 Authentication Code 또는 callback URL을 웹 어드민에 붙여넣어야 완료됩니다.</div>'
           : ''
       }
       ${
@@ -2535,7 +2535,7 @@ function renderAgentWizardResult(result) {
       ${details.code ? `<div class="result-code">${escapeHtml(details.code)}</div>` : ''}
       ${
         details.requiresCode
-          ? '<div class="field-hint">브라우저 인증 후 표시되는 Authentication Code를 붙여넣고 로그인 완료를 누르세요.</div>'
+          ? `<div class="field-hint">${escapeHtml(details.completionHint || '브라우저 인증 후 표시되는 코드를 붙여넣고 로그인 완료를 누르세요.')}</div>`
           : ''
       }
       ${
@@ -3033,14 +3033,14 @@ function renderAiAuthFields(agentType) {
           <div class="field-hint">claude.ai 는 개인 Claude 구독 계정이고, console 은 Anthropic Console 조직/API 계정입니다.</div>
         </div>
         <div class="field field-full">
-          <label for="ai-manager-claude-authorization-code">Authentication Code 붙여넣기</label>
+          <label for="ai-manager-claude-authorization-code">Authentication Code 또는 callback URL 붙여넣기</label>
           <textarea
             id="ai-manager-claude-authorization-code"
             name="claudeAuthorizationCode"
             data-ai-auth-key="authorizationCode"
-            placeholder="브라우저 로그인 완료 후 표시된 Authentication Code"
+            placeholder="브라우저 로그인 완료 후 표시된 Authentication Code 또는 callback URL 전체"
           >${escapeHtml(authConfig.authorizationCode || '')}</textarea>
-          <div class="field-hint">로그인 버튼을 누른 뒤 브라우저 인증을 마치면 Authentication Code가 표시됩니다. 그 코드를 그대로 붙여넣고 로그인 완료를 누르세요.</div>
+          <div class="field-hint">로그인 버튼을 누른 뒤 브라우저 인증을 마치면 Authentication Code 또는 최종 callback URL을 얻습니다. 둘 중 하나를 그대로 붙여넣고 로그인 완료를 누르세요.</div>
         </div>
       </div>
     `;
@@ -3118,7 +3118,11 @@ function handleLoginLaunch(result, popup) {
     window.open(url, '_blank');
   }
   if (result?.details?.requiresCode) {
-    setNotice('info', '로그인 창을 열었습니다. 브라우저 인증 뒤 표시된 Authentication Code를 붙여넣고 로그인 완료를 누르세요.');
+    setNotice(
+      'info',
+      optionalDraftText(result?.details?.completionHint) ||
+        '로그인 창을 열었습니다. 브라우저 인증 뒤 표시된 코드를 붙여넣고 로그인 완료를 누르세요.',
+    );
     return;
   }
   setNotice('info', '로그인 창을 열었습니다. 브라우저에서 완료한 뒤 상태 확인을 누르세요.');
@@ -4218,7 +4222,7 @@ function localizeErrorMessage(message) {
   if (text === 'Claude Code ACP 로그인 세션이 없습니다. 먼저 로그인 버튼을 누르세요.') {
     return text;
   }
-  if (text === '브라우저 완료 후 Authentication Code를 붙여넣으세요.') {
+  if (text === '브라우저 완료 후 Authentication Code 또는 callback URL 전체를 붙여넣으세요.') {
     return text;
   }
   if (text === 'Authentication Code 또는 callback URL 전체를 붙여넣어야 합니다.') {
