@@ -5,10 +5,11 @@ The main project root is mounted at {{ .Values.state.mountPath }}.
 Important runtime notes:
 
   - HOME is {{ .Values.state.mountPath }}. Claude/Gemini login state and .hkclaw-lite runtime state live there.
-  - If you run extra Pods such as a separate discord serve worker, they must share the same {{ .Values.state.mountPath }} volume.
+  - The default chart runs a single admin Pod. Discord workers started from the web admin run in the same container as child processes.
   - Channel workspace "~" resolves to HOME. In this chart that means {{ .Values.state.mountPath }}, not {{ .Values.workspace.mountPath }}.
-  - The optional extra workspace volume is {{ if .Values.workspace.enabled }}enabled at {{ .Values.workspace.mountPath }}{{ else }}disabled by default{{ end }}.
+  - The workspace volume is {{ if .Values.workspace.enabled }}mounted at {{ .Values.workspace.mountPath }}{{ else }}disabled{{ end }}.
   - If you mount a repo under {{ .Values.workspace.mountPath }}, set each channel workspace to an absolute path under that mount.
+  - Only if you intentionally run extra Pods such as a dedicated discord serve worker must they share the same {{ .Values.state.mountPath }} volume.
 
 Useful commands:
 

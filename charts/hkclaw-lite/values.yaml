@@ -41,10 +41,7 @@ state:
     size: 5Gi
 
 workspace:
-  # Disabled by default. Channel workspace "~" resolves to HOME (/data),
-  # so an extra /workspace mount is only useful when channels are configured
-  # with explicit absolute paths under this mount.
-  enabled: false
+  enabled: true
   mountPath: /workspace
   persistence:
     enabled: false
