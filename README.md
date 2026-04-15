@@ -1,10 +1,10 @@
 # hkclaw-lite
 
-`hkclaw-lite`는 Discord 에이전트를 웹 어드민 중심으로 운영하는 경량 런타임이다.
+`hkclaw-lite`는 Discord/Telegram 에이전트를 웹 어드민 중심으로 운영하는 경량 런타임이다.
 
 - 기본 진입점은 웹 어드민이다.
-- 에이전트 1개당 Discord 토큰 1개를 가진다.
-- Discord 워커도 에이전트별 프로세스로 동작한다.
+- 에이전트 1개당 선택한 플랫폼(Discord/Telegram)용 연결 정보를 가진다.
+- 메시징 워커도 에이전트별 프로세스로 동작한다.
 - 기본 웹 주소는 `http://127.0.0.1:5687` 이다.
 
 ## 요구 사항
@@ -40,8 +40,8 @@ npx hkclaw-lite admin
 설치 후:
 
 - 웹 어드민은 `5687` 포트에서 뜬다.
-- Discord 에이전트/채널/AI 로그인은 웹에서 관리한다.
-- 실제 Discord 연결은 에이전트 카드의 `실행 / 재시작 / 중지` 버튼으로 제어한다.
+- 에이전트/채널/AI 로그인은 웹에서 관리한다.
+- 실제 Discord/Telegram 연결은 에이전트 카드의 `실행 / 재시작 / 중지` 버튼으로 제어한다.
 
 ## 2. Docker
 
@@ -66,7 +66,7 @@ docker run --rm \
 
 - `/home/hkclaw`는 로그인 상태와 런타임 상태를 유지하는 용도다.
 - `/workspace`는 실제 작업 디렉터리를 붙이는 용도다. Helm 기본값에서도 마운트된다.
-- 기본 Helm 배포는 단일 웹 어드민 Pod다. 웹 어드민에서 Discord 워커를 시작하면 같은 컨테이너 안에서 child process로 실행된다.
+- 기본 Helm 배포는 단일 웹 어드민 Pod다. 웹 어드민에서 워커를 시작하면 같은 컨테이너 안에서 child process로 실행된다.
 - 컨테이너 이미지 기준 기본 채널 워크스페이스는 `/workspace` 다. `~` 는 명시적으로 썼을 때만 `HOME` 으로 해석된다.
 - 컨테이너는 자동으로 역할을 추측하지 않는다. `admin`, `run`, `discord serve` 중 어떤 명령을 띄울지 직접 넘겨야 한다.
 - 컨테이너에는 운영용 기본 도구로 `ssh`, `kubectl`, `argocd`, `git`, `ripgrep`가 같이 들어간다.
@@ -96,10 +96,10 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 
 운영 주의:
 
-- 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord 워커를 같은 컨테이너 안에서 띄운다.
+- 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord/Telegram 워커를 같은 컨테이너 안에서 띄운다.
 - 컨테이너/Helm 기준 기본 채널 워크스페이스는 `/workspace` 다. `/workspace/<repo>` 같은 절대 경로를 그대로 쓰면 된다.
 - `~` 를 명시적으로 쓰면 `HOME` 으로 해석되고 Helm 기본값에서는 `/home/hkclaw` 를 뜻한다.
-- `discord serve` 를 정말 별도 Deployment/Pod로 분리할 때만 `/home/hkclaw` PVC를 admin Pod와 공유해야 한다. 그렇지 않으면 Claude 로그인 상태와 `.hkclaw-lite` 프로젝트 상태가 분리된다.
+- `discord serve` 또는 `telegram serve` 를 정말 별도 Deployment/Pod로 분리할 때만 `/home/hkclaw` PVC를 admin Pod와 공유해야 한다. 그렇지 않으면 Claude 로그인 상태와 `.hkclaw-lite` 프로젝트 상태가 분리된다.
 
 즉 Helm 기본 배포는 단일 웹 어드민 Pod 기준이고, 별도 role Pod가 필요할 때만 `args`를 override 하면 된다.
 
@@ -109,7 +109,7 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 2. 웹에서 AI 로그인부터 끝낸다.
 3. 에이전트를 만든다.
 4. 채널을 연결한다.
-5. 각 에이전트 카드에서 Discord 워커를 실행한다.
+5. 각 에이전트 카드에서 해당 플랫폼 워커를 실행한다.
 
 ## 주요 명령
 
@@ -117,6 +117,7 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 hkclaw-lite admin
 hkclaw-lite run --channel <name> --message "hello"
 hkclaw-lite discord serve --agent <agent-name>
+hkclaw-lite telegram serve --agent <agent-name>
 ```
 
-`admin`은 웹 어드민, `run`은 one-shot 실행, `discord serve`는 특정 에이전트의 Discord 워커를 직접 띄우는 명령이다.
+`admin`은 웹 어드민, `run`은 one-shot 실행, `discord serve`/`telegram serve`는 특정 에이전트의 플랫폼 워커를 직접 띄우는 명령이다.

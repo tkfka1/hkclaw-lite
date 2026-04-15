@@ -412,11 +412,11 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
       result:
         platform === 'telegram'
           ? await queueTelegramServiceAction(projectRoot, {
-              action: 'reconnect-bot',
+              action: 'reconnect-agent',
               agentName: name,
             })
           : await queueDiscordServiceAction(projectRoot, {
-              action: 'reconnect-bot',
+              action: 'reconnect-agent',
               agentName: name,
             }),
     });
@@ -627,7 +627,7 @@ async function queueDiscordServiceAction(projectRoot, input = {}) {
   return {
     queued: true,
     action: command.action,
-    agentName: command.botName,
+    agentName: command.agentName,
     requestedAt: command.requestedAt,
   };
 }
@@ -649,7 +649,7 @@ async function queueTelegramServiceAction(projectRoot, input = {}) {
   return {
     queued: true,
     action: command.action,
-    agentName: command.botName,
+    agentName: command.agentName,
     requestedAt: command.requestedAt,
   };
 }

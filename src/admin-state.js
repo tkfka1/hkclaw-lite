@@ -572,12 +572,6 @@ function renameAgentReferences(config, currentName, nextName) {
       agent.fallbackAgent = nextName;
     }
   }
-
-  for (const bot of Object.values(config.bots || {})) {
-    if (bot.agent === currentName) {
-      bot.agent = nextName;
-    }
-  }
 }
 
 function validateSharedEnvInput(sharedEnv) {

@@ -323,7 +323,10 @@ async function processDiscordServiceCommands({
           channelQueues,
           enqueueOutboxFlush,
         });
-      } else if (command.action === 'reconnect-bot') {
+      } else if (
+        command.action === 'reconnect-agent' ||
+        command.action === 'reconnect-bot'
+      ) {
         nextBotConfigs = await reconnectDiscordBot({
           projectRoot,
           Discord,
@@ -463,7 +466,7 @@ async function reconnectDiscordBot({
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
   persistServiceStatus(serviceStatus);
-  console.log(`Discord service reconnected bot "${botName}".`);
+  console.log(`Discord service reconnected agent "${botName}".`);
   return nextBotConfigs;
 }
 

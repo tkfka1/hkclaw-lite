@@ -108,7 +108,6 @@ export function createDefaultConfig() {
     sharedEnv: {},
     localLlmConnections: createDefaultLocalLlmConnections(),
     agents: {},
-    bots: {},
     channels: {},
     dashboards: {},
   };
@@ -131,7 +130,6 @@ export function loadConfig(projectRoot) {
   assert(isPlainObject(config.sharedEnv), 'Config sharedEnv must be an object.');
   assert(isPlainObject(config.localLlmConnections), 'Config localLlmConnections must be an object.');
   assert(isPlainObject(config.agents), 'Config agents must be an object.');
-  assert(isPlainObject(config.bots), 'Config bots must be an object.');
   assert(isPlainObject(config.channels), 'Config channels must be an object.');
   assert(isPlainObject(config.dashboards), 'Config dashboards must be an object.');
   validateConfigReferences(projectRoot, config);
@@ -161,7 +159,6 @@ function normalizeConfig(rawConfig) {
         normalizeLegacyAgentRecords(rawAgents),
         normalizeLegacyBotRecords(rawConfig.bots ?? {}),
       ),
-      bots: {},
       channels: normalizeLegacyChannelRecords(
         rawConfig.channels ?? {},
         rawAgents,
@@ -188,7 +185,6 @@ function normalizeConfig(rawConfig) {
         normalizeLegacyAgentRecords(rawAgents),
         normalizeLegacyBotRecords(rawConfig.bots ?? {}),
       ),
-      bots: {},
       channels: normalizeLegacyChannelRecords(
         rawConfig.channels ?? {},
         rawAgents,
@@ -211,7 +207,6 @@ function normalizeConfig(rawConfig) {
         rawConfig.sharedEnv ?? {},
       ),
       agents: normalizeLegacyAgentRecords(rawAgents),
-      bots: {},
       channels: {},
       dashboards: {},
     };
@@ -240,10 +235,6 @@ function validateConfigReferences(projectRoot, config) {
     }
   }
 
-  for (const [name, bot] of Object.entries(config.bots)) {
-    validateBotDefinition(config, { name, ...bot });
-  }
-
   for (const channel of Object.values(config.channels)) {
     validateChannelDefinition(projectRoot, config, channel);
   }
@@ -264,32 +255,15 @@ export function listAgents(config) {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function listBots(config) {
-  return Object.entries(config.bots || {})
-    .map(([name, bot]) => ({ name, ...bot }))
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
-
 export function getAgent(config, name) {
   const agent = config.agents[name];
   assert(agent, `Unknown agent "${name}".`);
   return { name, ...agent };
 }
 
-export function getBot(config, name) {
-  const bot = config.bots[name];
-  assert(bot, `Unknown bot "${name}".`);
-  return { name, ...bot };
-}
-
 export function removeAgent(config, name) {
   assert(config.agents[name], `Unknown agent "${name}".`);
   delete config.agents[name];
-}
-
-export function removeBot(config, name) {
-  assert(config.bots[name], `Unknown bot "${name}".`);
-  delete config.bots[name];
 }
 
 export function listLocalLlmConnections(config) {
@@ -426,27 +400,6 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   return sortObjectKeys(merged);
 }
 
-export function buildBotDefinition(config, name, input, existing = {}) {
-  assert(name, 'Bot name is required.');
-  assert(
-    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name),
-    'Bot name may only contain letters, numbers, dot, underscore, and dash.',
-  );
-
-  const merged = {
-    ...stripManagedFields(existing),
-    agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
-    discordToken: getRequiredString(
-      input.discordToken ?? input['discord-token'] ?? existing.discordToken,
-      'discordToken',
-    ),
-    description: normalizeOptionalString(input.description ?? existing.description),
-  };
-
-  validateBotDefinition(config, { name, ...merged });
-  return sortObjectKeys(merged);
-}
-
 export function buildChannelDefinition(projectRoot, config, name, input, existing = {}) {
   assert(name, 'Channel name is required.');
   assert(
@@ -497,16 +450,12 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
         existing.workdir ??
         getDefaultChannelWorkspace(),
     ),
-    agent: resolveChannelAgentName(config, input.agent ?? existing.agent, input.bot ?? input.ownerBot ?? existing.bot ?? existing.ownerBot),
+    agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
     reviewer: resolveOptionalChannelAgentName(
-      config,
       input.reviewer ?? existing.reviewer,
-      input.reviewerBot ?? existing.reviewerBot,
     ),
     arbiter: resolveOptionalChannelAgentName(
-      config,
       input.arbiter ?? existing.arbiter,
-      input.arbiterBot ?? existing.arbiterBot,
     ),
     reviewRounds:
       input.reviewRounds ?? input['review-rounds'] ?? existing.reviewRounds,
@@ -714,14 +663,6 @@ function validateAgentDefinition(projectRoot, agent) {
   }
 
   validateEnvObject(agent.env ?? {}, `Agent "${agent.name}" env`);
-}
-
-function validateBotDefinition(config, bot) {
-  assert(config.agents[bot.agent], `Bot references unknown agent "${bot.agent}".`);
-  assert(
-    typeof bot.discordToken === 'string' && bot.discordToken.trim().length > 0,
-    'discordToken is required.',
-  );
 }
 
 function validateChannelDefinition(projectRoot, config, channel) {
@@ -992,19 +933,7 @@ function resolveMessagingPlatform(value, existing = {}) {
   return 'discord';
 }
 
-function resolveChannelAgentName(config, explicitAgentName, botName) {
-  if (botName) {
-    assert(config.bots[botName], `Channel references unknown bot "${botName}".`);
-    return config.bots[botName].agent;
-  }
-  return getRequiredString(explicitAgentName, 'agent');
-}
-
-function resolveOptionalChannelAgentName(config, explicitAgentName, botName) {
-  if (botName) {
-    assert(config.bots[botName], `Channel references unknown bot "${botName}".`);
-    return config.bots[botName].agent;
-  }
+function resolveOptionalChannelAgentName(explicitAgentName) {
   return normalizeOptionalString(explicitAgentName);
 }
 

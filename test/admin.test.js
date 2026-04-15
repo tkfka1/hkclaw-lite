@@ -871,7 +871,7 @@ test('admin server queues manual Discord service commands instead of auto reload
     );
     assert.equal(reconnectResponse.response.status, 200, JSON.stringify(reconnectResponse.payload));
     assert.equal(reconnectResponse.payload.result.queued, true);
-    assert.equal(reconnectResponse.payload.result.action, 'reconnect-bot');
+    assert.equal(reconnectResponse.payload.result.action, 'reconnect-agent');
     assert.equal(reconnectResponse.payload.result.agentName, 'worker');
 
     const reloadResponse = await requestJson(`${url}/api/discord-service/reload`, {
@@ -890,16 +890,16 @@ test('admin server queues manual Discord service commands instead of auto reload
     assert.deepEqual(
       commands.map((entry) => ({
         action: entry.action,
-        botName: entry.botName || null,
+        agentName: entry.agentName || null,
       })),
       [
         {
-          action: 'reconnect-bot',
-          botName: 'worker',
+          action: 'reconnect-agent',
+          agentName: 'worker',
         },
         {
           action: 'reload-config',
-          botName: 'worker',
+          agentName: 'worker',
         },
       ],
     );

@@ -362,7 +362,11 @@ async function processTelegramServiceCommands({
   let nextBotConfigs = botConfigs;
   for (const command of commands) {
     try {
-      if (command.action === 'reload-config' || command.action === 'reconnect-bot') {
+      if (
+        command.action === 'reload-config' ||
+        command.action === 'reconnect-agent' ||
+        command.action === 'reconnect-bot'
+      ) {
         nextBotConfigs = await reloadTelegramServiceConfig({
           projectRoot,
           agentName,

@@ -387,7 +387,6 @@ export function enqueueDiscordServiceCommand(projectRoot, input = {}) {
     id: randomUUID(),
     action,
     agentName,
-    botName: agentName,
     requestedAt: timestamp(),
   };
   const filePath = path.join(
