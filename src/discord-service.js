@@ -190,10 +190,22 @@ async function createDiscordClient(token, Discord) {
 
   await new Promise((resolve, reject) => {
     client.once('ready', resolve);
-    client.login(token).catch(reject);
+    client.login(token).catch((error) => {
+      reject(normalizeDiscordClientError(error));
+    });
   });
 
   return client;
+}
+
+function normalizeDiscordClientError(error) {
+  const raw = toErrorMessage(error);
+  if (error?.code === 4014 || /Used disallowed intents/iu.test(raw)) {
+    return new Error(
+      'Discord 봇 설정에서 Message Content Intent 가 꺼져 있습니다. Discord Developer Portal > Bot > Privileged Gateway Intents 에서 Message Content Intent 를 켜세요.',
+    );
+  }
+  return error instanceof Error ? error : new Error(raw);
 }
 
 async function handleInboundMessage({
