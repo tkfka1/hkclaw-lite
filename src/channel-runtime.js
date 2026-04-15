@@ -22,11 +22,13 @@ export async function executeChannelTurn({
   prompt,
   workdir,
   onRoleMessage = null,
+  onTransition = null,
 }) {
   const recorder = await createRuntimeRecorder(projectRoot, {
     channel,
     prompt,
     workdir,
+    onTransition,
   });
   const emitPersistedRoleMessage = async (entry) => {
     await recorder.record(entry);
@@ -501,7 +503,7 @@ async function emitRoleMessage(callback, payload) {
   await callback(payload);
 }
 
-async function createRuntimeRecorder(projectRoot, { channel, prompt, workdir }) {
+async function createRuntimeRecorder(projectRoot, { channel, prompt, workdir, onTransition = null }) {
   try {
     const run = await startRuntimeRun(projectRoot, {
       channel,
@@ -515,6 +517,13 @@ async function createRuntimeRecorder(projectRoot, { channel, prompt, workdir }) 
         await swallowRuntimePersistenceError(() =>
           transitionRuntimeRun(projectRoot, run.runId, entry),
         );
+        if (typeof onTransition === 'function') {
+          await onTransition({
+            ...entry,
+            runId: run.runId,
+            startedAt: run.startedAt,
+          });
+        }
       },
       async record(entry) {
         await swallowRuntimePersistenceError(async () => {
