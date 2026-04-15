@@ -283,6 +283,16 @@ export function deleteTelegramServiceCommand(commandOrPath) {
   return true;
 }
 
+export function deleteTelegramAgentServiceArtifacts(projectRoot, agentName) {
+  assert(agentName, 'Agent name is required.');
+
+  const statusPath = getTelegramAgentStatusPath(projectRoot, agentName);
+  const commandQueuePath = getTelegramCommandQueuePath(projectRoot, agentName);
+
+  fs.rmSync(statusPath, { force: true });
+  fs.rmSync(commandQueuePath, { recursive: true, force: true });
+}
+
 function buildServiceAgentSummary(input = {}) {
   return Object.fromEntries(
     Object.entries(input || {}).map(([name, source]) => [

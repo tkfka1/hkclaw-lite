@@ -10,12 +10,17 @@ import { executeChannelTurn } from '../src/channel-runtime.js';
 import { getCiWatcherLogPath, saveCiWatcher } from '../src/ci-watch-store.js';
 import {
   buildDiscordServiceSnapshot,
+  enqueueDiscordServiceCommand,
+  getDiscordAgentStatusPath,
   listDiscordServiceCommands,
   writeDiscordAgentServiceStatus,
   writeDiscordServiceStatus,
 } from '../src/discord-runtime-state.js';
 import {
   buildTelegramServiceSnapshot,
+  enqueueTelegramServiceCommand,
+  getTelegramAgentStatusPath,
+  listTelegramServiceCommands,
   writeTelegramAgentServiceStatus,
 } from '../src/telegram-runtime-state.js';
 import { recordRuntimeUsageEvent } from '../src/runtime-db.js';
@@ -828,6 +833,87 @@ test('admin server saves config changes and can run a mapped channel', async () 
   assert.equal(config.channels['discord-main'], undefined);
   assert.equal(config.agents.worker, undefined);
   assert.equal(config.dashboards.ops, undefined);
+});
+
+test('admin server removes deleted agent runtime artifacts from service snapshots', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'discord',
+    discordToken: 'owner-token',
+    telegramBotToken: 'telegram-token',
+  });
+  saveConfig(projectRoot, config);
+
+  writeDiscordAgentServiceStatus(projectRoot, 'worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'worker',
+    pid: 999999,
+    running: false,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: '2026-04-15T00:00:00.000Z',
+    agents: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: false,
+        tag: '',
+        userId: '',
+      },
+    },
+  });
+  writeTelegramAgentServiceStatus(projectRoot, 'worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'worker',
+    pid: 999999,
+    running: false,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: '2026-04-15T00:00:00.000Z',
+    agents: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: false,
+        username: '',
+        userId: '',
+      },
+    },
+  });
+  enqueueDiscordServiceCommand(projectRoot, {
+    action: 'reload-config',
+    agentName: 'worker',
+  });
+  enqueueTelegramServiceCommand(projectRoot, {
+    action: 'reload-config',
+    agentName: 'worker',
+  });
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const deleteAgent = await requestJson(
+      `${url}/api/agents/${encodeURIComponent('worker')}`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(deleteAgent.response.status, 200, JSON.stringify(deleteAgent.payload));
+    assert.equal(deleteAgent.payload.state.agents.length, 0);
+    assert.deepEqual(deleteAgent.payload.state.discord.service.agents, {});
+    assert.deepEqual(deleteAgent.payload.state.telegram.service.agents, {});
+  });
+
+  assert.equal(fs.existsSync(getDiscordAgentStatusPath(projectRoot, 'worker')), false);
+  assert.equal(fs.existsSync(getTelegramAgentStatusPath(projectRoot, 'worker')), false);
+  assert.equal(listDiscordServiceCommands(projectRoot, { agentName: 'worker' }).length, 0);
+  assert.equal(listTelegramServiceCommands(projectRoot, { agentName: 'worker' }).length, 0);
+  assert.deepEqual(buildDiscordServiceSnapshot(projectRoot).agents, {});
+  assert.deepEqual(buildTelegramServiceSnapshot(projectRoot).agents, {});
 });
 
 test('admin server queues manual Discord service commands instead of auto reloading', async () => {

@@ -45,6 +45,7 @@ import {
 import {
   buildDiscordAgentServiceSnapshot,
   buildDiscordServiceSnapshot,
+  deleteDiscordAgentServiceArtifacts,
   enqueueDiscordServiceCommand,
   readDiscordAgentServiceStatus,
   readDiscordServiceStatus,
@@ -54,6 +55,7 @@ import {
 import {
   buildTelegramAgentServiceSnapshot,
   buildTelegramServiceSnapshot,
+  deleteTelegramAgentServiceArtifacts,
   enqueueTelegramServiceCommand,
   readTelegramAgentServiceStatus,
   readTelegramServiceStatus,
@@ -280,7 +282,7 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     const name = decodeEntityPath(pathname, '/api/agents/');
     writeJson(response, 200, {
       ok: true,
-      state: await deleteAgentByName(projectRoot, name),
+      state: await deleteAgentAndRuntimeByName(projectRoot, name),
     });
     return;
   }
@@ -716,6 +718,29 @@ async function restoreManagedServiceProcess(projectRoot, agentName, platform) {
       error: toErrorMessage(error),
     };
   }
+}
+
+async function deleteAgentAndRuntimeByName(projectRoot, name) {
+  try {
+    await stopDiscordServiceProcess(projectRoot, name, {
+      allowStopped: true,
+    });
+  } catch {
+    // Ignore Discord stop failures during delete cleanup.
+  }
+
+  try {
+    await stopTelegramServiceProcess(projectRoot, name, {
+      allowStopped: true,
+    });
+  } catch {
+    // Ignore Telegram stop failures during delete cleanup.
+  }
+
+  deleteDiscordAgentServiceArtifacts(projectRoot, name);
+  deleteTelegramAgentServiceArtifacts(projectRoot, name);
+
+  return await deleteAgentByName(projectRoot, name);
 }
 
 async function startDiscordServiceProcess(projectRoot, agentName) {

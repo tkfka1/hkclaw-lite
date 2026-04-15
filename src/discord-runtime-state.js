@@ -428,6 +428,16 @@ export function deleteDiscordServiceCommand(commandOrPath) {
   return true;
 }
 
+export function deleteDiscordAgentServiceArtifacts(projectRoot, agentName) {
+  assert(agentName, 'Agent name is required.');
+
+  const statusPath = getDiscordAgentStatusPath(projectRoot, agentName);
+  const commandQueuePath = getDiscordCommandQueuePath(projectRoot, agentName);
+
+  fs.rmSync(statusPath, { force: true });
+  fs.rmSync(commandQueuePath, { recursive: true, force: true });
+}
+
 function resolveRoleToken(env, role) {
   const envKey = ROLE_TOKEN_ENV_KEYS[role].find((key) => String(env[key] || '').trim());
   return {
