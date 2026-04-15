@@ -397,21 +397,21 @@ async function runGeminiCli({
     args.push('-m', service.model);
   }
 
+  const geminiEnv = stripGeminiCliEnv(buildChildEnv({
+    projectRoot,
+    workdir: executionWorkdir,
+    service,
+    rawPrompt,
+    fullPrompt: prompt,
+    sharedEnv,
+  }));
+  geminiEnv.GOOGLE_GENAI_USE_GCA = 'true';
+
   const result = await runChildProcess({
     command: cli.command,
     args,
     cwd: executionWorkdir,
-    env: applyEnvPatch(
-      stripGeminiCliEnv(buildChildEnv({
-        projectRoot,
-        workdir: executionWorkdir,
-        service,
-        rawPrompt,
-        fullPrompt: prompt,
-        sharedEnv,
-      })),
-      cli.envPatch,
-    ),
+    env: applyEnvPatch(geminiEnv, cli.envPatch),
     timeoutMs: service.timeoutMs,
   });
 

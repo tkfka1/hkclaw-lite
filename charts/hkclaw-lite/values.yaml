@@ -31,7 +31,7 @@ securityContext:
       - ALL
 
 state:
-  mountPath: /data
+  mountPath: /home/hkclaw
   persistence:
     enabled: true
     existingClaim: ""

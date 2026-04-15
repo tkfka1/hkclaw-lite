@@ -446,6 +446,14 @@ const promptIndex = args.indexOf('-p');
 const prompt = promptIndex >= 0 ? (args[promptIndex + 1] || '') : '';
 
 if (prompt) {
+  if (process.env.GOOGLE_GENAI_USE_GCA !== 'true') {
+    process.stderr.write(JSON.stringify({
+      error: {
+        message: 'GOOGLE_GENAI_USE_GCA must be true',
+      },
+    }));
+    process.exit(41);
+  }
   process.stdout.write(JSON.stringify({
     text: 'OK',
     _meta: {

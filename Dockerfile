@@ -7,7 +7,7 @@ ARG ARGOCD_VERSION=v3.2.1
 
 ENV APP_HOME=/app \
     NODE_ENV=production \
-    HOME=/data \
+    HOME=/home/hkclaw \
     DISABLE_AUTOUPDATER=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
@@ -41,11 +41,11 @@ COPY docker/entrypoint.sh /usr/local/bin/hkclaw-lite-entrypoint
 
 RUN chmod +x /usr/local/bin/hkclaw-lite-entrypoint \
   && useradd --create-home --shell /bin/bash --uid 10001 hkclaw \
-  && mkdir -p /data /workspace \
-  && chown -R 10001:10001 /app /data /workspace
+  && mkdir -p /workspace \
+  && chown -R 10001:10001 /app /home/hkclaw /workspace
 
 USER 10001:10001
-WORKDIR /data
+WORKDIR /home/hkclaw
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/hkclaw-lite-entrypoint"]
 CMD []

@@ -339,7 +339,7 @@ test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () 
   );
 });
 
-test('runAgentTurn strips Gemini env-based auth overrides before invoking the bundled cli', async () => {
+test('runAgentTurn strips Gemini env-based auth overrides and forces managed Google login mode', async () => {
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
@@ -375,7 +375,7 @@ test('runAgentTurn strips Gemini env-based auth overrides before invoking the bu
       assert.equal(parsed.googleApiKey, '');
       assert.equal(parsed.googleApplicationCredentials, '');
       assert.equal(parsed.googleCloudAccessToken, '');
-      assert.equal(parsed.googleGenAiUseGca, '');
+      assert.equal(parsed.googleGenAiUseGca, 'true');
       assert.equal(
         fs.existsSync(
           path.join(

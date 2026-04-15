@@ -56,7 +56,7 @@ docker pull ghcr.io/tkfka1/hkclaw-lite:latest
 ```bash
 docker run --rm \
   -p 5687:5687 \
-  -v hkclaw-lite-data:/data \
+  -v hkclaw-lite-data:/home/hkclaw \
   -v $(pwd):/workspace \
   ghcr.io/tkfka1/hkclaw-lite:latest \
   admin --host 0.0.0.0 --port 5687
@@ -64,7 +64,7 @@ docker run --rm \
 
 운영 메모:
 
-- `/data`는 로그인 상태와 런타임 상태를 유지하는 용도다.
+- `/home/hkclaw`는 로그인 상태와 런타임 상태를 유지하는 용도다.
 - `/workspace`는 실제 작업 디렉터리를 붙이는 용도다. Helm 기본값에서도 마운트된다.
 - 기본 Helm 배포는 단일 웹 어드민 Pod다. 웹 어드민에서 Discord 워커를 시작하면 같은 컨테이너 안에서 child process로 실행된다.
 - 컨테이너 이미지 기준 기본 채널 워크스페이스는 `/workspace` 다. `~` 는 명시적으로 썼을 때만 `HOME` 으로 해석된다.
@@ -90,7 +90,7 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 기본값:
 
 - `admin --host 0.0.0.0 --port 5687`
-- `HOME=/data`
+- `HOME=/home/hkclaw`
 - 상태 저장용 PVC 사용
 - `/workspace` 볼륨 기본 마운트
 
@@ -98,8 +98,8 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 
 - 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord 워커를 같은 컨테이너 안에서 띄운다.
 - 컨테이너/Helm 기준 기본 채널 워크스페이스는 `/workspace` 다. `/workspace/<repo>` 같은 절대 경로를 그대로 쓰면 된다.
-- `~` 를 명시적으로 쓰면 `HOME` 으로 해석되고 Helm 기본값에서는 `/data` 를 뜻한다.
-- `discord serve` 를 정말 별도 Deployment/Pod로 분리할 때만 `/data` PVC를 admin Pod와 공유해야 한다. 그렇지 않으면 Claude 로그인 상태와 `.hkclaw-lite` 프로젝트 상태가 분리된다.
+- `~` 를 명시적으로 쓰면 `HOME` 으로 해석되고 Helm 기본값에서는 `/home/hkclaw` 를 뜻한다.
+- `discord serve` 를 정말 별도 Deployment/Pod로 분리할 때만 `/home/hkclaw` PVC를 admin Pod와 공유해야 한다. 그렇지 않으면 Claude 로그인 상태와 `.hkclaw-lite` 프로젝트 상태가 분리된다.
 
 즉 Helm 기본 배포는 단일 웹 어드민 Pod 기준이고, 별도 role Pod가 필요할 때만 `args`를 override 하면 된다.
 
