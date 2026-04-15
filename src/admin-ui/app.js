@@ -261,8 +261,18 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'reload-telegram-service') {
+    void reloadTelegramServiceConfig();
+    return;
+  }
+
   if (action === 'start-discord-service') {
     void startDiscordService();
+    return;
+  }
+
+  if (action === 'start-telegram-service') {
+    void startTelegramService();
     return;
   }
 
@@ -271,8 +281,18 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'restart-telegram-service') {
+    void restartTelegramService();
+    return;
+  }
+
   if (action === 'stop-discord-service') {
     void stopDiscordService();
+    return;
+  }
+
+  if (action === 'stop-telegram-service') {
+    void stopTelegramService();
     return;
   }
 
@@ -286,13 +306,28 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'start-agent-service') {
+    void startAgentService(button.dataset.name);
+    return;
+  }
+
   if (action === 'restart-agent-discord-service') {
     void restartAgentDiscordService(button.dataset.name);
     return;
   }
 
+  if (action === 'restart-agent-service') {
+    void restartAgentService(button.dataset.name);
+    return;
+  }
+
   if (action === 'stop-agent-discord-service') {
     void stopAgentDiscordService(button.dataset.name);
+    return;
+  }
+
+  if (action === 'stop-agent-service') {
+    void stopAgentService(button.dataset.name);
     return;
   }
 
@@ -531,6 +566,17 @@ function handleInput(event) {
     ) {
       state.channelDraft[target.name] =
         target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+      if (target.name === 'platform') {
+        if (state.channelDraft.platform === 'telegram') {
+          state.channelDraft.discordChannelId = '';
+          state.channelDraft.guildId = '';
+        } else {
+          state.channelDraft.telegramChatId = '';
+          state.channelDraft.telegramThreadId = '';
+        }
+        render();
+        return;
+      }
       if (target.name === 'mode' && state.channelDraft.mode !== 'tribunal') {
         state.channelDraft.reviewer = '';
         state.channelDraft.arbiter = '';
@@ -561,6 +607,16 @@ function handleInput(event) {
 
   state.agentWizard.draft[target.name] =
     target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+
+  if (target.name === 'platform') {
+    if (state.agentWizard.draft.platform === 'telegram') {
+      state.agentWizard.draft.discordToken = '';
+    } else {
+      state.agentWizard.draft.telegramBotToken = '';
+    }
+    render();
+    return;
+  }
 
   if (target.name === 'agent') {
     state.agentWizard.authResult = null;
@@ -720,9 +776,11 @@ async function saveAgentWizard() {
   validateAgentWizardStep();
   const values = state.agentWizard?.draft || createBlankAgent();
   const currentName = optionalDraftText(state.agentWizard?.currentName);
+  const platform = optionalDraftText(values.platform) || 'discord';
   const definition = {
     name: requiredDraftText(values.name, 'name'),
     agent: requiredDraftText(values.agent, 'agent'),
+    platform,
     fallbackAgent: optionalDraftText(values.fallbackAgent),
     model: resolveConfiguredModel(values.agent, values),
     effort: optionalDraftText(values.effort),
@@ -735,7 +793,14 @@ async function saveAgentWizard() {
     sandbox: optionalDraftText(values.sandbox),
     permissionMode: optionalDraftText(values.permissionMode),
     dangerous: values.agent === 'codex' ? Boolean(values.dangerous) : undefined,
-    discordToken: requiredDraftText(values.discordToken, 'discordToken'),
+    discordToken:
+      platform === 'discord'
+        ? requiredDraftText(values.discordToken, 'discordToken')
+        : undefined,
+    telegramBotToken:
+      platform === 'telegram'
+        ? requiredDraftText(values.telegramBotToken, 'telegramBotToken')
+        : undefined,
     localLlmConnection: optionalDraftText(values.localLlmConnection),
     baseUrl: optionalDraftText(values.baseUrl),
     command: optionalDraftText(values.command),
@@ -759,11 +824,18 @@ async function saveAgentWizard() {
 async function saveChannel(form) {
   const values = new FormData(form);
   const currentName = optionalText(values, 'currentName');
+  const platform = requiredText(values, 'platform');
   const definition = {
     name: requiredText(values, 'name'),
+    platform,
     mode: requiredText(values, 'mode'),
-    discordChannelId: requiredText(values, 'discordChannelId'),
-    guildId: optionalText(values, 'guildId'),
+    discordChannelId:
+      platform === 'discord' ? requiredText(values, 'discordChannelId') : undefined,
+    guildId: platform === 'discord' ? optionalText(values, 'guildId') : undefined,
+    telegramChatId:
+      platform === 'telegram' ? requiredText(values, 'telegramChatId') : undefined,
+    telegramThreadId:
+      platform === 'telegram' ? optionalText(values, 'telegramThreadId') : undefined,
     workspace: requiredText(values, 'workspace'),
     agent: requiredText(values, 'agent'),
     reviewer: optionalText(values, 'reviewer'),
@@ -877,7 +949,21 @@ async function reloadDiscordServiceConfig() {
     });
     setNotice('info', 'Discord 서비스가 최신 봇 설정을 다시 읽고 있습니다.');
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function reloadTelegramServiceConfig() {
+  try {
+    await mutateJson('/api/telegram-service/reload', {
+      method: 'POST',
+    });
+    setNotice('info', 'Telegram 서비스가 최신 봇 설정을 다시 읽고 있습니다.');
+    render();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
@@ -891,7 +977,21 @@ async function startDiscordService() {
     });
     setNotice('info', 'Discord 서비스를 시작하고 있습니다.');
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function startTelegramService() {
+  try {
+    await mutateJson('/api/telegram-service/start', {
+      method: 'POST',
+    });
+    setNotice('info', 'Telegram 서비스를 시작하고 있습니다.');
+    render();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
@@ -905,7 +1005,21 @@ async function restartDiscordService() {
     });
     setNotice('info', 'Discord 서비스를 재시작하고 있습니다.');
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function restartTelegramService() {
+  try {
+    await mutateJson('/api/telegram-service/restart', {
+      method: 'POST',
+    });
+    setNotice('info', 'Telegram 서비스를 재시작하고 있습니다.');
+    render();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
@@ -919,7 +1033,21 @@ async function stopDiscordService() {
     });
     setNotice('info', 'Discord 서비스를 중지하고 있습니다.');
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function stopTelegramService() {
+  try {
+    await mutateJson('/api/telegram-service/stop', {
+      method: 'POST',
+    });
+    setNotice('info', 'Telegram 서비스를 중지하고 있습니다.');
+    render();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
@@ -936,7 +1064,7 @@ async function reconnectDiscordBot(name) {
     });
     setNotice('info', `봇 "${name}" 연결을 다시 시도합니다.`);
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
@@ -951,9 +1079,10 @@ async function reconnectAgent(name) {
     await mutateJson(`/api/agents/${encodeURIComponent(name)}/reconnect`, {
       method: 'POST',
     });
-    setNotice('info', `에이전트 "${name}" Discord 연결을 다시 시도합니다.`);
+    const platform = resolveAgentPlatform(name);
+    setNotice('info', `에이전트 "${name}" ${platform === 'telegram' ? 'Telegram' : 'Discord'} 연결을 다시 시도합니다.`);
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
@@ -961,6 +1090,10 @@ async function reconnectAgent(name) {
 }
 
 async function startAgentDiscordService(name) {
+  return startAgentService(name);
+}
+
+async function startAgentService(name) {
   if (!name) {
     return;
   }
@@ -968,9 +1101,9 @@ async function startAgentDiscordService(name) {
     await mutateJson(`/api/agents/${encodeURIComponent(name)}/start`, {
       method: 'POST',
     });
-    setNotice('info', `에이전트 "${name}" Discord 워커를 시작하고 있습니다.`);
+    setNotice('info', `에이전트 "${name}" ${resolveAgentPlatformLabel(name)} 워커를 시작하고 있습니다.`);
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
@@ -978,6 +1111,10 @@ async function startAgentDiscordService(name) {
 }
 
 async function restartAgentDiscordService(name) {
+  return restartAgentService(name);
+}
+
+async function restartAgentService(name) {
   if (!name) {
     return;
   }
@@ -985,9 +1122,9 @@ async function restartAgentDiscordService(name) {
     await mutateJson(`/api/agents/${encodeURIComponent(name)}/restart`, {
       method: 'POST',
     });
-    setNotice('info', `에이전트 "${name}" Discord 워커를 재시작하고 있습니다.`);
+    setNotice('info', `에이전트 "${name}" ${resolveAgentPlatformLabel(name)} 워커를 재시작하고 있습니다.`);
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
@@ -995,6 +1132,10 @@ async function restartAgentDiscordService(name) {
 }
 
 async function stopAgentDiscordService(name) {
+  return stopAgentService(name);
+}
+
+async function stopAgentService(name) {
   if (!name) {
     return;
   }
@@ -1002,16 +1143,16 @@ async function stopAgentDiscordService(name) {
     await mutateJson(`/api/agents/${encodeURIComponent(name)}/stop`, {
       method: 'POST',
     });
-    setNotice('info', `에이전트 "${name}" Discord 워커를 중지하고 있습니다.`);
+    setNotice('info', `에이전트 "${name}" ${resolveAgentPlatformLabel(name)} 워커를 중지하고 있습니다.`);
     render();
-    void refreshStateAfterDiscordCommand();
+    void refreshStateAfterServiceCommand();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
     render();
   }
 }
 
-async function refreshStateAfterDiscordCommand() {
+async function refreshStateAfterServiceCommand() {
   await new Promise((resolve) => {
     window.setTimeout(resolve, 1200);
   });
@@ -1026,6 +1167,15 @@ async function refreshStateAfterDiscordCommand() {
     setNotice('error', localizeErrorMessage(error.message));
     render();
   }
+}
+
+function resolveAgentPlatform(name) {
+  const agent = state.data?.agents?.find((entry) => entry.name === name);
+  return agent?.platform || 'discord';
+}
+
+function resolveAgentPlatformLabel(name) {
+  return localizeMessagingPlatform(resolveAgentPlatform(name));
 }
 
 async function deleteLocalLlmConnection(name) {
@@ -1296,11 +1446,17 @@ function renderHomeView() {
 
 function renderAgentsView() {
   const discordService = state.data?.discord?.service || {};
+  const telegramService = state.data?.telegram?.service || {};
   const serviceLabel = discordService.label || '중지';
+  const telegramLabel = telegramService.label || '중지';
   const canStartDiscord = !state.busy && !discordService.running;
   const canRestartDiscord = !state.busy && (discordService.running || discordService.stale);
   const canStopDiscord = !state.busy && (discordService.running || discordService.stale);
   const canReloadDiscord = !state.busy && discordService.running;
+  const canStartTelegram = !state.busy && !telegramService.running;
+  const canRestartTelegram = !state.busy && (telegramService.running || telegramService.stale);
+  const canStopTelegram = !state.busy && (telegramService.running || telegramService.stale);
+  const canReloadTelegram = !state.busy && telegramService.running;
   return `
     <section class="panel section-panel">
       <div class="section-head">
@@ -1311,10 +1467,15 @@ function renderAgentsView() {
           <button type="button" class="btn-secondary" data-action="restart-discord-service" ${canRestartDiscord ? '' : 'disabled'}>전체 재시작</button>
           <button type="button" class="btn-secondary" data-action="stop-discord-service" ${canStopDiscord ? '' : 'disabled'}>전체 중지</button>
           <button type="button" class="btn-secondary" data-action="reload-discord-service" ${canReloadDiscord ? '' : 'disabled'}>전체 다시 읽기</button>
+          <span class="field-hint">Telegram 워커 ${escapeHtml(telegramLabel)}</span>
+          <button type="button" class="btn-secondary" data-action="start-telegram-service" ${canStartTelegram ? '' : 'disabled'}>전체 실행</button>
+          <button type="button" class="btn-secondary" data-action="restart-telegram-service" ${canRestartTelegram ? '' : 'disabled'}>전체 재시작</button>
+          <button type="button" class="btn-secondary" data-action="stop-telegram-service" ${canStopTelegram ? '' : 'disabled'}>전체 중지</button>
+          <button type="button" class="btn-secondary" data-action="reload-telegram-service" ${canReloadTelegram ? '' : 'disabled'}>전체 다시 읽기</button>
           <button type="button" class="btn-primary" data-action="open-agent-modal" ${state.busy ? 'disabled' : ''}>추가</button>
         </div>
       </div>
-      ${renderAgentList(state.data.agents, discordService)}
+      ${renderAgentList(state.data.agents, discordService, telegramService)}
     </section>
   `;
 }
@@ -1565,42 +1726,62 @@ function renderTokenView() {
   `;
 }
 
-function renderAgentList(agents, discordService = {}) {
+function renderAgentList(agents, discordService = {}, telegramService = {}) {
   if (!agents.length) {
     return '<div class="empty-inline">에이전트가 없습니다.</div>';
   }
 
   const serviceBots = discordService?.bots || {};
+  const telegramBots = telegramService?.bots || {};
   return `
     <div class="card-list">
       ${agents
         .map(
           (agent) => {
+            const platform = agent.platform || 'discord';
+            const isDiscordPlatform = platform === 'discord';
+            const platformLabel = localizeMessagingPlatform(platform);
             const runtimeBot = serviceBots[agent.name] || {};
-            const agentService = agent.discordService || null;
+            const telegramRuntime = telegramBots[agent.name] || {};
+            const agentService = isDiscordPlatform ? (agent.discordService || null) : (agent.telegramService || null);
             const agentServiceLabel = agentService?.label || '중지';
             const agentServiceRunning = Boolean(agentService?.running);
             const agentServiceStale = Boolean(agentService?.stale);
-            const connectionSummary = runtimeBot.connected
-              ? `연결됨${runtimeBot.tag ? ` · ${runtimeBot.tag}` : ''}`
-              : agentServiceRunning
-                ? '연결 안 됨'
-                : agentServiceStale
-                  ? '워커 끊김'
-                  : '워커 중지';
+            const tokenConfigured = isDiscordPlatform
+              ? agent.discordTokenConfigured
+              : agent.telegramBotTokenConfigured;
+            const connectionSummary = isDiscordPlatform
+              ? runtimeBot.connected
+                ? `연결됨${runtimeBot.tag ? ` · ${runtimeBot.tag}` : ''}`
+                : agentServiceRunning
+                  ? '연결 안 됨'
+                  : agentServiceStale
+                    ? '워커 끊김'
+                    : '워커 중지'
+              : telegramRuntime.connected
+                ? `연결됨${telegramRuntime.username ? ` · @${telegramRuntime.username}` : ''}`
+                : agentServiceRunning
+                  ? '연결 안 됨'
+                  : agentServiceStale
+                    ? '워커 끊김'
+                    : '워커 중지';
             return `
               <article class="card">
                 <div class="card-main">
                   <strong class="card-title">${escapeHtml(agent.name)}</strong>
-                  <span class="card-meta">${escapeHtml(localizeAgentTypeValue(agent.agent))}${agent.model ? ` · ${escapeHtml(agent.model)}` : ''}</span>
-                  <div class="field-hint">Discord 토큰 ${agent.discordTokenConfigured ? '설정됨' : '미설정'} · 워커 ${escapeHtml(agentServiceLabel)} · ${escapeHtml(connectionSummary)} · 채널 ${escapeHtml(String((agent.mappedChannelNames || []).length))}개</div>
+                  <span class="card-meta">${escapeHtml(localizeAgentTypeValue(agent.agent))}${agent.model ? ` · ${escapeHtml(agent.model)}` : ''} · ${escapeHtml(platformLabel)}</span>
+                  <div class="field-hint">${escapeHtml(platformLabel)} 토큰 ${tokenConfigured ? '설정됨' : '미설정'} · ${isDiscordPlatform ? `워커 ${escapeHtml(agentServiceLabel)} · ` : ''}${escapeHtml(connectionSummary)} · 채널 ${escapeHtml(String((agent.mappedChannelNames || []).length))}개</div>
                 </div>
                 <div class="inline-actions">
-                  <button type="button" class="btn-secondary" data-action="start-agent-discord-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !agent.discordTokenConfigured || agentServiceRunning ? 'disabled' : ''}>실행</button>
-                  <button type="button" class="btn-secondary" data-action="restart-agent-discord-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !agent.discordTokenConfigured || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>재시작</button>
-                  <button type="button" class="btn-secondary" data-action="stop-agent-discord-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>중지</button>
+                  <button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || agentServiceRunning ? 'disabled' : ''}>실행</button>
+                  <button type="button" class="btn-secondary" data-action="restart-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>재시작</button>
+                  <button type="button" class="btn-secondary" data-action="stop-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>중지</button>
                   <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>수정</button>
-                  <button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentServiceRunning ? 'disabled' : ''}>재연결</button>
+                  ${
+                    isDiscordPlatform
+                      ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentServiceRunning ? 'disabled' : ''}>재연결</button>`
+                      : ''
+                  }
                   <button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>삭제</button>
                 </div>
               </article>
@@ -1633,7 +1814,7 @@ function renderChannelList(channels, agents) {
             <article class="card card--stack">
               <div class="card-main">
                 <strong class="card-title">${escapeHtml(channel.name)}</strong>
-                <span class="card-meta">${escapeHtml(localizeChannelMode(mode))} · ${escapeHtml(channel.discordChannelId)} · ${escapeHtml(channel.workspace || getDefaultChannelWorkspace())}</span>
+                <span class="card-meta">${escapeHtml(localizeChannelMode(mode))} · ${escapeHtml(localizeMessagingPlatform(channel.platform || 'discord'))} · ${escapeHtml(describeChannelTarget(channel))} · ${escapeHtml(channel.workspace || getDefaultChannelWorkspace())}</span>
                 <div class="role-list">
                   <span class="role-item"><strong>owner</strong><span>${escapeHtml(channel.agent)}</span></span>
                   ${
@@ -2238,6 +2419,7 @@ function renderAdminPasswordModal() {
 function renderChannelModal() {
   const current = state.channelDraft || createBlankChannel();
   const isTribunal = current.mode === 'tribunal';
+  const isTelegram = (current.platform || 'discord') === 'telegram';
   const agentNames = (state.data.agents || []).map((entry) => entry.name);
   const isEditing = Boolean(optionalDraftText(current.currentName));
   return `
@@ -2252,17 +2434,36 @@ function renderChannelModal() {
           <input type="hidden" name="currentName" value="${escapeAttr(current.currentName || '')}" />
           <div class="form-grid">
             <div class="field">
+              <label for="channel-platform">플랫폼</label>
+              <select id="channel-platform" name="platform">${renderOptions(state.data.choices.messagingPlatforms, current.platform || 'discord')}</select>
+            </div>
+            <div class="field">
               <label for="channel-name">이름</label>
               <input id="channel-name" name="name" value="${escapeAttr(current.name)}" />
             </div>
-            <div class="field">
-              <label for="channel-discord">디스코드 채널 ID</label>
-              <input id="channel-discord" name="discordChannelId" value="${escapeAttr(current.discordChannelId)}" />
-            </div>
-            <div class="field">
-              <label for="channel-guild">길드 ID</label>
-              <input id="channel-guild" name="guildId" value="${escapeAttr(current.guildId)}" />
-            </div>
+            ${
+              isTelegram
+                ? `
+                    <div class="field">
+                      <label for="channel-telegram-chat">Telegram 채팅 ID</label>
+                      <input id="channel-telegram-chat" name="telegramChatId" value="${escapeAttr(current.telegramChatId)}" />
+                    </div>
+                    <div class="field">
+                      <label for="channel-telegram-thread">Telegram 스레드 ID</label>
+                      <input id="channel-telegram-thread" name="telegramThreadId" value="${escapeAttr(current.telegramThreadId)}" />
+                    </div>
+                  `
+                : `
+                    <div class="field">
+                      <label for="channel-discord">디스코드 채널 ID</label>
+                      <input id="channel-discord" name="discordChannelId" value="${escapeAttr(current.discordChannelId)}" />
+                    </div>
+                    <div class="field">
+                      <label for="channel-guild">길드 ID</label>
+                      <input id="channel-guild" name="guildId" value="${escapeAttr(current.guildId)}" />
+                    </div>
+                  `
+            }
             <div class="field">
               <label for="channel-workspace">워크스페이스</label>
               <input id="channel-workspace" name="workspace" value="${escapeAttr(current.workspace)}" />
@@ -2540,17 +2741,26 @@ function getAgentWizardSteps(draft) {
 }
 
 function renderAgentWizardRuntimeStep(draft) {
+  const platform = optionalDraftText(draft.platform) || 'discord';
   const blocks = [
     `
+      <div class="field">
+        <label for="wizard-agent-platform">메시징 플랫폼</label>
+        <select id="wizard-agent-platform" name="platform">
+          ${renderOptions(state.data.choices.messagingPlatforms, platform)}
+        </select>
+      </div>
+    `,
+    `
       <div class="field field-full">
-        <label for="wizard-agent-discord-token">Discord 토큰</label>
+        <label for="wizard-agent-platform-token">${platform === 'telegram' ? 'Telegram 봇 토큰' : 'Discord 토큰'}</label>
         <input
-          id="wizard-agent-discord-token"
-          name="discordToken"
-          value="${escapeAttr(draft.discordToken || '')}"
-          placeholder="Discord bot token"
+          id="wizard-agent-platform-token"
+          name="${platform === 'telegram' ? 'telegramBotToken' : 'discordToken'}"
+          value="${escapeAttr(platform === 'telegram' ? draft.telegramBotToken || '' : draft.discordToken || '')}"
+          placeholder="${platform === 'telegram' ? 'Telegram bot token' : 'Discord bot token'}"
         />
-        <div class="field-hint">에이전트 하나가 Discord 서비스 연결 하나를 가집니다. 이 토큰으로 해당 에이전트 메시지를 받습니다.</div>
+        <div class="field-hint">선택한 메시징 플랫폼에 이 에이전트를 연결할 때 사용하는 토큰입니다.</div>
       </div>
     `,
   ];
@@ -2709,7 +2919,12 @@ function validateAgentWizardStep() {
   }
 
   if (currentStep.id === 'runtime') {
-    requiredDraftText(draft.discordToken, 'discordToken');
+    const platform = optionalDraftText(draft.platform) || 'discord';
+    if (platform === 'telegram') {
+      requiredDraftText(draft.telegramBotToken, 'telegramBotToken');
+    } else {
+      requiredDraftText(draft.discordToken, 'discordToken');
+    }
     if (draft.agent === 'command') {
       requiredDraftText(draft.command, 'command');
     }
@@ -2739,6 +2954,7 @@ function createBlankAgent(agentType = null) {
   return {
     name: '',
     agent: resolvedAgentType,
+    platform: 'discord',
     fallbackAgent: '',
     modelMode: defaultModelModeForAgent(resolvedAgentType),
     model: '',
@@ -2753,6 +2969,7 @@ function createBlankAgent(agentType = null) {
     permissionMode: defaultClaudePermissionMode,
     dangerous: false,
     discordToken: '',
+    telegramBotToken: '',
     localLlmConnection: getDefaultLocalLlmConnectionName(),
     baseUrl: '',
     command: '',
@@ -2765,6 +2982,7 @@ function createAgentDraft(agent) {
   return {
     name: agent?.name || '',
     agent: resolvedAgentType,
+    platform: optionalDraftText(agent?.platform) || 'discord',
     fallbackAgent: optionalDraftText(agent?.fallbackAgent),
     modelMode: supportsDefaultModelMode(resolvedAgentType) ? (model ? 'custom' : 'default') : 'custom',
     model: model || '',
@@ -2783,6 +3001,7 @@ function createAgentDraft(agent) {
       '',
     dangerous: Boolean(agent?.dangerous),
     discordToken: optionalDraftText(agent?.discordToken),
+    telegramBotToken: optionalDraftText(agent?.telegramBotToken),
     localLlmConnection: optionalDraftText(agent?.localLlmConnection) || getDefaultLocalLlmConnectionName(),
     baseUrl: optionalDraftText(agent?.baseUrl),
     command: agent?.command || '',
@@ -2803,9 +3022,12 @@ function createChannelDraft(channel) {
   return {
     currentName: channel?.name || '',
     name: channel?.name || '',
+    platform: channel?.platform || 'discord',
     mode: channel?.mode || 'single',
     discordChannelId: channel?.discordChannelId || '',
     guildId: channel?.guildId || '',
+    telegramChatId: channel?.telegramChatId || '',
+    telegramThreadId: channel?.telegramThreadId || '',
     workspace: channel?.workspace || getDefaultChannelWorkspace(),
     agent: channel?.agent || '',
     reviewer: channel?.reviewer || '',
@@ -3639,10 +3861,13 @@ function renderEffortField(draft) {
 
 function createBlankChannel() {
   return {
+    platform: 'discord',
     name: '',
     mode: 'single',
     discordChannelId: '',
     guildId: '',
+    telegramChatId: '',
+    telegramThreadId: '',
     workspace: getDefaultChannelWorkspace(),
     agent: state.data.agents?.[0]?.name || '',
     reviewer: '',
@@ -3984,6 +4209,26 @@ function localizeChannelMode(value) {
     return '단일';
   }
   return value || '';
+}
+
+function localizeMessagingPlatform(value) {
+  if (value === 'telegram') {
+    return 'Telegram';
+  }
+  if (value === 'discord') {
+    return 'Discord';
+  }
+  return value || '';
+}
+
+function describeChannelTarget(channel) {
+  const platform = channel?.platform || 'discord';
+  if (platform === 'telegram') {
+    const threadSuffix = channel?.telegramThreadId ? ` / ${channel.telegramThreadId}` : '';
+    return `${channel?.telegramChatId || '-'}${threadSuffix}`;
+  }
+  const guildSuffix = channel?.guildId ? ` / ${channel.guildId}` : '';
+  return `${channel?.discordChannelId || '-'}${guildSuffix}`;
 }
 
 function localizeRuntimeStatus(value) {
@@ -4340,15 +4585,19 @@ function localizeFieldName(key) {
     newPassword: '새 비밀번호',
     confirmPassword: '새 비밀번호 확인',
     name: '이름',
+    platform: '플랫폼',
     mode: '채널 모드',
     agent: '에이전트',
     bot: '봇',
     reviewerBot: 'reviewer 봇',
     arbiterBot: 'arbiter 봇',
     discordToken: 'Discord 토큰',
+    telegramBotToken: 'Telegram 봇 토큰',
     model: '모델',
     command: '명령어',
     discordChannelId: '디스코드 채널 ID',
+    telegramChatId: 'Telegram 채팅 ID',
+    telegramThreadId: 'Telegram 스레드 ID',
     workspace: '워크스페이스',
     workdir: '작업경로',
   };
@@ -4433,6 +4682,9 @@ function localizeErrorMessage(message) {
   }
   if (text === 'discordChannelId is required.') {
     return '디스코드 채널 ID 항목은 필수입니다.';
+  }
+  if (text === 'telegramChatId is required.') {
+    return 'Telegram 채팅 ID 항목은 필수입니다.';
   }
   if (text === 'Reviewer must be different from the owner agent.') {
     return '검토 에이전트는 소유 에이전트와 달라야 합니다.';

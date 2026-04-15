@@ -53,6 +53,15 @@ import {
   writeDiscordAgentServiceStatus,
   writeDiscordServiceStatus,
 } from './discord-runtime-state.js';
+import {
+  buildTelegramAgentServiceSnapshot,
+  buildTelegramServiceSnapshot,
+  enqueueTelegramServiceCommand,
+  readTelegramAgentServiceStatus,
+  readTelegramServiceStatus,
+  writeTelegramAgentServiceStatus,
+  writeTelegramServiceStatus,
+} from './telegram-runtime-state.js';
 import { listAgentModels } from './model-catalog.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import { assert, parseInteger, toErrorMessage } from './utils.js';
@@ -78,6 +87,9 @@ const GEMINI_GOOGLE_MANUAL_REDIRECT_URI = 'https://codeassist.google.com/authcod
 const DISCORD_SERVICE_START_TIMEOUT_MS = 8_000;
 const DISCORD_SERVICE_STOP_TIMEOUT_MS = 8_000;
 const DISCORD_SERVICE_ENTRY_ENV = 'HKCLAW_LITE_DISCORD_SERVICE_ENTRY';
+const TELEGRAM_SERVICE_START_TIMEOUT_MS = 8_000;
+const TELEGRAM_SERVICE_STOP_TIMEOUT_MS = 8_000;
+const TELEGRAM_SERVICE_ENTRY_ENV = 'HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY';
 
 export async function startAdminServer(
   projectRoot,
@@ -118,6 +130,10 @@ export async function startAdminServer(
   const resolvedHost = address?.address || host;
   const resolvedPort = address?.port || normalizedPort;
   const url = `http://${resolvedHost.includes(':') ? `[${resolvedHost}]` : resolvedHost}:${resolvedPort}`;
+
+  await restoreManagedServiceProcesses(projectRoot).catch((error) => {
+    console.error(`Failed to restore managed services: ${toErrorMessage(error)}`);
+  });
 
   return {
     server,
@@ -325,15 +341,51 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     return;
   }
 
+  if (request.method === 'POST' && pathname === '/api/telegram-service/reload') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await reloadAllTelegramServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/telegram-service/start') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await startAllTelegramServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/telegram-service/restart') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await restartAllTelegramServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/telegram-service/stop') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await stopAllTelegramServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
   if (
     request.method === 'POST' &&
     pathname.startsWith('/api/agents/') &&
     pathname.endsWith('/start')
   ) {
     const name = decodeEntityPath(pathname.slice(0, -'/start'.length), '/api/agents/');
+    const platform = getAgentMessagingPlatform(projectRoot, name);
     writeJson(response, 200, {
       ok: true,
-      result: await startDiscordServiceProcess(projectRoot, name),
+      result:
+        platform === 'telegram'
+          ? await startTelegramServiceProcess(projectRoot, name)
+          : await startDiscordServiceProcess(projectRoot, name),
     });
     return;
   }
@@ -344,9 +396,13 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     pathname.endsWith('/restart')
   ) {
     const name = decodeEntityPath(pathname.slice(0, -'/restart'.length), '/api/agents/');
+    const platform = getAgentMessagingPlatform(projectRoot, name);
     writeJson(response, 200, {
       ok: true,
-      result: await restartDiscordServiceProcess(projectRoot, name),
+      result:
+        platform === 'telegram'
+          ? await restartTelegramServiceProcess(projectRoot, name)
+          : await restartDiscordServiceProcess(projectRoot, name),
     });
     return;
   }
@@ -357,9 +413,13 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     pathname.endsWith('/stop')
   ) {
     const name = decodeEntityPath(pathname.slice(0, -'/stop'.length), '/api/agents/');
+    const platform = getAgentMessagingPlatform(projectRoot, name);
     writeJson(response, 200, {
       ok: true,
-      result: await stopDiscordServiceProcess(projectRoot, name),
+      result:
+        platform === 'telegram'
+          ? await stopTelegramServiceProcess(projectRoot, name)
+          : await stopDiscordServiceProcess(projectRoot, name),
     });
     return;
   }
@@ -370,12 +430,19 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     pathname.endsWith('/reconnect')
   ) {
     const name = decodeEntityPath(pathname.slice(0, -'/reconnect'.length), '/api/agents/');
+    const platform = getAgentMessagingPlatform(projectRoot, name);
     writeJson(response, 200, {
       ok: true,
-      result: await queueDiscordServiceAction(projectRoot, {
-        action: 'reconnect-bot',
-        agentName: name,
-      }),
+      result:
+        platform === 'telegram'
+          ? await queueTelegramServiceAction(projectRoot, {
+              action: 'reconnect-bot',
+              agentName: name,
+            })
+          : await queueDiscordServiceAction(projectRoot, {
+              action: 'reconnect-bot',
+              agentName: name,
+            }),
     });
     return;
   }
@@ -607,6 +674,92 @@ async function queueDiscordServiceAction(projectRoot, input = {}) {
   };
 }
 
+async function queueTelegramServiceAction(projectRoot, input = {}) {
+  const config = loadConfig(projectRoot);
+  const agentName = input?.agentName ? String(input.agentName).trim() : null;
+  assert(agentName, 'Agent name is required.');
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+
+  const service = buildTelegramAgentServiceSnapshot(projectRoot, agentName);
+  assert(service.running, `에이전트 "${agentName}" Telegram 프로세스가 실행 중이 아닙니다.`);
+
+  const command = enqueueTelegramServiceCommand(projectRoot, {
+    action: input?.action,
+    agentName,
+  });
+
+  return {
+    queued: true,
+    action: command.action,
+    agentName: command.botName,
+    requestedAt: command.requestedAt,
+  };
+}
+
+function getAgentMessagingPlatform(projectRoot, agentName) {
+  const config = loadConfig(projectRoot);
+  const agent = config.agents?.[agentName];
+  assert(agent, `Agent "${agentName}" does not exist.`);
+  return String(agent.platform || 'discord').trim();
+}
+
+async function restoreManagedServiceProcesses(projectRoot) {
+  const config = loadConfig(projectRoot);
+  const tasks = [];
+
+  for (const [agentName, agent] of Object.entries(config.agents || {})) {
+    const platform = String(agent?.platform || 'discord').trim();
+    if (platform === 'telegram') {
+      const rawStatus = readTelegramAgentServiceStatus(projectRoot, agentName);
+      const snapshot = buildTelegramAgentServiceSnapshot(projectRoot, agentName, rawStatus);
+      if (
+        rawStatus?.running &&
+        !snapshot.pidAlive &&
+        String(agent?.telegramBotToken || '').trim()
+      ) {
+        tasks.push(restoreManagedServiceProcess(projectRoot, agentName, 'telegram'));
+      }
+      continue;
+    }
+
+    const rawStatus = readDiscordAgentServiceStatus(projectRoot, agentName);
+    const snapshot = buildDiscordAgentServiceSnapshot(projectRoot, agentName, rawStatus);
+    if (
+      rawStatus?.running &&
+      !snapshot.pidAlive &&
+      String(agent?.discordToken || '').trim()
+    ) {
+      tasks.push(restoreManagedServiceProcess(projectRoot, agentName, 'discord'));
+    }
+  }
+
+  if (tasks.length === 0) {
+    return [];
+  }
+
+  return await Promise.all(tasks);
+}
+
+async function restoreManagedServiceProcess(projectRoot, agentName, platform) {
+  try {
+    if (platform === 'telegram') {
+      return await startTelegramServiceProcess(projectRoot, agentName);
+    }
+    return await startDiscordServiceProcess(projectRoot, agentName);
+  } catch (error) {
+    console.error(
+      `Failed to restore ${platform} service for agent "${agentName}": ${toErrorMessage(error)}`,
+    );
+    return {
+      action: 'restore',
+      agentName,
+      platform,
+      restored: false,
+      error: toErrorMessage(error),
+    };
+  }
+}
+
 async function startDiscordServiceProcess(projectRoot, agentName) {
   const config = loadConfig(projectRoot);
   assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
@@ -770,6 +923,174 @@ async function reloadAllDiscordServiceProcesses(projectRoot) {
   };
 }
 
+async function startTelegramServiceProcess(projectRoot, agentName) {
+  const config = loadConfig(projectRoot);
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+  assert(
+    String(config.agents[agentName]?.telegramBotToken || '').trim(),
+    `Agent "${agentName}" does not configure a Telegram bot token.`,
+  );
+
+  const current = buildTelegramAgentServiceSnapshot(projectRoot, agentName);
+  assert(!current.pidAlive, 'Telegram 서비스가 이미 실행 중입니다.');
+  if (current.stale || current.state === 'stopped') {
+    normalizeTelegramServiceStoppedState(projectRoot, agentName);
+  }
+
+  const args = buildTelegramServiceStartArgs(projectRoot, { agentName });
+  const child = spawn(process.execPath, args, {
+    cwd: projectRoot,
+    env: process.env,
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+
+  const service = await waitForTelegramServiceSnapshot(
+    projectRoot,
+    agentName,
+    (snapshot) => snapshot.running || Boolean(snapshot.lastError),
+    TELEGRAM_SERVICE_START_TIMEOUT_MS,
+  );
+  assert(service.running, service.lastError || 'Telegram 서비스 시작을 확인하지 못했습니다.');
+
+  return {
+    action: 'start',
+    agentName,
+    platform: 'telegram',
+    running: true,
+    pid: service.pid,
+    startedAt: service.startedAt,
+  };
+}
+
+async function restartTelegramServiceProcess(projectRoot, agentName) {
+  const previous = await stopTelegramServiceProcess(projectRoot, agentName, {
+    allowStopped: true,
+  });
+  const next = await startTelegramServiceProcess(projectRoot, agentName);
+  return {
+    action: 'restart',
+    agentName,
+    platform: 'telegram',
+    previous,
+    current: next,
+  };
+}
+
+async function stopTelegramServiceProcess(projectRoot, agentName, { allowStopped = false } = {}) {
+  const config = loadConfig(projectRoot);
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+  const service = buildTelegramAgentServiceSnapshot(projectRoot, agentName);
+  if (!service.pidAlive) {
+    if (service.stale || service.state === 'stopped') {
+      const normalized = normalizeTelegramServiceStoppedState(projectRoot, agentName);
+      if (!allowStopped) {
+        assert(false, 'Telegram 서비스가 실행 중이 아닙니다.');
+      }
+      return {
+        action: 'stop',
+        agentName,
+        platform: 'telegram',
+        running: false,
+        pid: normalized.pid,
+        stoppedAt: normalized.stoppedAt,
+      };
+    }
+    assert(false, 'Telegram 서비스가 실행 중이 아닙니다.');
+  }
+
+  try {
+    process.kill(service.pid, 'SIGTERM');
+  } catch (error) {
+    if (error?.code !== 'ESRCH') {
+      throw error;
+    }
+  }
+
+  const stopped = await waitForTelegramServiceSnapshot(
+    projectRoot,
+    agentName,
+    (snapshot) => !snapshot.pidAlive && !snapshot.running,
+    TELEGRAM_SERVICE_STOP_TIMEOUT_MS,
+  );
+  const normalized = stopped.running
+    ? normalizeTelegramServiceStoppedState(projectRoot, agentName)
+    : stopped;
+
+  return {
+    action: 'stop',
+    agentName,
+    platform: 'telegram',
+    running: false,
+    pid: normalized.pid,
+    stoppedAt: normalized.stoppedAt,
+  };
+}
+
+async function startAllTelegramServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredTelegramAgents(projectRoot);
+  assert(agentNames.length > 0, 'Telegram 토큰이 설정된 에이전트가 없습니다.');
+  return {
+    action: 'start-all',
+    platform: 'telegram',
+    agents: await Promise.all(
+      agentNames.map((agentName) => startTelegramServiceProcess(projectRoot, agentName)),
+    ),
+  };
+}
+
+async function restartAllTelegramServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredTelegramAgents(projectRoot);
+  assert(agentNames.length > 0, 'Telegram 토큰이 설정된 에이전트가 없습니다.');
+  return {
+    action: 'restart-all',
+    platform: 'telegram',
+    agents: await Promise.all(
+      agentNames.map((agentName) => restartTelegramServiceProcess(projectRoot, agentName)),
+    ),
+  };
+}
+
+async function stopAllTelegramServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredTelegramAgents(projectRoot);
+  if (agentNames.length === 0) {
+    return {
+      action: 'stop-all',
+      platform: 'telegram',
+      agents: [],
+    };
+  }
+  return {
+    action: 'stop-all',
+    platform: 'telegram',
+    agents: await Promise.all(
+      agentNames.map((agentName) =>
+        stopTelegramServiceProcess(projectRoot, agentName, {
+          allowStopped: true,
+        }),
+      ),
+    ),
+  };
+}
+
+async function reloadAllTelegramServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredTelegramAgents(projectRoot);
+  assert(agentNames.length > 0, 'Telegram 토큰이 설정된 에이전트가 없습니다.');
+  return {
+    action: 'reload-all',
+    platform: 'telegram',
+    agents: await Promise.all(
+      agentNames.map((agentName) =>
+        queueTelegramServiceAction(projectRoot, {
+          action: 'reload-config',
+          agentName,
+        }),
+      ),
+    ),
+  };
+}
+
 function normalizeDiscordServiceStoppedState(projectRoot, agentName = null) {
   const rawStatus = agentName
     ? readDiscordAgentServiceStatus(projectRoot, agentName)
@@ -794,6 +1115,30 @@ function normalizeDiscordServiceStoppedState(projectRoot, agentName = null) {
   return buildDiscordServiceSnapshot(projectRoot, nextStatus);
 }
 
+function normalizeTelegramServiceStoppedState(projectRoot, agentName = null) {
+  const rawStatus = agentName
+    ? readTelegramAgentServiceStatus(projectRoot, agentName)
+    : readTelegramServiceStatus(projectRoot);
+  if (!rawStatus) {
+    return agentName
+      ? buildTelegramAgentServiceSnapshot(projectRoot, agentName, null)
+      : buildTelegramServiceSnapshot(projectRoot, null);
+  }
+
+  const nextStatus = {
+    ...rawStatus,
+    running: false,
+    stoppedAt: new Date().toISOString(),
+    heartbeatAt: new Date().toISOString(),
+  };
+  if (agentName) {
+    writeTelegramAgentServiceStatus(projectRoot, agentName, nextStatus);
+    return buildTelegramAgentServiceSnapshot(projectRoot, agentName, nextStatus);
+  }
+  writeTelegramServiceStatus(projectRoot, nextStatus);
+  return buildTelegramServiceSnapshot(projectRoot, nextStatus);
+}
+
 function buildDiscordServiceStartArgs(projectRoot, { envFilePath = null, agentName = null } = {}) {
   const customEntry = String(process.env[DISCORD_SERVICE_ENTRY_ENV] || '').trim();
   if (customEntry) {
@@ -804,6 +1149,19 @@ function buildDiscordServiceStartArgs(projectRoot, { envFilePath = null, agentNa
   if (envFilePath) {
     args.push('--env-file', envFilePath);
   }
+  if (agentName) {
+    args.push('--agent', agentName);
+  }
+  return args;
+}
+
+function buildTelegramServiceStartArgs(projectRoot, { agentName = null } = {}) {
+  const customEntry = String(process.env[TELEGRAM_SERVICE_ENTRY_ENV] || '').trim();
+  if (customEntry) {
+    return agentName ? [customEntry, projectRoot, agentName] : [customEntry, projectRoot];
+  }
+
+  const args = [CLI_ENTRY_PATH, '--root', projectRoot, 'telegram', 'serve'];
   if (agentName) {
     args.push('--agent', agentName);
   }
@@ -823,6 +1181,19 @@ async function waitForDiscordServiceSnapshot(projectRoot, agentName, predicate, 
   return snapshot;
 }
 
+async function waitForTelegramServiceSnapshot(projectRoot, agentName, predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot = buildTelegramAgentServiceSnapshot(projectRoot, agentName);
+  while (Date.now() < deadline) {
+    snapshot = buildTelegramAgentServiceSnapshot(projectRoot, agentName);
+    if (predicate(snapshot)) {
+      return snapshot;
+    }
+    await delay(200);
+  }
+  return snapshot;
+}
+
 function delay(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -833,6 +1204,13 @@ function listConfiguredDiscordAgents(projectRoot) {
   const config = loadConfig(projectRoot);
   return Object.entries(config.agents || {})
     .filter(([, agent]) => String(agent?.discordToken || '').trim())
+    .map(([agentName]) => agentName);
+}
+
+function listConfiguredTelegramAgents(projectRoot) {
+  const config = loadConfig(projectRoot);
+  return Object.entries(config.agents || {})
+    .filter(([, agent]) => String(agent?.telegramBotToken || '').trim())
     .map(([agentName]) => agentName);
 }
 

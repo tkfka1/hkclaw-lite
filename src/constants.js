@@ -54,6 +54,18 @@ export const CHANNEL_MODE_CHOICES = [
     description: 'Owner, reviewer, and arbiter collaborate on each turn',
   },
 ];
+export const MESSAGING_PLATFORM_CHOICES = [
+  {
+    value: 'discord',
+    label: 'Discord',
+    description: 'Use a Discord bot token and Discord channel ID',
+  },
+  {
+    value: 'telegram',
+    label: 'Telegram',
+    description: 'Use a Telegram bot token and Telegram chat ID',
+  },
+];
 export const CODEX_SANDBOX_CHOICES = [
   {
     value: 'workspace-write',

@@ -43,6 +43,8 @@ function runCli(cwd, args, options = {}) {
 
 function buildCommandAgentAnswers({
   name = 'worker',
+  platformChoice = '1',
+  platformToken = 'discord-token',
   skills = '',
   contextFiles = '',
   fallbackAgent = '',
@@ -52,6 +54,7 @@ function buildCommandAgentAnswers({
   return [
     name,
     '5',
+    platformChoice,
     '',
     '',
     '',
@@ -61,6 +64,7 @@ function buildCommandAgentAnswers({
     contextFiles,
     fallbackAgent,
     env,
+    platformToken,
     command,
     '',
   ].join('\n');
@@ -81,8 +85,11 @@ function buildDashboardAnswers({
 
 function buildChannelAnswers({
   name = 'discord-main',
+  platformChoice = '1',
   discordChannelId = '123456789012345678',
   guildId = '987654321098765432',
+  telegramChatId = '-1001234567890',
+  telegramThreadId = '',
   workspace = DEFAULT_CHANNEL_WORKSPACE,
   channelMode = '1',
   agentChoice = '1',
@@ -91,7 +98,13 @@ function buildChannelAnswers({
   reviewRounds = '',
   description = '',
 } = {}) {
-  const answers = [name, discordChannelId, guildId, workspace, channelMode, agentChoice];
+  const answers = [name, platformChoice];
+  if (platformChoice === '2') {
+    answers.push(telegramChatId, telegramThreadId);
+  } else {
+    answers.push(discordChannelId, guildId);
+  }
+  answers.push(workspace, channelMode, agentChoice);
   if (channelMode === '2' || channelMode === 'tribunal') {
     answers.push(reviewer, arbiter, reviewRounds);
   }
@@ -213,6 +226,8 @@ test('add dashboard and edit agent keep dashboard references aligned', () => {
   const editAgent = runCli(cwd, ['edit', 'agent', 'worker'], {
     input: [
       'worker-renamed',
+      '',
+      '',
       '',
       '',
       '',

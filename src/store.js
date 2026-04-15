@@ -11,6 +11,7 @@ import {
   DEFAULT_DASHBOARD_REFRESH_MS,
   DEFAULT_CHANNEL_WORKSPACE,
   DEFAULT_LOCAL_LLM_BASE_URL,
+  MESSAGING_PLATFORM_CHOICES,
   SUPPORTED_AGENTS,
   TOOL_DIRNAME,
 } from './constants.js';
@@ -341,6 +342,10 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   const merged = {
     ...stripManagedFields(existing),
     agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
+    platform: resolveMessagingPlatform(
+      input.platform ?? input['platform'] ?? existing.platform,
+      existing,
+    ),
     fallbackAgent: normalizeOptionalString(
       input.fallbackAgent ?? input['fallback-agent'] ?? existing.fallbackAgent,
     ),
@@ -360,6 +365,11 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
     dangerous: resolveBooleanValue(input.dangerous, existing.dangerous ?? false),
     discordToken: normalizeOptionalString(
       input.discordToken ?? input['discord-token'] ?? existing.discordToken,
+    ),
+    telegramBotToken: normalizeOptionalString(
+      input.telegramBotToken ??
+        input['telegram-bot-token'] ??
+        existing.telegramBotToken,
     ),
     localLlmConnection: normalizeOptionalString(
       input.localLlmConnection ??
@@ -406,6 +416,11 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   if (merged.agent !== 'command') {
     merged.command = undefined;
   }
+  if (merged.platform === 'telegram') {
+    merged.discordToken = undefined;
+  } else {
+    merged.telegramBotToken = undefined;
+  }
 
   validateAgentDefinition(projectRoot, merged);
   return sortObjectKeys(merged);
@@ -441,6 +456,10 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
 
   const merged = {
     ...stripManagedFields(existing),
+    platform: resolveMessagingPlatform(
+      input.platform ?? input['platform'] ?? existing.platform,
+      existing,
+    ),
     mode: normalizeOptionalString(
       input.mode ??
         input['mode'] ??
@@ -451,11 +470,24 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
           ? 'tribunal'
           : 'single'),
     ),
-    discordChannelId: getRequiredString(
+    discordChannelId: normalizeOptionalString(
       input.discordChannelId ?? input['discord-channel-id'] ?? existing.discordChannelId,
-      'discordChannelId',
     ),
     guildId: normalizeOptionalString(input.guildId ?? input['guild-id'] ?? existing.guildId),
+    telegramChatId: normalizeOptionalString(
+      input.telegramChatId ??
+        input['telegram-chat-id'] ??
+        input.chatId ??
+        input['chat-id'] ??
+        existing.telegramChatId,
+    ),
+    telegramThreadId: normalizeOptionalString(
+      input.telegramThreadId ??
+        input['telegram-thread-id'] ??
+        input.threadId ??
+        input['thread-id'] ??
+        existing.telegramThreadId,
+    ),
     workspace: normalizeOptionalString(
       input.workspace ??
         input['workspace'] ??
@@ -488,6 +520,13 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
   }
   if (merged.reviewRounds !== undefined) {
     merged.reviewRounds = parseOptionalInteger(merged.reviewRounds, 'reviewRounds');
+  }
+  if (merged.platform === 'telegram') {
+    merged.discordChannelId = undefined;
+    merged.guildId = undefined;
+  } else {
+    merged.telegramChatId = undefined;
+    merged.telegramThreadId = undefined;
   }
   validateChannelDefinition(projectRoot, config, merged);
   return sortObjectKeys(merged);
@@ -656,10 +695,21 @@ function validateAgentDefinition(projectRoot, agent) {
     );
   }
 
+  assert(
+    MESSAGING_PLATFORM_CHOICES.some((entry) => entry.value === agent.platform),
+    `Unsupported platform "${agent.platform}".`,
+  );
+
   if (agent.discordToken !== undefined) {
     assert(
       typeof agent.discordToken === 'string' && agent.discordToken.trim().length > 0,
       'discordToken must be a non-empty string.',
+    );
+  }
+  if (agent.telegramBotToken !== undefined) {
+    assert(
+      typeof agent.telegramBotToken === 'string' && agent.telegramBotToken.trim().length > 0,
+      'telegramBotToken must be a non-empty string.',
     );
   }
 
@@ -676,14 +726,26 @@ function validateBotDefinition(config, bot) {
 
 function validateChannelDefinition(projectRoot, config, channel) {
   assert(
+    MESSAGING_PLATFORM_CHOICES.some((entry) => entry.value === channel.platform),
+    `Unsupported platform "${channel.platform}".`,
+  );
+  assert(
     CHANNEL_MODE_CHOICES.some((entry) => entry.value === channel.mode),
     `Unsupported channel mode "${channel.mode}".`,
   );
-  assert(
-    typeof channel.discordChannelId === 'string' &&
-      channel.discordChannelId.trim().length > 0,
-    'discordChannelId is required.',
-  );
+  if (channel.platform === 'telegram') {
+    assert(
+      typeof channel.telegramChatId === 'string' &&
+        channel.telegramChatId.trim().length > 0,
+      'telegramChatId is required.',
+    );
+  } else {
+    assert(
+      typeof channel.discordChannelId === 'string' &&
+        channel.discordChannelId.trim().length > 0,
+      'discordChannelId is required.',
+    );
+  }
   assert(
     typeof channel.workspace === 'string' && channel.workspace.trim().length > 0,
     'workspace is required.',
@@ -814,6 +876,11 @@ function normalizeLegacyAgentRecords(agents) {
       if (typeof next.token === 'string' && next.discordToken === undefined) {
         next.discordToken = next.token;
       }
+      if (!next.platform) {
+        next.platform = typeof next.telegramBotToken === 'string' && next.telegramBotToken.trim()
+          ? 'telegram'
+          : 'discord';
+      }
       delete next.token;
       return [name, next];
     }),
@@ -883,6 +950,12 @@ function normalizeLegacyChannelRecords(channels, rawAgents, rawBots = {}) {
       if (!next.mode) {
         next.mode = next.reviewer || next.arbiter ? 'tribunal' : 'single';
       }
+      if (!next.platform) {
+        next.platform =
+          typeof next.telegramChatId === 'string' && next.telegramChatId.trim()
+            ? 'telegram'
+            : 'discord';
+      }
       if (typeof next.ownerBot === 'string' && !next.bot) {
         next.bot = next.ownerBot;
       }
@@ -903,6 +976,20 @@ function normalizeLegacyChannelRecords(channels, rawAgents, rawBots = {}) {
       return [name, next];
     }),
   );
+}
+
+function resolveMessagingPlatform(value, existing = {}) {
+  const normalized = normalizeOptionalString(value);
+  if (normalized) {
+    return normalized;
+  }
+  if (typeof existing?.telegramBotToken === 'string' && existing.telegramBotToken.trim()) {
+    return 'telegram';
+  }
+  if (typeof existing?.telegramChatId === 'string' && existing.telegramChatId.trim()) {
+    return 'telegram';
+  }
+  return 'discord';
 }
 
 function resolveChannelAgentName(config, explicitAgentName, botName) {

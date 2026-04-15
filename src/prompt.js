@@ -34,9 +34,17 @@ export function buildPromptEnvelope({
       `- agent name: ${agent.name}`,
       `- agent type: ${agent.agent}`,
       resolveRuntimeWorkdir(projectRoot, agent, channel, workdirOverride),
-      channel ? `- discord channel: ${channel.name}` : null,
-      channel ? `- discord channel id: ${channel.discordChannelId}` : null,
+      channel ? `- channel: ${channel.name}` : null,
+      channel?.platform === 'telegram'
+        ? `- telegram channel: ${channel.name}`
+        : channel
+          ? `- discord channel: ${channel.name}`
+          : null,
+      channel?.platform ? `- channel platform: ${channel.platform}` : null,
+      channel?.discordChannelId ? `- discord channel id: ${channel.discordChannelId}` : null,
       channel?.guildId ? `- discord guild id: ${channel.guildId}` : null,
+      channel?.telegramChatId ? `- telegram chat id: ${channel.telegramChatId}` : null,
+      channel?.telegramThreadId ? `- telegram thread id: ${channel.telegramThreadId}` : null,
     ]
       .filter(Boolean)
       .join('\n'),

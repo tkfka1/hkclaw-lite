@@ -33,6 +33,7 @@ import {
   CODEX_SANDBOX_CHOICES,
   DASHBOARD_ALL_AGENTS,
   DEFAULT_ADMIN_PORT,
+  MESSAGING_PLATFORM_CHOICES,
 } from './constants.js';
 import { withPrompter } from './interactive.js';
 import { inspectAgentRuntime } from './runners.js';
@@ -149,6 +150,9 @@ export async function main(argv) {
         return;
       case 'discord':
         await handleDiscordCommand(projectRoot, tail);
+        return;
+      case 'telegram':
+        await handleTelegramCommand(projectRoot, tail);
         return;
       case 'service':
         throw new Error(
@@ -801,6 +805,19 @@ async function handleDiscordCommand(projectRoot, argv) {
   });
 }
 
+async function handleTelegramCommand(projectRoot, argv) {
+  const [subcommand = 'serve', ...tail] = argv;
+  if (subcommand !== 'serve') {
+    throw new Error(`Unknown telegram subcommand "${subcommand}".`);
+  }
+
+  const { flags } = parseArgs(tail);
+  const { serveTelegram } = await import('./telegram-service.js');
+  await serveTelegram(projectRoot, {
+    agentName: getFlagValue(flags, 'agent'),
+  });
+}
+
 async function handleBackupCommand(rootOverride, argv) {
   const [subcommand, ...tail] = argv;
   const { positionals, flags } = parseArgs(tail);
@@ -1327,6 +1344,13 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
       defaultValue: initial.agent,
     },
   );
+  const platform = await prompter.askChoice(
+    'Which messaging platform should this agent use?',
+    MESSAGING_PLATFORM_CHOICES,
+    {
+      defaultValue: initial.platform || 'discord',
+    },
+  );
 
   const model = await prompter.askText('Model (optional)', {
     defaultValue: initial.model,
@@ -1398,6 +1422,7 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
   const definition = {
     name,
     agent,
+    platform,
     model,
     effort,
     timeoutMs,
@@ -1408,6 +1433,16 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
     fallbackAgent,
     env: envText ? parseKeyValueText(envText, 'env') : {},
   };
+
+  if (platform === 'telegram') {
+    definition.telegramBotToken = await prompter.askText('Telegram bot token', {
+      defaultValue: initial.telegramBotToken,
+    });
+  } else {
+    definition.discordToken = await prompter.askText('Discord bot token', {
+      defaultValue: initial.discordToken,
+    });
+  }
 
   if (agent === 'codex') {
     definition.sandbox = await prompter.askChoice(
@@ -1570,13 +1605,34 @@ async function promptForChannelDefinition(prompter, config, options) {
     },
   });
 
-  const discordChannelId = await prompter.askText('Discord channel ID', {
-    defaultValue: initial.discordChannelId,
-  });
-  const guildId = await prompter.askText('Discord guild ID (optional)', {
-    defaultValue: initial.guildId,
-    allowEmpty: true,
-  });
+  const platform = await prompter.askChoice(
+    'Which messaging platform should this channel use?',
+    MESSAGING_PLATFORM_CHOICES,
+    {
+      defaultValue: initial.platform || 'discord',
+    },
+  );
+  let discordChannelId = '';
+  let guildId = '';
+  let telegramChatId = '';
+  let telegramThreadId = '';
+  if (platform === 'telegram') {
+    telegramChatId = await prompter.askText('Telegram chat ID', {
+      defaultValue: initial.telegramChatId,
+    });
+    telegramThreadId = await prompter.askText('Telegram thread ID (optional)', {
+      defaultValue: initial.telegramThreadId,
+      allowEmpty: true,
+    });
+  } else {
+    discordChannelId = await prompter.askText('Discord channel ID', {
+      defaultValue: initial.discordChannelId,
+    });
+    guildId = await prompter.askText('Discord guild ID (optional)', {
+      defaultValue: initial.guildId,
+      allowEmpty: true,
+    });
+  }
   const workspace = await prompter.askText('Channel workspace directory', {
     defaultValue: initial.workspace ?? initial.workdir ?? getDefaultChannelWorkspace(),
     validate: (value) => {
@@ -1660,9 +1716,12 @@ async function promptForChannelDefinition(prompter, config, options) {
 
   return {
     name,
+    platform,
     mode: channelMode,
     discordChannelId,
     guildId,
+    telegramChatId,
+    telegramThreadId,
     workspace,
     agent,
     reviewer,
@@ -1709,6 +1768,7 @@ function renderAgentStatusReport(projectRoot, config, agents) {
     lines.push('');
     lines.push(agent.name);
     lines.push(`  type=${agent.agent}`);
+    lines.push(`  platform=${agent.platform || 'discord'}`);
     lines.push(`  ready=${runtime.ready ? 'yes' : 'no'}`);
     lines.push(`  detail=${runtime.detail}`);
     if (agent.fallbackAgent) {
@@ -1769,9 +1829,14 @@ function renderChannelStatus(config, channel) {
   const agent = getAgent(config, channel.agent);
   return [
     `channel=${channel.name}`,
+    `platform=${channel.platform || 'discord'}`,
     `mode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}`,
-    `discordChannelId=${channel.discordChannelId}`,
-    channel.guildId ? `guildId=${channel.guildId}` : null,
+    channel.platform === 'telegram'
+      ? `telegramChatId=${channel.telegramChatId}`
+      : `discordChannelId=${channel.discordChannelId}`,
+    channel.platform === 'telegram'
+      ? (channel.telegramThreadId ? `telegramThreadId=${channel.telegramThreadId}` : null)
+      : (channel.guildId ? `guildId=${channel.guildId}` : null),
     `workspace=${channel.workspace || channel.workdir}`,
     `agent=${channel.agent}`,
     channel.reviewer ? `reviewer=${channel.reviewer}` : null,
@@ -1809,7 +1874,7 @@ function printAgents(agents) {
     return;
   }
   for (const agent of agents) {
-    console.log(`  ${agent.name}\t${agent.agent}`);
+    console.log(`  ${agent.name}\t${agent.agent}\tplatform=${agent.platform || 'discord'}`);
   }
 }
 
@@ -1820,8 +1885,12 @@ function printChannels(channels) {
     return;
   }
   for (const channel of channels) {
+    const target =
+      channel.platform === 'telegram'
+        ? channel.telegramChatId
+        : channel.discordChannelId;
     console.log(
-      `  ${channel.name}\t${channel.discordChannelId}\tmode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}\tagent=${channel.agent}\tworkspace=${channel.workspace || channel.workdir}`,
+      `  ${channel.name}\t${channel.platform || 'discord'}:${target}\tmode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}\tagent=${channel.agent}\tworkspace=${channel.workspace || channel.workdir}`,
     );
   }
 }
@@ -1894,6 +1963,7 @@ function buildAgentPreset(name, flags) {
   return {
     name,
     agent: getFlagValue(flags, 'agent'),
+    platform: getFlagValue(flags, 'platform'),
     fallbackAgent: getFlagValue(flags, 'fallback-agent'),
     model: getFlagValue(flags, 'model'),
     effort: getFlagValue(flags, 'effort'),
@@ -1905,6 +1975,8 @@ function buildAgentPreset(name, flags) {
     sandbox: getFlagValue(flags, 'sandbox'),
     permissionMode: getFlagValue(flags, 'permission-mode'),
     dangerous: getFlagValue(flags, 'dangerous'),
+    discordToken: getFlagValue(flags, 'discord-token'),
+    telegramBotToken: getFlagValue(flags, 'telegram-bot-token'),
     baseUrl: getFlagValue(flags, 'base-url'),
     command: getFlagValue(flags, 'command'),
     env: getFlagValue(flags, 'env')
@@ -1925,9 +1997,12 @@ function buildDashboardPreset(name, flags) {
 function buildChannelPreset(name, flags) {
   return {
     name,
+    platform: getFlagValue(flags, 'platform'),
     mode: getFlagValue(flags, 'mode') || getFlagValue(flags, 'channel-mode'),
     discordChannelId: getFlagValue(flags, 'discord-channel-id'),
     guildId: getFlagValue(flags, 'guild-id'),
+    telegramChatId: getFlagValue(flags, 'telegram-chat-id'),
+    telegramThreadId: getFlagValue(flags, 'telegram-thread-id'),
     workspace: getFlagValue(flags, 'workspace') || getFlagValue(flags, 'workdir'),
     agent: getFlagValue(flags, 'agent'),
     reviewer: getFlagValue(flags, 'reviewer'),
@@ -1940,7 +2015,7 @@ function buildChannelPreset(name, flags) {
 function printHelp() {
   console.log(`hkclaw-lite
 
-Discord-only AI agent runtime managed primarily from the local web admin.
+AI agent runtime managed primarily from the local web admin.
 Use the web admin for most setup and day-to-day control; keep the CLI for automation and operational tasks.
 Agents intentionally run with the full permissions of the host account that launched them.
 Most commands auto-create .hkclaw-lite in the current directory when missing.
@@ -1951,12 +2026,14 @@ Execution model:
   hkclaw-lite admin         Start the web admin server
   hkclaw-lite run ...       Execute one one-shot turn
   hkclaw-lite discord serve Start the long-running Discord worker
+  hkclaw-lite telegram serve Start the long-running Telegram worker
   Containers and Kubernetes only run whichever command you pass explicitly.
 
 Usage:
   hkclaw-lite init [--root DIR] [--force]
   hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
   hkclaw-lite discord serve [--root DIR] [--env-file .env]
+  hkclaw-lite telegram serve [--root DIR]
   hkclaw-lite backup export <file> [--root DIR] [--no-watchers] [--no-logs]
   hkclaw-lite backup import <file> [--root DIR] [--force]
   hkclaw-lite migrate --from <project-root> [--root DIR] [--force]
@@ -1996,6 +2073,7 @@ Examples:
   hkclaw-lite admin
   hkclaw-lite admin --host 0.0.0.0 --port ${DEFAULT_ADMIN_PORT}
   hkclaw-lite discord serve --env-file .env
+  hkclaw-lite telegram serve
   hkclaw-lite backup export ./backups/project.json
   hkclaw-lite backup import ./backups/project.json --root ./restored
   hkclaw-lite migrate --from ../old-project --root ./new-project

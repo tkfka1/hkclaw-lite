@@ -14,6 +14,10 @@ import {
   writeDiscordAgentServiceStatus,
   writeDiscordServiceStatus,
 } from '../src/discord-runtime-state.js';
+import {
+  buildTelegramServiceSnapshot,
+  writeTelegramAgentServiceStatus,
+} from '../src/telegram-runtime-state.js';
 import { recordRuntimeUsageEvent } from '../src/runtime-db.js';
 import {
   buildAgentDefinition,
@@ -33,6 +37,12 @@ const fakeDiscordServicePath = path.join(
   'test',
   'fixtures',
   'fake-discord-service.mjs',
+);
+const fakeTelegramServicePath = path.join(
+  repoRoot,
+  'test',
+  'fixtures',
+  'fake-telegram-service.mjs',
 );
 
 function createProject() {
@@ -959,6 +969,190 @@ test('admin server can start, restart, and stop Discord service', async () => {
       delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
     } else {
       process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
+test('admin server restores previously running Discord service on startup', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeDiscordServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'owner-token',
+  });
+  saveConfig(projectRoot, config);
+  writeDiscordAgentServiceStatus(projectRoot, 'worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'worker',
+    pid: 999999,
+    running: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: '2026-04-15T00:00:00.000Z',
+    bots: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        tag: 'worker#0001',
+        userId: '1',
+      },
+    },
+  });
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const restored = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(restored?.agentServices?.worker?.running), true);
+      assert.equal(Number.isInteger(restored?.agentServices?.worker?.pid), true);
+      assert.notEqual(restored?.agentServices?.worker?.pid, 999999);
+
+      const stopResponse = await requestJson(`${url}/api/agents/worker/stop`, {
+        method: 'POST',
+      });
+      assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
+test('admin server can start, restart, and stop Telegram service', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY = fakeTelegramServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'telegram',
+    telegramBotToken: 'telegram-token',
+  });
+  saveConfig(projectRoot, config);
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const startResponse = await requestJson(`${url}/api/agents/worker/start`, {
+        method: 'POST',
+      });
+      assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
+      assert.equal(startResponse.payload.result.action, 'start');
+      assert.equal(startResponse.payload.result.agentName, 'worker');
+      assert.equal(startResponse.payload.result.platform, 'telegram');
+
+      const running = await waitFor(() => {
+        const snapshot = buildTelegramServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(running?.running), true);
+      assert.equal(Number.isInteger(running?.agentServices?.worker?.pid), true);
+
+      const restartResponse = await requestJson(`${url}/api/agents/worker/restart`, {
+        method: 'POST',
+      });
+      assert.equal(restartResponse.response.status, 200, JSON.stringify(restartResponse.payload));
+      assert.equal(restartResponse.payload.result.action, 'restart');
+      assert.equal(restartResponse.payload.result.agentName, 'worker');
+      assert.equal(restartResponse.payload.result.platform, 'telegram');
+
+      const restarted = await waitFor(() => {
+        const snapshot = buildTelegramServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(restarted?.running), true);
+      assert.equal(Number.isInteger(restarted?.agentServices?.worker?.pid), true);
+
+      const stopResponse = await requestJson(`${url}/api/agents/worker/stop`, {
+        method: 'POST',
+      });
+      assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
+      assert.equal(stopResponse.payload.result.action, 'stop');
+      assert.equal(stopResponse.payload.result.agentName, 'worker');
+      assert.equal(stopResponse.payload.result.platform, 'telegram');
+
+      const stopped = await waitFor(() => {
+        const snapshot = buildTelegramServiceSnapshot(projectRoot);
+        const worker = snapshot.agentServices?.worker;
+        return worker && !worker.running && !worker.pidAlive ? snapshot : null;
+      });
+      assert.equal(stopped?.agentServices?.worker?.running, false);
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
+test('admin server restores previously running Telegram service on startup', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY = fakeTelegramServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'telegram',
+    telegramBotToken: 'telegram-token',
+  });
+  saveConfig(projectRoot, config);
+  writeTelegramAgentServiceStatus(projectRoot, 'worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'worker',
+    pid: 999999,
+    running: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: '2026-04-15T00:00:00.000Z',
+    bots: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        username: 'worker_bot',
+        userId: '1',
+      },
+    },
+  });
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const restored = await waitFor(() => {
+        const snapshot = buildTelegramServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(restored?.agentServices?.worker?.running), true);
+      assert.equal(Number.isInteger(restored?.agentServices?.worker?.pid), true);
+      assert.notEqual(restored?.agentServices?.worker?.pid, 999999);
+
+      const stopResponse = await requestJson(`${url}/api/agents/worker/stop`, {
+        method: 'POST',
+      });
+      assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY = previousEntry;
     }
   }
 });

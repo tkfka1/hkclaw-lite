@@ -7,11 +7,16 @@ import {
   CHANNEL_MODE_CHOICES,
   CODEX_SANDBOX_CHOICES,
   DASHBOARD_ALL_AGENTS,
+  MESSAGING_PLATFORM_CHOICES,
 } from './constants.js';
 import {
   buildDiscordServiceSnapshot,
   inspectDiscordBotConfigs,
 } from './discord-runtime-state.js';
+import {
+  buildTelegramServiceSnapshot,
+  inspectTelegramBotConfigs,
+} from './telegram-runtime-state.js';
 import { inspectAgentRuntime } from './runners.js';
 import {
   listPendingRuntimeOutboxEvents,
@@ -53,6 +58,7 @@ export async function buildAdminSnapshot(projectRoot) {
   const agents = buildAgentSummaries(projectRoot, config, channels);
   const bots = buildBotSummaries(config, channels);
   const discord = buildDiscordStatus(projectRoot, config, channels);
+  const telegram = buildTelegramStatus(projectRoot, config, channels);
   const tokenUsage = await buildTokenUsageSnapshot(projectRoot);
   const watchers = listCiWatchers(projectRoot).map((watcher) => ({
     ...watcher,
@@ -76,12 +82,14 @@ export async function buildAdminSnapshot(projectRoot) {
     channels: runtime.channels,
     dashboards,
     discord,
+    telegram,
     tokenUsage,
     watchers,
     runtime: runtime.summary,
     choices: {
       agentTypes: AGENT_TYPE_CHOICES,
       channelModes: CHANNEL_MODE_CHOICES,
+      messagingPlatforms: MESSAGING_PLATFORM_CHOICES,
       codexSandboxes: CODEX_SANDBOX_CHOICES,
       claudePermissionModes: CLAUDE_PERMISSION_MODE_CHOICES,
       dashboardAllAgents: DASHBOARD_ALL_AGENTS,
@@ -201,6 +209,18 @@ function buildDiscordStatus(projectRoot, config, channels) {
     envFilePath: service.envFilePath,
     tribunalChannelCount,
     singleChannelCount: channels.length - tribunalChannelCount,
+    bots: tokenStatus.bots,
+    service,
+    agentServices: service.agentServices || {},
+  };
+}
+
+function buildTelegramStatus(projectRoot, config, channels) {
+  const service = buildTelegramServiceSnapshot(projectRoot);
+  const tokenStatus = inspectTelegramBotConfigs(config, channels, service);
+
+  return {
+    telegramChannelCount: tokenStatus.telegramChannelCount,
     bots: tokenStatus.bots,
     service,
     agentServices: service.agentServices || {},
@@ -461,17 +481,27 @@ function buildAgentSummaries(projectRoot, config, channels) {
   const discordService = buildDiscordServiceSnapshot(projectRoot);
   const discordRuntimeBots = discordService.bots || {};
   const agentServices = discordService.agentServices || {};
+  const telegramService = buildTelegramServiceSnapshot(projectRoot);
+  const telegramRuntimeBots = telegramService.bots || {};
+  const telegramAgentServices = telegramService.agentServices || {};
   return listAgents(config).map((agent) => {
     const mappedChannels = channelsByAgent[agent.name] || [];
     const discordRuntime = discordRuntimeBots[agent.name] || {};
     const service = agentServices[agent.name] || null;
+    const telegramRuntime = telegramRuntimeBots[agent.name] || {};
+    const telegramServiceState = telegramAgentServices[agent.name] || null;
     return {
       ...agent,
       runtime: inspectAgentRuntime(projectRoot, agent),
+      platform: agent.platform || 'discord',
       discordTokenConfigured: Boolean(agent.discordToken),
+      telegramBotTokenConfigured: Boolean(agent.telegramBotToken),
       discordConnected: Boolean(discordRuntime.connected),
       discordTag: discordRuntime.tag || '',
       discordService: service,
+      telegramConnected: Boolean(telegramRuntime.connected),
+      telegramUsername: telegramRuntime.username || '',
+      telegramService: telegramServiceState,
       mappedChannels: mappedChannels.map((channel) => ({
         name: channel.name,
         role: resolveAgentRole(channel, agent.name),
