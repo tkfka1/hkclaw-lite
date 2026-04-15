@@ -1,7 +1,7 @@
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
-const AI_MANAGER_STATUS_POLL_INTERVAL_MS = 1_500;
-const AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS = 20;
+const AI_MANAGER_STATUS_POLL_INTERVAL_MS = 5_000;
+const AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS = 12;
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 let noticeTimer = null;
 let aiManagerStatusPollTimer = null;
@@ -1962,7 +1962,6 @@ function renderAiModal() {
         <div data-form="ai-manager" class="form">
           <div class="ai-modal-body">${renderAiStatusChips(entry.value, authResult, testResult, ready)}</div>
           ${renderAiUsageSummary(entry.value, usageSummary)}
-          ${renderAiWorkflowGuide(entry.value, authResult, testResult, ready, testSupported)}
           ${renderAiAuthFields(entry.value)}
           ${renderAiCredentialFields(entry.value)}
           ${renderAiTestFields(entry.value)}
@@ -2096,113 +2095,6 @@ function renderAiStatusChips(agentType, authResult, testResult, ready) {
   return chips.join('');
 }
 
-function renderAiWorkflowGuide(agentType, authResult, testResult, ready, testSupported) {
-  if (!isAiAuthSupported(agentType)) {
-    return '';
-  }
-
-  const loggedIn = Boolean(authResult?.details?.loggedIn);
-  const pendingLogin = Boolean(authResult?.details?.pendingLogin);
-  const testOk = Boolean(testResult?.details?.success);
-  const steps = agentType === 'claude-code'
-      ? [
-          {
-            label: '1. 로그인',
-            state: loggedIn ? '완료' : (pendingLogin ? '진행 중' : '대기'),
-            hint: '브라우저 로그인 창을 엽니다.',
-          },
-          {
-            label: '2. 로그인 완료',
-            state: loggedIn ? '완료' : (pendingLogin ? '필요' : '대기'),
-            hint: '브라우저 인증 뒤 표시되는 Authentication Code 또는 callback URL 전체를 붙여넣습니다.',
-          },
-        {
-          label: '3. 상태 확인',
-          state: loggedIn ? '완료' : '대기',
-          hint: '현재 로그인 상태를 다시 읽습니다.',
-        },
-        {
-          label: '4. 테스트 호출',
-          state: testOk ? '완료' : (ready ? '준비됨' : '대기'),
-          hint: '실제 Claude Code ACP turn 호출이 되는지 확인합니다.',
-        },
-      ]
-    : agentType === 'gemini-cli'
-      ? [
-          {
-            label: '1. 로그인',
-            state: loggedIn ? '완료' : (pendingLogin ? '진행 중' : '대기'),
-            hint: '브라우저 Google 로그인 창을 엽니다.',
-          },
-          {
-            label: '2. 로그인 완료',
-            state: loggedIn ? '완료' : (pendingLogin ? '필요' : '대기'),
-            hint: '브라우저 인증 뒤 표시되는 authorization code를 붙여넣습니다.',
-          },
-          {
-            label: '3. 상태 확인',
-            state: loggedIn ? '완료' : '대기',
-            hint: '현재 Google 로그인 상태를 다시 읽습니다.',
-          },
-          {
-            label: '4. 테스트 호출',
-            state: testOk ? '완료' : (ready ? '준비됨' : '대기'),
-            hint: '실제 Gemini CLI turn 호출이 되는지 확인합니다.',
-          },
-        ]
-      : [
-          {
-            label: '1. 로그인',
-            state: loggedIn ? '완료' : (pendingLogin ? '진행 중' : '대기'),
-            hint: 'Codex 디바이스 로그인 플로우를 시작하고 브라우저 완료까지 기다립니다.',
-          },
-          {
-            label: '2. 상태 확인',
-            state: loggedIn ? '완료' : (pendingLogin ? '확인 필요' : '대기'),
-            hint: '현재 로그인 상태를 다시 읽습니다.',
-          },
-          {
-            label: '3. 테스트 호출',
-            state: testOk ? '완료' : (ready ? '준비됨' : '대기'),
-            hint: '실제 Codex turn 호출이 되는지 확인합니다.',
-          },
-        ];
-
-  return `
-    <div class="wizard-result">
-      <strong>권장 순서</strong>
-      <ol class="flow-list">
-        ${steps
-          .map(
-            (step) =>
-              `<li><strong>${escapeHtml(step.label)}</strong> - ${escapeHtml(step.state)}<br /><span class="field-hint">${escapeHtml(step.hint)}</span></li>`,
-          )
-          .join('')}
-      </ol>
-      ${
-        agentType === 'codex'
-          ? '<div class="field-hint">Codex는 이 머신의 로컬 Codex 로그인 상태를 그대로 사용합니다. 그래서 이미 로그인되어 있으면 처음부터 완료로 보일 수 있습니다.</div>'
-          : ''
-      }
-      ${
-        agentType === 'claude-code'
-          ? '<div class="field-hint">Claude Code ACP는 브라우저 인증을 마친 뒤 Authentication Code 또는 callback URL을 웹 어드민에 붙여넣어야 완료됩니다.</div>'
-          : ''
-      }
-      ${
-        agentType === 'gemini-cli'
-          ? '<div class="field-hint">Gemini CLI는 브라우저 인증을 마친 뒤 authorization code 붙여넣기까지 해야 완료됩니다.</div>'
-          : ''
-      }
-      ${
-        !testSupported
-          ? '<div class="field-hint">이 AI 유형은 테스트 호출을 지원하지 않습니다.</div>'
-          : ''
-      }
-    </div>
-  `;
-}
-
 function renderAiUsageSummary(agentType, usageSummary) {
   const summary = usageSummary || {
     supported: ['claude-code', 'gemini-cli', 'local-llm'].includes(agentType),
@@ -2261,8 +2153,8 @@ function renderAiUsageSummary(agentType, usageSummary) {
 
 function isAiCompleteLoginDisabled(agentType, authResult) {
   if (agentType === 'claude-code') {
-    const authorizationCode = optionalDraftText(state.aiManager?.authConfig?.authorizationCode);
-    return !authorizationCode;
+    const callbackUrl = optionalDraftText(state.aiManager?.authConfig?.callbackUrl);
+    return !callbackUrl;
   }
   if (agentType === 'gemini-cli') {
     const authorizationCode = optionalDraftText(state.aiManager?.authConfig?.authorizationCode);
@@ -2993,7 +2885,11 @@ async function runAiManagerAction(action, options = {}) {
   }
 
   if (action === 'complete-login') {
-    body.authorizationCode = optionalDraftText(state.aiManager?.authConfig?.authorizationCode);
+    if (agentType === 'claude-code') {
+      body.callbackUrl = optionalDraftText(state.aiManager?.authConfig?.callbackUrl);
+    } else {
+      body.authorizationCode = optionalDraftText(state.aiManager?.authConfig?.authorizationCode);
+    }
   }
 
   if (action === 'test') {
@@ -3229,14 +3125,14 @@ function renderAiAuthFields(agentType) {
           <div class="field-hint">claude.ai 는 개인 Claude 구독 계정이고, console 은 Anthropic Console 조직/API 계정입니다.</div>
         </div>
         <div class="field field-full">
-          <label for="ai-manager-claude-authorization-code">Authentication Code 또는 callback URL 붙여넣기</label>
+          <label for="ai-manager-claude-callback-url">callback URL 전체 붙여넣기</label>
           <textarea
-            id="ai-manager-claude-authorization-code"
-            name="claudeAuthorizationCode"
-            data-ai-auth-key="authorizationCode"
-            placeholder="브라우저 로그인 완료 후 표시된 Authentication Code 또는 callback URL 전체"
-          >${escapeHtml(authConfig.authorizationCode || '')}</textarea>
-          <div class="field-hint">로그인 버튼을 누른 뒤 브라우저 인증을 마치면 Authentication Code 또는 최종 callback URL을 얻습니다. 둘 중 하나를 그대로 붙여넣고 로그인 완료를 누르세요.</div>
+            id="ai-manager-claude-callback-url"
+            name="claudeCallbackUrl"
+            data-ai-auth-key="callbackUrl"
+            placeholder="브라우저 로그인 완료 후 최종 callback URL 전체"
+          >${escapeHtml(authConfig.callbackUrl || '')}</textarea>
+          <div class="field-hint">로그인 버튼을 누른 뒤 브라우저 인증을 마치면 최종 callback URL로 이동합니다. 주소창에 보이는 URL 전체를 그대로 붙여넣고 로그인 완료를 누르세요.</div>
         </div>
       </div>
     `;
@@ -3264,7 +3160,7 @@ function buildAiAuthDraft(agentType) {
   if (agentType === 'claude-code') {
     return {
       loginMode: 'claudeai',
-      authorizationCode: '',
+      callbackUrl: '',
     };
   }
   if (agentType === 'gemini-cli') {
@@ -3392,10 +3288,6 @@ function startAiManagerStatusPolling(agentType) {
       applyAiManagerAuthResult(agentType, response.result, 'status');
       const nextFingerprint = buildAiAuthResultFingerprint(state.aiManager?.authResult);
       const statusChanged = previousFingerprint !== nextFingerprint;
-      if (statusChanged) {
-        render();
-      }
-
       const loggedIn = Boolean(response.result?.details?.loggedIn);
       const pendingLogin = Boolean(response.result?.details?.pendingLogin);
       if (loggedIn) {
@@ -4642,10 +4534,10 @@ function localizeErrorMessage(message) {
   if (text === 'Claude Code ACP 로그인 세션이 없습니다. 먼저 로그인 버튼을 누르세요.') {
     return text;
   }
-  if (text === '브라우저 완료 후 Authentication Code 또는 callback URL 전체를 붙여넣으세요.') {
+  if (text === '브라우저 완료 후 callback URL 전체를 붙여넣으세요.') {
     return text;
   }
-  if (text === 'Authentication Code 또는 callback URL 전체를 붙여넣어야 합니다.') {
+  if (text === 'callback URL 전체를 붙여넣어야 합니다.') {
     return text;
   }
   if (text === 'Claude Code ACP 로그인 상태를 찾지 못했습니다. 다시 로그인 버튼을 누르세요.') {

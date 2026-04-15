@@ -1564,7 +1564,7 @@ async function startClaudeAuthFlow(projectRoot, payload = {}) {
         loginStarted: true,
         requiresCode: true,
         completionHint:
-          '브라우저 인증 뒤 표시된 Authentication Code 또는 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.',
+          '브라우저 인증 뒤 최종 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.',
         loginMode,
         sessionId: flow.id,
         url: flow.manualUrl || flow.automaticUrl || '',
@@ -1588,7 +1588,7 @@ async function completeClaudeAuthFlow(projectRoot, payload = {}) {
   const resolvedState = callback.state || resolveClaudeOAuthState(flow);
   assert(
     callback.authorizationCode,
-    '브라우저 완료 후 Authentication Code 또는 callback URL 전체를 붙여넣으세요.',
+    '브라우저 완료 후 callback URL 전체를 붙여넣으세요.',
   );
   assert(
     resolvedState,
@@ -2132,7 +2132,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
         ? `브라우저 로그인: 진행 중 (${activeFlow.loginMode === 'console' ? 'console' : 'claude.ai'})`
         : '',
       activeFlow
-        ? '완료 방법: 브라우저 로그인 후 표시된 Authentication Code 또는 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.'
+        ? '완료 방법: 브라우저 로그인 후 최종 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.'
         : '',
     ].filter(Boolean);
 
@@ -2151,7 +2151,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
         pendingLogin: Boolean(activeFlow),
         requiresCode: Boolean(activeFlow),
         completionHint: activeFlow
-          ? '브라우저 인증 뒤 표시된 Authentication Code 또는 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.'
+          ? '브라우저 인증 뒤 최종 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.'
           : '',
         loginMode: activeFlow?.loginMode || null,
         manualUrl: activeFlow?.manualUrl || '',
@@ -2630,16 +2630,15 @@ function normalizeClaudeLoginMode(value) {
 }
 
 function parseClaudeOAuthCallbackPayload(payload = {}) {
-  const callbackUrl =
-    String(payload?.callbackUrl || payload?.options?.callbackUrl || '').trim();
-  if (callbackUrl) {
-    return parseClaudeOAuthCallbackUrl(callbackUrl);
-  }
-
-  const authorizationCode = String(
-    payload?.authorizationCode || payload?.code || payload?.options?.authorizationCode || '',
+  const callbackInput = String(
+    payload?.callbackUrl ||
+      payload?.options?.callbackUrl ||
+      payload?.authorizationCode ||
+      payload?.code ||
+      payload?.options?.authorizationCode ||
+      '',
   ).trim();
-  const parsedAuthorizationCode = parseClaudeOAuthCodeOrCallbackInput(authorizationCode);
+  const parsedAuthorizationCode = parseClaudeOAuthCallbackInput(callbackInput);
   return {
     callbackUrl: parsedAuthorizationCode.callbackUrl,
     authorizationCode: parsedAuthorizationCode.authorizationCode,
@@ -2673,7 +2672,7 @@ function parseClaudeOAuthCallbackUrl(callbackUrl) {
   try {
     parsedUrl = new URL(callbackUrl);
   } catch {
-    throw new Error('Authentication Code 또는 callback URL 전체를 붙여넣어야 합니다.');
+    throw new Error('callback URL 전체를 붙여넣어야 합니다.');
   }
   return {
     callbackUrl,
@@ -2686,7 +2685,7 @@ function parseClaudeOAuthCallbackUrl(callbackUrl) {
   };
 }
 
-function parseClaudeOAuthCodeOrCallbackInput(value) {
+function parseClaudeOAuthCallbackInput(value) {
   const text = String(value || '').trim();
   if (!text) {
     return {
@@ -2695,14 +2694,10 @@ function parseClaudeOAuthCodeOrCallbackInput(value) {
       state: '',
     };
   }
-  if (/^https?:\/\//iu.test(text)) {
-    return parseClaudeOAuthCallbackUrl(text);
+  if (!/^https?:\/\//iu.test(text)) {
+    throw new Error('callback URL 전체를 붙여넣어야 합니다.');
   }
-  return {
-    callbackUrl: '',
-    authorizationCode: text,
-    state: '',
-  };
+  return parseClaudeOAuthCallbackUrl(text);
 }
 
 function parseJsonObject(value) {

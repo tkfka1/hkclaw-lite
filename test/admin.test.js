@@ -1750,7 +1750,8 @@ test('admin server starts and completes Claude ACP login flow through the bundle
           body: {
             agentType: 'claude-code',
             action: 'complete-login',
-            authorizationCode: 'test-code',
+            callbackUrl:
+              'http://localhost:4455/callback?code=test-code&state=console-flow',
           },
         });
         assert.equal(complete.response.status, 200, JSON.stringify(complete.payload));
@@ -1762,7 +1763,7 @@ test('admin server starts and completes Claude ACP login flow through the bundle
   );
 });
 
-test('admin server accepts a Claude callback URL pasted into the authorizationCode field', async () => {
+test('admin server accepts a Claude callback URL pasted into the callbackUrl field', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
   const fakePackageJson = createFakeClaudeAgentSdkBundle();
@@ -1790,7 +1791,7 @@ test('admin server accepts a Claude callback URL pasted into the authorizationCo
           body: {
             agentType: 'claude-code',
             action: 'complete-login',
-            authorizationCode:
+            callbackUrl:
               'http://localhost:4455/callback?code=callback-code-123&state=claudeai-flow',
           },
         });
