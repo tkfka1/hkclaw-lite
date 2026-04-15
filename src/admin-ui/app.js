@@ -722,9 +722,7 @@ async function changeAdminPassword(form) {
 
   state.auth = response.auth || state.auth;
   state.adminPasswordModalOpen = false;
-  if (!(action === 'login' && response.result?.details?.url)) {
-    state.notice = null;
-  }
+  setNotice('info', '관리자 비밀번호를 변경했습니다.');
   render();
 }
 
