@@ -582,7 +582,7 @@ function resolveRunTarget(projectRoot, config, positionals, flags) {
     return {
       agent: getAgent(config, channel.agent),
       channel,
-      workdir: resolveExistingWorkdir(projectRoot, channel.workspace || channel.workdir),
+      workdir: resolveExistingWorkdir(projectRoot, resolveChannelAgentWorkspace(channel, channel.agent)),
       promptPositionals: viaChannelCommand ? positionals.slice(2) : positionals,
     };
   }
@@ -598,7 +598,7 @@ function resolveRunTarget(projectRoot, config, positionals, flags) {
     return {
       agent: getAgent(config, channel.agent),
       channel,
-      workdir: resolveExistingWorkdir(projectRoot, channel.workspace || channel.workdir),
+      workdir: resolveExistingWorkdir(projectRoot, resolveChannelAgentWorkspace(channel, channel.agent)),
       promptPositionals: positionals,
     };
   }
@@ -640,8 +640,21 @@ function resolveRunWorkdir(
 
   return resolveExistingWorkdir(
     projectRoot,
-    mappedChannels[0].workspace || mappedChannels[0].workdir,
+    resolveChannelAgentWorkspace(mappedChannels[0], agent.name),
   );
+}
+
+function resolveChannelAgentWorkspace(channel, agentName) {
+  if (channel?.reviewer === agentName && channel?.reviewerWorkspace) {
+    return channel.reviewerWorkspace;
+  }
+  if (channel?.arbiter === agentName && channel?.arbiterWorkspace) {
+    return channel.arbiterWorkspace;
+  }
+  if (channel?.agent === agentName && channel?.ownerWorkspace) {
+    return channel.ownerWorkspace;
+  }
+  return channel?.workspace || channel?.workdir;
 }
 
 function resolveExistingWorkdir(projectRoot, workdir) {
@@ -1668,6 +1681,9 @@ async function promptForChannelDefinition(prompter, config, options) {
   let reviewer = '';
   let arbiter = '';
   let reviewRounds = '';
+  let ownerWorkspace = '';
+  let reviewerWorkspace = '';
+  let arbiterWorkspace = '';
   if (channelMode === 'tribunal') {
     assert(
       agents.length >= 3,
@@ -1708,6 +1724,18 @@ async function promptForChannelDefinition(prompter, config, options) {
           : 'Review rounds must be a positive integer.';
       },
     });
+    ownerWorkspace = await prompter.askText('Owner workspace override (optional)', {
+      defaultValue: initial.ownerWorkspace,
+      allowEmpty: true,
+    });
+    reviewerWorkspace = await prompter.askText('Reviewer workspace override (optional)', {
+      defaultValue: initial.reviewerWorkspace,
+      allowEmpty: true,
+    });
+    arbiterWorkspace = await prompter.askText('Arbiter workspace override (optional)', {
+      defaultValue: initial.arbiterWorkspace,
+      allowEmpty: true,
+    });
   }
   const description = await prompter.askText('Channel description (optional)', {
     defaultValue: initial.description,
@@ -1723,6 +1751,9 @@ async function promptForChannelDefinition(prompter, config, options) {
     telegramChatId,
     telegramThreadId,
     workspace,
+    ownerWorkspace,
+    reviewerWorkspace,
+    arbiterWorkspace,
     agent,
     reviewer,
     arbiter,
@@ -1838,9 +1869,12 @@ function renderChannelStatus(config, channel) {
       ? (channel.telegramThreadId ? `telegramThreadId=${channel.telegramThreadId}` : null)
       : (channel.guildId ? `guildId=${channel.guildId}` : null),
     `workspace=${channel.workspace || channel.workdir}`,
+    channel.ownerWorkspace ? `ownerWorkspace=${channel.ownerWorkspace}` : null,
     `agent=${channel.agent}`,
     channel.reviewer ? `reviewer=${channel.reviewer}` : null,
+    channel.reviewerWorkspace ? `reviewerWorkspace=${channel.reviewerWorkspace}` : null,
     channel.arbiter ? `arbiter=${channel.arbiter}` : null,
+    channel.arbiterWorkspace ? `arbiterWorkspace=${channel.arbiterWorkspace}` : null,
     channel.reviewRounds ? `reviewRounds=${channel.reviewRounds}` : null,
     channel.description ? `description=${channel.description}` : null,
     `agentType=${agent.agent}`,
@@ -2004,6 +2038,9 @@ function buildChannelPreset(name, flags) {
     telegramChatId: getFlagValue(flags, 'telegram-chat-id'),
     telegramThreadId: getFlagValue(flags, 'telegram-thread-id'),
     workspace: getFlagValue(flags, 'workspace') || getFlagValue(flags, 'workdir'),
+    ownerWorkspace: getFlagValue(flags, 'owner-workspace'),
+    reviewerWorkspace: getFlagValue(flags, 'reviewer-workspace'),
+    arbiterWorkspace: getFlagValue(flags, 'arbiter-workspace'),
     agent: getFlagValue(flags, 'agent'),
     reviewer: getFlagValue(flags, 'reviewer'),
     arbiter: getFlagValue(flags, 'arbiter'),
@@ -2096,5 +2133,16 @@ function uniqueChannelNames(channels) {
 }
 
 function uniqueChannelWorkspaces(channels) {
-  return [...new Set(channels.map((channel) => channel.workspace || channel.workdir).filter(Boolean))];
+  return [
+    ...new Set(
+      channels
+        .flatMap((channel) => [
+          channel.workspace || channel.workdir,
+          channel.ownerWorkspace,
+          channel.reviewerWorkspace,
+          channel.arbiterWorkspace,
+        ])
+        .filter(Boolean),
+    ),
+  ];
 }

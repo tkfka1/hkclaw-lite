@@ -450,6 +450,21 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
         existing.workdir ??
         getDefaultChannelWorkspace(),
     ),
+    ownerWorkspace: normalizeOptionalString(
+      input.ownerWorkspace ??
+        input['owner-workspace'] ??
+        existing.ownerWorkspace,
+    ),
+    reviewerWorkspace: normalizeOptionalString(
+      input.reviewerWorkspace ??
+        input['reviewer-workspace'] ??
+        existing.reviewerWorkspace,
+    ),
+    arbiterWorkspace: normalizeOptionalString(
+      input.arbiterWorkspace ??
+        input['arbiter-workspace'] ??
+        existing.arbiterWorkspace,
+    ),
     agent: getRequiredString(input.agent ?? existing.agent, 'agent'),
     reviewer: resolveOptionalChannelAgentName(
       input.reviewer ?? existing.reviewer,
@@ -466,6 +481,8 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
     merged.reviewer = undefined;
     merged.arbiter = undefined;
     merged.reviewRounds = undefined;
+    merged.reviewerWorkspace = undefined;
+    merged.arbiterWorkspace = undefined;
   }
   if (merged.reviewRounds !== undefined) {
     merged.reviewRounds = parseOptionalInteger(merged.reviewRounds, 'reviewRounds');
@@ -697,6 +714,24 @@ function validateChannelDefinition(projectRoot, config, channel) {
     fs.statSync(resolvedWorkspace).isDirectory(),
     `Workspace must be a directory: ${resolvedWorkspace}`,
   );
+  for (const [fieldName, workspaceValue] of [
+    ['ownerWorkspace', channel.ownerWorkspace],
+    ['reviewerWorkspace', channel.reviewerWorkspace],
+    ['arbiterWorkspace', channel.arbiterWorkspace],
+  ]) {
+    if (!workspaceValue) {
+      continue;
+    }
+    const resolvedRoleWorkspace = resolveProjectPath(projectRoot, workspaceValue);
+    assert(
+      fs.existsSync(resolvedRoleWorkspace),
+      `${fieldName} does not exist: ${resolvedRoleWorkspace}`,
+    );
+    assert(
+      fs.statSync(resolvedRoleWorkspace).isDirectory(),
+      `${fieldName} must be a directory: ${resolvedRoleWorkspace}`,
+    );
+  }
   assert(config.agents[channel.agent], `Channel references unknown agent "${channel.agent}".`);
   const hasTribunal = channel.mode === 'tribunal';
   if (hasTribunal) {

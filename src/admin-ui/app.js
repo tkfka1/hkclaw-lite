@@ -800,6 +800,9 @@ async function saveChannel(form) {
     telegramThreadId:
       platform === 'telegram' ? optionalText(values, 'telegramThreadId') : undefined,
     workspace: requiredText(values, 'workspace'),
+    ownerWorkspace: optionalText(values, 'ownerWorkspace'),
+    reviewerWorkspace: optionalText(values, 'reviewerWorkspace'),
+    arbiterWorkspace: optionalText(values, 'arbiterWorkspace'),
     agent: requiredText(values, 'agent'),
     reviewer: optionalText(values, 'reviewer'),
     arbiter: optionalText(values, 'arbiter'),
@@ -1732,7 +1735,7 @@ function renderChannelList(channels, agents) {
             <article class="card card--stack">
               <div class="card-main">
                 <strong class="card-title">${escapeHtml(channel.name)}</strong>
-                <span class="card-meta">${escapeHtml(localizeChannelMode(mode))} · ${escapeHtml(localizeMessagingPlatform(channel.platform || 'discord'))} · ${escapeHtml(describeChannelTarget(channel))} · ${escapeHtml(channel.workspace || getDefaultChannelWorkspace())}</span>
+                <span class="card-meta">${escapeHtml(localizeChannelMode(mode))} · ${escapeHtml(localizeMessagingPlatform(channel.platform || 'discord'))} · ${escapeHtml(describeChannelTarget(channel))} · ${escapeHtml(describeChannelWorkspace(channel))}</span>
                 <div class="role-list">
                   <span class="role-item"><strong>owner</strong><span>${escapeHtml(channel.agent)}</span></span>
                   ${
@@ -2309,6 +2312,22 @@ function renderChannelModal() {
                       <label for="channel-rounds">검토 회차</label>
                       <input id="channel-rounds" name="reviewRounds" value="${escapeAttr(current.reviewRounds)}" />
                     </div>
+                    <div class="field field-full">
+                      <label>역할별 워크스페이스</label>
+                      <div class="field-hint">비워두면 기본 워크스페이스를 그대로 씁니다.</div>
+                    </div>
+                    <div class="field">
+                      <label for="channel-owner-workspace">owner 워크스페이스</label>
+                      <input id="channel-owner-workspace" name="ownerWorkspace" value="${escapeAttr(current.ownerWorkspace)}" placeholder="${escapeAttr(current.workspace || getDefaultChannelWorkspace())}" />
+                    </div>
+                    <div class="field">
+                      <label for="channel-reviewer-workspace">reviewer 워크스페이스</label>
+                      <input id="channel-reviewer-workspace" name="reviewerWorkspace" value="${escapeAttr(current.reviewerWorkspace)}" placeholder="${escapeAttr(current.workspace || getDefaultChannelWorkspace())}" />
+                    </div>
+                    <div class="field">
+                      <label for="channel-arbiter-workspace">arbiter 워크스페이스</label>
+                      <input id="channel-arbiter-workspace" name="arbiterWorkspace" value="${escapeAttr(current.arbiterWorkspace)}" placeholder="${escapeAttr(current.workspace || getDefaultChannelWorkspace())}" />
+                    </div>
                   `
                 : ''
             }
@@ -2802,6 +2821,9 @@ function createChannelDraft(channel) {
     telegramChatId: channel?.telegramChatId || '',
     telegramThreadId: channel?.telegramThreadId || '',
     workspace: channel?.workspace || getDefaultChannelWorkspace(),
+    ownerWorkspace: channel?.ownerWorkspace || '',
+    reviewerWorkspace: channel?.reviewerWorkspace || '',
+    arbiterWorkspace: channel?.arbiterWorkspace || '',
     agent: channel?.agent || '',
     reviewer: channel?.reviewer || '',
     arbiter: channel?.arbiter || '',
@@ -3642,6 +3664,9 @@ function createBlankChannel() {
     telegramChatId: '',
     telegramThreadId: '',
     workspace: getDefaultChannelWorkspace(),
+    ownerWorkspace: '',
+    reviewerWorkspace: '',
+    arbiterWorkspace: '',
     agent: state.data.agents?.[0]?.name || '',
     reviewer: '',
     arbiter: '',
@@ -3990,6 +4015,18 @@ function describeChannelTarget(channel) {
   }
   const guildSuffix = channel?.guildId ? ` / ${channel.guildId}` : '';
   return `${channel?.discordChannelId || '-'}${guildSuffix}`;
+}
+
+function describeChannelWorkspace(channel) {
+  const baseWorkspace = channel?.workspace || getDefaultChannelWorkspace();
+  const overrides = [
+    channel?.ownerWorkspace ? `owner=${channel.ownerWorkspace}` : null,
+    channel?.reviewerWorkspace ? `reviewer=${channel.reviewerWorkspace}` : null,
+    channel?.arbiterWorkspace ? `arbiter=${channel.arbiterWorkspace}` : null,
+  ].filter(Boolean);
+  return overrides.length > 0
+    ? `${baseWorkspace} · ${overrides.join(' · ')}`
+    : baseWorkspace;
 }
 
 function localizeRuntimeStatus(value) {
@@ -4357,6 +4394,9 @@ function localizeFieldName(key) {
     telegramChatId: 'Telegram 채팅 ID',
     telegramThreadId: 'Telegram 스레드 ID',
     workspace: '워크스페이스',
+    ownerWorkspace: 'owner 워크스페이스',
+    reviewerWorkspace: 'reviewer 워크스페이스',
+    arbiterWorkspace: 'arbiter 워크스페이스',
     workdir: '작업경로',
   };
   return fields[key] || key;

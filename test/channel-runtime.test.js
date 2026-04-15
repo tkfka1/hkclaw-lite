@@ -26,6 +26,7 @@ const repoRoot = process.cwd();
 const ownerFixturePath = path.join(repoRoot, 'test', 'fixtures', 'echo-assistant.mjs');
 const reviewerFixturePath = path.join(repoRoot, 'test', 'fixtures', 'blocking-reviewer.mjs');
 const arbiterFixturePath = path.join(repoRoot, 'test', 'fixtures', 'arbiter-agent.mjs');
+const inspectFixturePath = path.join(repoRoot, 'test', 'fixtures', 'inspect-agent.mjs');
 
 function createProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-runtime-test-'));
@@ -426,6 +427,71 @@ test('tribunal channel emits owner, reviewer, and arbiter roles in order', async
       },
     ],
   );
+});
+
+test('tribunal channel can use role-specific workspaces', async () => {
+  const projectRoot = createProject();
+  const baseWorkspacePath = path.join(projectRoot, 'workspace');
+  const ownerWorkspacePath = path.join(projectRoot, 'owner-space');
+  const reviewerWorkspacePath = path.join(projectRoot, 'reviewer-space');
+  const arbiterWorkspacePath = path.join(projectRoot, 'arbiter-space');
+  fs.mkdirSync(baseWorkspacePath, { recursive: true });
+  fs.mkdirSync(ownerWorkspacePath, { recursive: true });
+  fs.mkdirSync(reviewerWorkspacePath, { recursive: true });
+  fs.mkdirSync(arbiterWorkspacePath, { recursive: true });
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: `node ${inspectFixturePath}`,
+  });
+  config.agents.reviewer = buildAgentDefinition(projectRoot, 'reviewer', {
+    name: 'reviewer',
+    agent: 'command',
+    command: `node ${inspectFixturePath}`,
+  });
+  config.agents.arbiter = buildAgentDefinition(projectRoot, 'arbiter', {
+    name: 'arbiter',
+    agent: 'command',
+    command: `node ${inspectFixturePath}`,
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    mode: 'tribunal',
+    discordChannelId: '123',
+    workspace: 'workspace',
+    ownerWorkspace: 'owner-space',
+    reviewerWorkspace: 'reviewer-space',
+    arbiterWorkspace: 'arbiter-space',
+    agent: 'owner',
+    reviewer: 'reviewer',
+    arbiter: 'arbiter',
+    reviewRounds: 1,
+  });
+  saveConfig(projectRoot, config);
+
+  const loaded = loadConfig(projectRoot);
+  const events = [];
+  const result = await executeChannelTurn({
+    projectRoot,
+    config: loaded,
+    channel: getChannel(loaded, 'main'),
+    prompt: 'inspect runtime',
+    workdir: baseWorkspacePath,
+    onRoleMessage: async (entry) => {
+      events.push({
+        role: entry.role,
+        content: entry.content,
+      });
+    },
+  });
+
+  assert.equal(result.role, 'arbiter');
+  assert.match(events.find((entry) => entry.role === 'owner')?.content || '', new RegExp(`workdir=${ownerWorkspacePath.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'));
+  assert.match(events.find((entry) => entry.role === 'reviewer')?.content || '', new RegExp(`workdir=${reviewerWorkspacePath.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'));
+  assert.match(events.find((entry) => entry.role === 'arbiter')?.content || '', new RegExp(`workdir=${arbiterWorkspacePath.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'));
 });
 
 test('single channel reuses Claude CLI sessions per channel role', async () => {

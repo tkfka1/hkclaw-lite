@@ -12,7 +12,7 @@ import {
   startRuntimeRun,
   transitionRuntimeRun,
 } from './runtime-db.js';
-import { getAgent } from './store.js';
+import { getAgent, resolveProjectPath } from './store.js';
 import { assert, toErrorMessage } from './utils.js';
 
 export async function executeChannelTurn({
@@ -62,7 +62,7 @@ export async function executeChannelTurn({
         channel,
         role: 'owner',
         userPrompt: prompt,
-        workdir,
+        workdir: resolveRoleWorkdir(projectRoot, channel, 'owner', workdir),
         sessionHistory: await loadRoleSessionHistory(projectRoot, {
           channel,
           role: 'owner',
@@ -146,7 +146,7 @@ async function executeTribunalTurn({
       channel,
       role: 'owner',
       userPrompt: ownerPrompt,
-      workdir,
+      workdir: resolveRoleWorkdir(projectRoot, channel, 'owner', workdir),
       sessionHistory: await loadRoleSessionHistory(projectRoot, {
         channel,
         role: 'owner',
@@ -185,7 +185,7 @@ async function executeTribunalTurn({
         round,
         maxRounds,
       }),
-      workdir,
+      workdir: resolveRoleWorkdir(projectRoot, channel, 'reviewer', workdir),
       sessionHistory: await loadRoleSessionHistory(projectRoot, {
         channel,
         role: 'reviewer',
@@ -239,7 +239,7 @@ async function executeTribunalTurn({
           maxRounds,
           reviewerVerdict,
         }),
-        workdir,
+        workdir: resolveRoleWorkdir(projectRoot, channel, 'arbiter', workdir),
       });
       const arbiterResponse = arbiterTurn.content;
       await emitRoleMessage(onRoleMessage, {
@@ -302,7 +302,7 @@ async function executeTribunalTurn({
       reviewerResponse,
       maxRounds,
     }),
-    workdir,
+    workdir: resolveRoleWorkdir(projectRoot, channel, 'arbiter', workdir),
   });
   const arbiterResponse = arbiterTurn.content;
   await emitRoleMessage(onRoleMessage, {
@@ -324,6 +324,21 @@ async function executeTribunalTurn({
     reviewerVerdict: 'blocked',
     runtimeFinalDisposition: 'arbiter_after_blocked_review',
   };
+}
+
+function resolveRoleWorkdir(projectRoot, channel, role, defaultWorkdir) {
+  const override =
+    role === 'owner'
+      ? channel?.ownerWorkspace
+      : role === 'reviewer'
+        ? channel?.reviewerWorkspace
+        : role === 'arbiter'
+          ? channel?.arbiterWorkspace
+          : null;
+  if (!override) {
+    return defaultWorkdir;
+  }
+  return resolveProjectPath(projectRoot, override);
 }
 
 async function executeAgentTurnWithFallback({
