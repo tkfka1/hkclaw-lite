@@ -64,6 +64,43 @@ service:
   port: 5687
   targetPort: 5687
 
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: hkclaw-lite.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+adminExternalSecret:
+  enabled: false
+  annotations: {}
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: vault-store
+  target:
+    name: hkclaw-lite-env
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      type: Opaque
+      engineVersion: v2
+      mergePolicy: Replace
+      data:
+        HKCLAW_LITE_ADMIN_PASSWORD: "{{ .admin_password }}"
+  data:
+    - secretKey: admin_password
+      remoteRef:
+        key: hkyo/infra/helm/devops/hkclaw-lite
+        property: admin-password
+        conversionStrategy: Default
+        decodingStrategy: None
+        metadataPolicy: None
+
 command: []
 # Images do not auto-start a role on install.
 # Kubernetes runs only the explicit command/args below.
