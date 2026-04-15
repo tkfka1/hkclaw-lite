@@ -744,9 +744,18 @@ async function saveAgentWizard() {
     skills: parseListText(values.skillsText),
     contextFiles: parseListText(values.contextFilesText),
     env: parseEnvEntries(values.envEntries),
-    sandbox: optionalDraftText(values.sandbox),
-    permissionMode: optionalDraftText(values.permissionMode),
-    dangerous: values.agent === 'codex' ? Boolean(values.dangerous) : undefined,
+    sandbox:
+      values.agent === 'codex'
+        ? resolveCodexAccessMode(values)
+        : optionalDraftText(values.sandbox),
+    permissionMode:
+      values.agent === 'claude-code'
+        ? optionalDraftText(values.permissionMode)
+        : undefined,
+    dangerous:
+      values.agent === 'codex'
+        ? resolveCodexAccessMode(values) === 'danger-full-access'
+        : undefined,
     discordToken:
       platform === 'discord'
         ? requiredDraftText(values.discordToken, 'discordToken')
@@ -2503,6 +2512,7 @@ function getAgentWizardSteps(draft) {
 
 function renderAgentWizardRuntimeStep(draft) {
   const platform = optionalDraftText(draft.platform) || 'discord';
+  const codexAccess = optionalDraftText(draft.codexAccess) || 'workspace-write';
   const blocks = [
     `
       <div class="field">
@@ -2529,8 +2539,13 @@ function renderAgentWizardRuntimeStep(draft) {
   if (draft.agent === 'codex') {
     blocks.push(`
       <div class="field">
-        <label for="wizard-agent-sandbox">Codex 샌드박스</label>
-        <select id="wizard-agent-sandbox" name="sandbox">${renderOptions(state.data.choices.codexSandboxes, draft.sandbox, true)}</select>
+        <label for="wizard-agent-codex-access">접근 범위</label>
+        <select id="wizard-agent-codex-access" name="codexAccess">${renderOptions([
+          { value: 'read-only', label: '읽기 전용', description: '파일 수정 없이 읽기와 점검만 허용' },
+          { value: 'workspace-write', label: '작업 디렉터리만 수정', description: '워크스페이스 안에서만 수정 허용' },
+          { value: 'danger-full-access', label: '전체 허용', description: '명령 실행과 파일 접근을 전부 허용' },
+        ], codexAccess, false)}</select>
+        <div class="field-hint">전체 허용은 Codex의 제한과 승인 확인을 모두 우회합니다.</div>
       </div>
     `);
   }
@@ -2569,15 +2584,6 @@ function renderAgentWizardRuntimeStep(draft) {
         <label for="wizard-agent-command">명령어</label>
         <input id="wizard-agent-command" name="command" value="${escapeAttr(draft.command)}" />
       </div>
-    `);
-  }
-
-  if (draft.agent === 'codex' && draft.sandbox === 'danger-full-access') {
-    blocks.push(`
-      <label class="checkbox" for="wizard-agent-dangerous">
-        <input id="wizard-agent-dangerous" type="checkbox" name="dangerous" ${draft.dangerous ? 'checked' : ''} />
-        <span>제한 해제</span>
-      </label>
     `);
   }
 
@@ -2727,6 +2733,7 @@ function createBlankAgent(agentType = null) {
     contextFilesText: '',
     envEntries: [createEnvEntry()],
     sandbox: state.data.choices.codexSandboxes[0]?.value || '',
+    codexAccess: 'workspace-write',
     permissionMode: defaultClaudePermissionMode,
     dangerous: false,
     discordToken: '',
@@ -2755,6 +2762,7 @@ function createAgentDraft(agent) {
     contextFilesText: Array.isArray(agent?.contextFiles) ? agent.contextFiles.join('\n') : '',
     envEntries: Object.entries(agent?.env || {}).map(([key, value]) => createEnvEntry(key, value)),
     sandbox: optionalDraftText(agent?.sandbox) || state.data?.choices?.codexSandboxes?.[0]?.value || '',
+    codexAccess: resolveCodexAccessMode(agent),
     permissionMode:
       optionalDraftText(agent?.permissionMode) ||
       state.data?.choices?.claudePermissionModes?.find((entry) => entry.value === 'bypassPermissions')?.value ||
@@ -2767,6 +2775,20 @@ function createAgentDraft(agent) {
     baseUrl: optionalDraftText(agent?.baseUrl),
     command: agent?.command || '',
   };
+}
+
+function resolveCodexAccessMode(source) {
+  const explicit = optionalDraftText(source?.codexAccess);
+  if (explicit) {
+    return explicit;
+  }
+  if (Boolean(source?.dangerous) || optionalDraftText(source?.sandbox) === 'danger-full-access') {
+    return 'danger-full-access';
+  }
+  if (optionalDraftText(source?.sandbox) === 'read-only') {
+    return 'read-only';
+  }
+  return 'workspace-write';
 }
 
 function createChannelDraft(channel) {
