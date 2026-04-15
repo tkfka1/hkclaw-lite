@@ -486,6 +486,71 @@ export async function listRuntimeUsageHistory(
   }));
 }
 
+export async function listRuntimeUsageBreakdown(
+  projectRoot,
+  {
+    days = 90,
+    field = 'agentType',
+  } = {},
+) {
+  const fieldMap = {
+    agentType: {
+      column: 'agent_type',
+      key: 'agentType',
+    },
+    agentName: {
+      column: 'agent_name',
+      key: 'agentName',
+    },
+    model: {
+      column: 'model',
+      key: 'model',
+    },
+  };
+  const selected = fieldMap[field];
+  if (!selected) {
+    throw new Error(`Unsupported runtime usage breakdown field "${field}".`);
+  }
+
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedDays = Number.isInteger(days) && days > 0 ? days : 90;
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+  since.setUTCDate(since.getUTCDate() - (normalizedDays - 1));
+  const sinceIso = since.toISOString();
+
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          ${selected.column} AS group_value,
+          COUNT(*) AS recorded_events,
+          COALESCE(SUM(input_tokens), 0) AS input_tokens,
+          COALESCE(SUM(output_tokens), 0) AS output_tokens,
+          COALESCE(SUM(total_tokens), 0) AS total_tokens,
+          COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+          COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
+          MAX(recorded_at) AS last_recorded_at
+        FROM runtime_usage_events
+        WHERE recorded_at >= ?
+        GROUP BY ${selected.column}
+        ORDER BY total_tokens DESC, recorded_events DESC, group_value ASC
+      `,
+    )
+    .all(sinceIso);
+
+  return rows.map((row) => ({
+    [selected.key]: row.group_value ?? null,
+    recordedEvents: row.recorded_events,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    totalTokens: row.total_tokens,
+    cacheCreationInputTokens: row.cache_creation_input_tokens,
+    cacheReadInputTokens: row.cache_read_input_tokens,
+    lastRecordedAt: row.last_recorded_at ?? null,
+  }));
+}
+
 export async function summarizeRuntimeUsage(projectRoot, { agentType = null } = {}) {
   const db = await getRuntimeDb(projectRoot);
   const rows = agentType

@@ -1732,16 +1732,25 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
       await cleanupCodexAuthFlow(projectRoot);
     }
     const pendingFlow = loggedIn ? null : getCodexAuthFlow(projectRoot);
+    const pendingUrl = pendingFlow?.url || '';
+    const pendingCode = pendingFlow?.code || '';
     return {
       ...authResult,
       output: [
         authResult.output,
         pendingFlow ? '브라우저 로그인: 진행 중' : '',
+        pendingCode ? `디바이스 코드: ${pendingCode}` : '',
         '인증 저장소: 이 머신의 로컬 Codex 로그인 상태를 그대로 사용합니다.',
       ].filter(Boolean).join('\n'),
       details: {
         ...(authResult.details || {}),
         pendingLogin: Boolean(pendingFlow),
+        requiresCode: Boolean(pendingFlow),
+        completionHint: pendingFlow
+          ? '브라우저에서 링크를 연 뒤 표시된 디바이스 코드를 입력하고 승인을 완료하세요.'
+          : '',
+        url: pendingUrl,
+        code: pendingCode,
         sharedLogin: true,
         authScope: 'local-user',
       },

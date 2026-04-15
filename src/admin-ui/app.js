@@ -1398,6 +1398,8 @@ function renderTokenView() {
   const daily = Array.isArray(tokenUsage.daily) ? tokenUsage.daily : [];
   const activeDaily = Array.isArray(tokenUsage.activeDaily) ? tokenUsage.activeDaily : [];
   const byAgentType = Array.isArray(tokenUsage.byAgentType) ? tokenUsage.byAgentType : [];
+  const byAgentName = Array.isArray(tokenUsage.byAgentName) ? tokenUsage.byAgentName : [];
+  const byModel = Array.isArray(tokenUsage.byModel) ? tokenUsage.byModel : [];
   const monthly = Array.isArray(tokenUsage.monthly) ? tokenUsage.monthly : [];
   const maxDailyTokens = Math.max(...daily.map((entry) => Number(entry.totalTokens || 0)), 1);
 
@@ -1467,6 +1469,22 @@ function renderTokenView() {
                 `
               : '<div class="field-hint">최근 3개월 기록이 없습니다.</div>'
           }
+        </section>
+      </div>
+      <div class="grid-two">
+        <section class="usage-summary-card">
+          <strong>에이전트별 합계</strong>
+          ${renderUsageBreakdownPanel(byAgentName, {
+            field: 'agentName',
+            emptyText: '최근 3개월 기록이 없습니다.',
+          })}
+        </section>
+        <section class="usage-summary-card">
+          <strong>모델별 합계</strong>
+          ${renderUsageBreakdownPanel(byModel, {
+            field: 'model',
+            emptyText: '최근 3개월 기록이 없습니다.',
+          })}
         </section>
       </div>
       <section class="usage-summary-card">
@@ -4079,6 +4097,82 @@ function mergeAiStatuses(currentStatuses, nextStatuses) {
 function formatTokenCount(value) {
   const numeric = Number(value || 0);
   return Number.isFinite(numeric) ? numeric.toLocaleString('ko-KR') : '0';
+}
+
+function formatUsageBreakdownLabel(value, field) {
+  const text = String(value || '').trim();
+  if (text) {
+    return text;
+  }
+  if (field === 'model') {
+    return '(기본값/미기록)';
+  }
+  if (field === 'agentName') {
+    return '(미지정 에이전트)';
+  }
+  return '(미기록)';
+}
+
+function renderUsageBreakdownPanel(entries, { field, emptyText = '기록이 없습니다.' } = {}) {
+  const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
+  if (!list.length) {
+    return `<div class="field-hint">${escapeHtml(emptyText)}</div>`;
+  }
+
+  const topEntries = list.slice(0, 8);
+  const tableEntries = list.slice(0, 12);
+  const maxTokens = Math.max(...topEntries.map((entry) => Number(entry.totalTokens || 0)), 1);
+
+  return `
+    <div class="usage-breakdown-panel">
+      <div class="usage-breakdown-bars">
+        ${topEntries
+          .map((entry) => {
+            const totalTokens = Number(entry.totalTokens || 0);
+            const width =
+              totalTokens > 0 ? Math.max(4, Math.round((totalTokens / maxTokens) * 100)) : 0;
+            const label = formatUsageBreakdownLabel(entry[field], field);
+            return `
+              <div class="usage-breakdown-bar-row">
+                <div class="usage-breakdown-label-row">
+                  <span class="usage-breakdown-label" title="${escapeAttr(label)}">${escapeHtml(label)}</span>
+                  <strong class="usage-breakdown-total">${escapeHtml(formatTokenCount(totalTokens))}</strong>
+                </div>
+                <div class="usage-breakdown-bar-track">
+                  <div class="usage-breakdown-bar" style="width:${width}%"></div>
+                </div>
+              </div>
+            `;
+          })
+          .join('')}
+      </div>
+      <div class="usage-breakdown-table">
+        <div class="usage-breakdown-table-head">
+          <span>${field === 'model' ? '모델' : '에이전트'}</span>
+          <span>기록</span>
+          <span>입력</span>
+          <span>출력</span>
+          <span>총합</span>
+        </div>
+        <div class="usage-breakdown-table-body">
+          ${tableEntries
+            .map((entry) => {
+              const label = formatUsageBreakdownLabel(entry[field], field);
+              return `
+                <div class="usage-breakdown-table-row">
+                  <span class="usage-breakdown-table-name" title="${escapeAttr(label)}">${escapeHtml(label)}</span>
+                  <span>${escapeHtml(formatTokenCount(entry.recordedEvents))}</span>
+                  <span>${escapeHtml(formatTokenCount(entry.inputTokens))}</span>
+                  <span>${escapeHtml(formatTokenCount(entry.outputTokens))}</span>
+                  <strong>${escapeHtml(formatTokenCount(entry.totalTokens))}</strong>
+                </div>
+              `;
+            })
+            .join('')}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function formatRelativeDateTime(value) {

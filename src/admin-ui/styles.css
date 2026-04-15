@@ -766,6 +766,79 @@ button:focus-visible {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.usage-breakdown-panel,
+.usage-breakdown-bars,
+.usage-breakdown-table,
+.usage-breakdown-table-body {
+  display: grid;
+  gap: 10px;
+}
+
+.usage-breakdown-bar-row {
+  display: grid;
+  gap: 6px;
+}
+
+.usage-breakdown-label-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.usage-breakdown-label,
+.usage-breakdown-table-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-breakdown-label {
+  font-weight: 600;
+}
+
+.usage-breakdown-total {
+  font-size: 0.84rem;
+}
+
+.usage-breakdown-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(21, 34, 44, 0.08);
+  overflow: hidden;
+}
+
+.usage-breakdown-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(43, 108, 176, 0.9), rgba(31, 78, 121, 0.95));
+  min-width: 0;
+}
+
+.usage-breakdown-table-head,
+.usage-breakdown-table-row {
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  grid-template-columns: minmax(0, 1.6fr) 70px 90px 90px 90px;
+}
+
+.usage-breakdown-table-head {
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+
+.usage-breakdown-table-row {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(21, 34, 44, 0.08);
+}
+
 .token-chart-row {
   grid-template-columns: 120px minmax(0, 1fr) 90px;
 }
@@ -943,11 +1016,14 @@ button:focus-visible {
 
   .token-chart-row,
   .token-table-head,
-  .token-table-row {
+  .token-table-row,
+  .usage-breakdown-table-head,
+  .usage-breakdown-table-row {
     grid-template-columns: 1fr;
   }
 
-  .token-table-head {
+  .token-table-head,
+  .usage-breakdown-table-head {
     display: none;
   }
 }

@@ -17,6 +17,7 @@ import {
   listPendingRuntimeOutboxEvents,
   listRecentRuntimeRuns,
   listRuntimeRoleSessions,
+  listRuntimeUsageBreakdown,
   listRuntimeUsageHistory,
   clearRuntimeRoleSessions,
 } from './runtime-db.js';
@@ -94,6 +95,16 @@ async function buildTokenUsageSnapshot(projectRoot, { windowDays = 90 } = {}) {
   const rows = await listRuntimeUsageHistory(projectRoot, {
     days: normalizedWindowDays,
   });
+  const [byAgentName, byModel] = await Promise.all([
+    listRuntimeUsageBreakdown(projectRoot, {
+      days: normalizedWindowDays,
+      field: 'agentName',
+    }),
+    listRuntimeUsageBreakdown(projectRoot, {
+      days: normalizedWindowDays,
+      field: 'model',
+    }),
+  ]);
 
   const dailyMap = new Map();
   const now = new Date();
@@ -146,6 +157,8 @@ async function buildTokenUsageSnapshot(projectRoot, { windowDays = 90 } = {}) {
         ...aggregate,
       }))
       .sort((left, right) => right.totalTokens - left.totalTokens),
+    byAgentName: byAgentName.sort((left, right) => right.totalTokens - left.totalTokens),
+    byModel: byModel.sort((left, right) => right.totalTokens - left.totalTokens),
     daily,
     activeDaily: activeDays.slice().reverse(),
     monthly: Array.from(monthlyMap.values()).sort((left, right) =>
