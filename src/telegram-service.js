@@ -24,7 +24,7 @@ const TELEGRAM_UPDATES_TIMEOUT_SECONDS = 2;
 
 export async function serveTelegram(projectRoot, { agentName = null } = {}) {
   const config = loadConfig(projectRoot);
-  let botConfigs = resolveTelegramBotConfigs(config, { agentName });
+  let agentConfigs = resolveTelegramAgentConfigs(config, { agentName });
   const persistServiceStatus = (value) =>
     agentName
       ? writeTelegramAgentServiceStatus(projectRoot, agentName, value)
@@ -34,7 +34,7 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
     agentName,
     running: false,
     heartbeatAt: timestamp(),
-    agents: buildTelegramAgentStatus(botConfigs),
+    agents: buildTelegramAgentStatus(agentConfigs),
   });
   persistServiceStatus(serviceStatus);
 
@@ -47,8 +47,8 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
   let pollingTask = Promise.resolve();
 
   try {
-    clients = await createTelegramClients(botConfigs);
-    hydrateTelegramAgentStatus(serviceStatus.agents, botConfigs, clients);
+    clients = await createTelegramClients(agentConfigs);
+    hydrateTelegramAgentStatus(serviceStatus.agents, agentConfigs, clients);
     serviceStatus.running = true;
     serviceStatus.startedAt = serviceStatus.startedAt || timestamp();
     serviceStatus.stoppedAt = null;
@@ -86,12 +86,12 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
         projectRoot,
         agentName,
         clients,
-        botConfigs,
+        agentConfigs,
         serviceStatus,
         persistServiceStatus,
       })
-        .then((nextBotConfigs) => {
-          botConfigs = nextBotConfigs;
+        .then((nextAgentConfigs) => {
+          agentConfigs = nextAgentConfigs;
         })
         .catch((error) => {
           serviceStatus.lastError = `Command processing failed: ${toErrorMessage(error)}`;
@@ -184,13 +184,13 @@ async function runTelegramPollingLoop({
   }
 }
 
-async function createTelegramClients(botConfigs) {
+async function createTelegramClients(agentConfigs) {
   const clients = {};
-  for (const [botName, bot] of Object.entries(botConfigs)) {
-    if (!bot?.token) {
+  for (const [agentName, agentConfig] of Object.entries(agentConfigs)) {
+    if (!agentConfig?.token) {
       continue;
     }
-    clients[botName] = await createTelegramClient(bot.token, bot.agent);
+    clients[agentName] = await createTelegramClient(agentConfig.token, agentConfig.agent);
   }
   return clients;
 }
@@ -348,7 +348,7 @@ async function processTelegramServiceCommands({
   projectRoot,
   agentName,
   clients,
-  botConfigs,
+  agentConfigs,
   serviceStatus,
   persistServiceStatus,
 }) {
@@ -356,10 +356,10 @@ async function processTelegramServiceCommands({
     agentName,
   });
   if (commands.length === 0) {
-    return botConfigs;
+    return agentConfigs;
   }
 
-  let nextBotConfigs = botConfigs;
+  let nextAgentConfigs = agentConfigs;
   for (const command of commands) {
     try {
       if (
@@ -367,11 +367,11 @@ async function processTelegramServiceCommands({
         command.action === 'reconnect-agent' ||
         command.action === 'reconnect-bot'
       ) {
-        nextBotConfigs = await reloadTelegramServiceConfig({
+        nextAgentConfigs = await reloadTelegramServiceConfig({
           projectRoot,
           agentName,
           clients,
-          botConfigs: nextBotConfigs,
+          agentConfigs: nextAgentConfigs,
           command,
           serviceStatus,
           persistServiceStatus,
@@ -382,35 +382,35 @@ async function processTelegramServiceCommands({
     }
   }
 
-  return nextBotConfigs;
+  return nextAgentConfigs;
 }
 
 async function reloadTelegramServiceConfig({
   projectRoot,
   agentName,
   clients,
-  botConfigs,
+  agentConfigs,
   command,
   serviceStatus,
   persistServiceStatus,
 }) {
   const config = loadConfig(projectRoot);
-  const nextBotConfigs = resolveTelegramBotConfigs(config, { agentName });
+  const nextAgentConfigs = resolveTelegramAgentConfigs(config, { agentName });
   const targetAgentName = String(command?.agentName || command?.botName || '').trim();
-  const nextBot = nextBotConfigs[targetAgentName];
+  const nextAgentConfig = nextAgentConfigs[targetAgentName];
 
-  if (nextBot?.token) {
-    clients[targetAgentName] = await createTelegramClient(nextBot.token, nextBot.agent);
+  if (nextAgentConfig?.token) {
+    clients[targetAgentName] = await createTelegramClient(nextAgentConfig.token, nextAgentConfig.agent);
   } else {
     delete clients[targetAgentName];
   }
 
-  serviceStatus.agents = buildTelegramAgentStatus(nextBotConfigs);
-  hydrateTelegramAgentStatus(serviceStatus.agents, nextBotConfigs, clients);
+  serviceStatus.agents = buildTelegramAgentStatus(nextAgentConfigs);
+  hydrateTelegramAgentStatus(serviceStatus.agents, nextAgentConfigs, clients);
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
   persistServiceStatus(serviceStatus);
-  return nextBotConfigs;
+  return nextAgentConfigs;
 }
 
 async function sendTelegramText(client, chatId, text, { threadId = null } = {}) {
@@ -621,7 +621,7 @@ async function waitForShutdown(onShutdown) {
   });
 }
 
-function resolveTelegramBotConfigs(config, { agentName = null } = {}) {
+function resolveTelegramAgentConfigs(config, { agentName = null } = {}) {
   if (agentName) {
     const agent = config?.agents?.[agentName];
     assert(agent, `Agent "${agentName}" does not exist.`);
@@ -652,13 +652,13 @@ function resolveTelegramBotConfigs(config, { agentName = null } = {}) {
   );
 }
 
-function buildTelegramAgentStatus(botConfigs) {
+function buildTelegramAgentStatus(agentConfigs) {
   return Object.fromEntries(
-    Object.entries(botConfigs).map(([botName, bot]) => [
-      botName,
+    Object.entries(agentConfigs).map(([agentName, agentConfig]) => [
+      agentName,
       {
-        agent: bot.agent || '',
-        tokenConfigured: Boolean(bot.token),
+        agent: agentConfig.agent || '',
+        tokenConfigured: Boolean(agentConfig.token),
         connected: false,
         username: '',
         userId: '',
@@ -667,12 +667,12 @@ function buildTelegramAgentStatus(botConfigs) {
   );
 }
 
-function hydrateTelegramAgentStatus(agents, botConfigs, clients) {
-  for (const [botName, bot] of Object.entries(botConfigs)) {
-    const client = clients[botName];
-    agents[botName] = {
-      agent: bot.agent || '',
-      tokenConfigured: Boolean(bot.token),
+function hydrateTelegramAgentStatus(agents, agentConfigs, clients) {
+  for (const [agentName, agentConfig] of Object.entries(agentConfigs)) {
+    const client = clients[agentName];
+    agents[agentName] = {
+      agent: agentConfig.agent || '',
+      tokenConfigured: Boolean(agentConfig.token),
       connected: Boolean(client?.me?.id),
       username: client?.me?.username || '',
       userId: client?.me?.id || '',

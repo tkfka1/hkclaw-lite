@@ -28,7 +28,7 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
   const { envFilePath } = loadProjectEnvFile(projectRoot, envFile);
   const config = loadConfig(projectRoot);
   const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
-  let botConfigs = resolveDiscordBotConfigs(config, process.env, {
+  let agentConfigs = resolveDiscordAgentConfigs(config, process.env, {
     requireReviewerAndArbiter: needsTribunalBots,
     agentName,
   });
@@ -41,7 +41,7 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
     running: false,
     envFilePath,
     heartbeatAt: timestamp(),
-    agents: buildDiscordAgentStatus(botConfigs),
+    agents: buildDiscordAgentStatus(agentConfigs),
   });
   persistServiceStatus(serviceStatus);
 
@@ -53,8 +53,8 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
 
   try {
     const Discord = await import('discord.js');
-    clients = await createDiscordClients(botConfigs, Discord);
-    hydrateDiscordAgentStatus(serviceStatus.agents, botConfigs, clients);
+    clients = await createDiscordClients(agentConfigs, Discord);
+    hydrateDiscordAgentStatus(serviceStatus.agents, agentConfigs, clients);
     serviceStatus.running = true;
     serviceStatus.startedAt = serviceStatus.startedAt || timestamp();
     serviceStatus.stoppedAt = null;
@@ -112,14 +112,14 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
         env: process.env,
         agentName,
         clients,
-        botConfigs,
+        agentConfigs,
         serviceStatus,
         persistServiceStatus,
         channelQueues,
         enqueueOutboxFlush,
       })
-        .then((nextBotConfigs) => {
-          botConfigs = nextBotConfigs;
+        .then((nextAgentConfigs) => {
+          agentConfigs = nextAgentConfigs;
         })
         .catch((error) => {
           serviceStatus.lastError = `Command processing failed: ${toErrorMessage(error)}`;
@@ -168,13 +168,13 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
   }
 }
 
-async function createDiscordClients(botConfigs, Discord) {
+async function createDiscordClients(agentConfigs, Discord) {
   const clients = {};
-  for (const [botName, bot] of Object.entries(botConfigs)) {
-    if (!bot?.token) {
+  for (const [agentName, agentConfig] of Object.entries(agentConfigs)) {
+    if (!agentConfig?.token) {
       continue;
     }
-    clients[botName] = await createDiscordClient(bot.token, Discord);
+    clients[agentName] = await createDiscordClient(agentConfig.token, Discord);
   }
   return clients;
 }
@@ -294,7 +294,7 @@ async function processDiscordServiceCommands({
   env,
   agentName,
   clients,
-  botConfigs,
+  agentConfigs,
   serviceStatus,
   persistServiceStatus,
   channelQueues,
@@ -304,20 +304,20 @@ async function processDiscordServiceCommands({
     agentName,
   });
   if (commands.length === 0) {
-    return botConfigs;
+    return agentConfigs;
   }
 
-  let nextBotConfigs = botConfigs;
+  let nextAgentConfigs = agentConfigs;
   for (const command of commands) {
     try {
       if (command.action === 'reload-config') {
-        nextBotConfigs = await reloadDiscordServiceConfig({
+        nextAgentConfigs = await reloadDiscordServiceConfig({
           projectRoot,
           Discord,
           env,
           agentName,
           clients,
-          botConfigs: nextBotConfigs,
+          agentConfigs: nextAgentConfigs,
           serviceStatus,
           persistServiceStatus,
           channelQueues,
@@ -327,13 +327,13 @@ async function processDiscordServiceCommands({
         command.action === 'reconnect-agent' ||
         command.action === 'reconnect-bot'
       ) {
-        nextBotConfigs = await reconnectDiscordBot({
+        nextAgentConfigs = await reconnectDiscordAgent({
           projectRoot,
           Discord,
           env,
           agentName,
           clients,
-          botConfigs: nextBotConfigs,
+          agentConfigs: nextAgentConfigs,
           targetAgentName: command.agentName || command.botName,
           serviceStatus,
           persistServiceStatus,
@@ -345,7 +345,7 @@ async function processDiscordServiceCommands({
       deleteDiscordServiceCommand(command);
     }
   }
-  return nextBotConfigs;
+  return nextAgentConfigs;
 }
 
 async function reloadDiscordServiceConfig({
@@ -354,7 +354,7 @@ async function reloadDiscordServiceConfig({
   env,
   agentName,
   clients,
-  botConfigs,
+  agentConfigs,
   serviceStatus,
   persistServiceStatus,
   channelQueues,
@@ -362,65 +362,65 @@ async function reloadDiscordServiceConfig({
 }) {
   const config = loadConfig(projectRoot);
   const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
-  const nextBotConfigs = resolveDiscordBotConfigs(config, env, {
+  const nextAgentConfigs = resolveDiscordAgentConfigs(config, env, {
     requireReviewerAndArbiter: needsTribunalBots,
     agentName,
   });
-  if (buildDiscordBotConfigSignature(nextBotConfigs) === buildDiscordBotConfigSignature(botConfigs)) {
-    return botConfigs;
+  if (buildDiscordAgentConfigSignature(nextAgentConfigs) === buildDiscordAgentConfigSignature(agentConfigs)) {
+    return agentConfigs;
   }
 
   const nextClients = {};
-  for (const [botName, bot] of Object.entries(nextBotConfigs)) {
-    const previous = botConfigs[botName];
-    if (clients[botName] && previous && previous.token === bot.token) {
-      nextClients[botName] = clients[botName];
+  for (const [nextAgentName, agentConfig] of Object.entries(nextAgentConfigs)) {
+    const previous = agentConfigs[nextAgentName];
+    if (clients[nextAgentName] && previous && previous.token === agentConfig.token) {
+      nextClients[nextAgentName] = clients[nextAgentName];
       continue;
     }
-    if (!bot.token) {
+    if (!agentConfig.token) {
       continue;
     }
-    const client = await createDiscordClient(bot.token, Discord);
+    const client = await createDiscordClient(agentConfig.token, Discord);
     attachDiscordClientMessageHandler({
       projectRoot,
       clients,
-      botName,
+      botName: nextAgentName,
       client,
       channelQueues,
       enqueueOutboxFlush,
       workerAgentName: agentName,
     });
-    nextClients[botName] = client;
+    nextClients[nextAgentName] = client;
   }
 
-  for (const [botName, client] of Object.entries(clients)) {
-    if (nextClients[botName] === client) {
+  for (const [existingAgentName, client] of Object.entries(clients)) {
+    if (nextClients[existingAgentName] === client) {
       continue;
     }
     client.destroy();
   }
 
-  for (const botName of Object.keys(clients)) {
-    delete clients[botName];
+  for (const existingAgentName of Object.keys(clients)) {
+    delete clients[existingAgentName];
   }
   Object.assign(clients, nextClients);
 
-  serviceStatus.agents = buildDiscordAgentStatus(nextBotConfigs);
-  hydrateDiscordAgentStatus(serviceStatus.agents, nextBotConfigs, clients);
+  serviceStatus.agents = buildDiscordAgentStatus(nextAgentConfigs);
+  hydrateDiscordAgentStatus(serviceStatus.agents, nextAgentConfigs, clients);
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
   persistServiceStatus(serviceStatus);
   console.log('Discord service reloaded agent configuration.');
-  return nextBotConfigs;
+  return nextAgentConfigs;
 }
 
-async function reconnectDiscordBot({
+async function reconnectDiscordAgent({
   projectRoot,
   Discord,
   env,
   agentName,
   clients,
-  botConfigs,
+  agentConfigs,
   targetAgentName,
   serviceStatus,
   persistServiceStatus,
@@ -430,16 +430,16 @@ async function reconnectDiscordBot({
   assert(targetAgentName, 'Agent name is required.');
   const config = loadConfig(projectRoot);
   const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
-  const nextBotConfigs = resolveDiscordBotConfigs(config, env, {
+  const nextAgentConfigs = resolveDiscordAgentConfigs(config, env, {
     requireReviewerAndArbiter: needsTribunalBots,
     agentName,
   });
-  const nextBot = nextBotConfigs[targetAgentName] || null;
+  const nextAgentConfig = nextAgentConfigs[targetAgentName] || null;
   const existingClient = clients[targetAgentName] || null;
   let nextClient = null;
 
-  if (nextBot?.token) {
-    nextClient = await createDiscordClient(nextBot.token, Discord);
+  if (nextAgentConfig?.token) {
+    nextClient = await createDiscordClient(nextAgentConfig.token, Discord);
     attachDiscordClientMessageHandler({
       projectRoot,
       clients,
@@ -461,13 +461,13 @@ async function reconnectDiscordBot({
     delete clients[targetAgentName];
   }
 
-  serviceStatus.agents = buildDiscordAgentStatus(nextBotConfigs);
-  hydrateDiscordAgentStatus(serviceStatus.agents, nextBotConfigs, clients);
+  serviceStatus.agents = buildDiscordAgentStatus(nextAgentConfigs);
+  hydrateDiscordAgentStatus(serviceStatus.agents, nextAgentConfigs, clients);
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
   persistServiceStatus(serviceStatus);
   console.log(`Discord service reconnected agent "${targetAgentName}".`);
-  return nextBotConfigs;
+  return nextAgentConfigs;
 }
 
 async function sendDiscordText(client, channelId, text) {
@@ -684,7 +684,7 @@ async function waitForShutdown(onShutdown) {
   });
 }
 
-function resolveDiscordBotConfigs(
+function resolveDiscordAgentConfigs(
   config,
   env,
   { requireReviewerAndArbiter = false, agentName = null } = {},
@@ -735,25 +735,25 @@ function resolveDiscordBotConfigs(
   );
 }
 
-function buildDiscordBotConfigSignature(botConfigs) {
+function buildDiscordAgentConfigSignature(agentConfigs) {
   return JSON.stringify(
-    Object.entries(botConfigs)
+    Object.entries(agentConfigs)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([name, bot]) => ({
+      .map(([name, agentConfig]) => ({
         name,
-        agent: bot?.agent || '',
-        token: bot?.token || '',
+        agent: agentConfig?.agent || '',
+        token: agentConfig?.token || '',
       })),
   );
 }
 
-function buildDiscordAgentStatus(botConfigs) {
+function buildDiscordAgentStatus(agentConfigs) {
   return Object.fromEntries(
-    Object.entries(botConfigs).map(([botName, bot]) => [
-      botName,
+    Object.entries(agentConfigs).map(([agentName, agentConfig]) => [
+      agentName,
       {
-        agent: bot.agent || '',
-        tokenConfigured: Boolean(bot.token),
+        agent: agentConfig.agent || '',
+        tokenConfigured: Boolean(agentConfig.token),
         connected: false,
         tag: '',
         userId: '',
@@ -762,12 +762,12 @@ function buildDiscordAgentStatus(botConfigs) {
   );
 }
 
-function hydrateDiscordAgentStatus(agents, botConfigs, clients) {
-  for (const [botName, bot] of Object.entries(botConfigs)) {
-    const client = clients[botName];
-    agents[botName] = {
-      agent: bot.agent || '',
-      tokenConfigured: Boolean(bot.token),
+function hydrateDiscordAgentStatus(agents, agentConfigs, clients) {
+  for (const [agentName, agentConfig] of Object.entries(agentConfigs)) {
+    const client = clients[agentName];
+    agents[agentName] = {
+      agent: agentConfig.agent || '',
+      tokenConfigured: Boolean(agentConfig.token),
       connected: Boolean(client?.user),
       tag: client?.user?.tag || '',
       userId: client?.user?.id || '',
