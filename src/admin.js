@@ -9,7 +9,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   buildAdminSnapshot,
   deleteAgentByName,
-  deleteBotByName,
   deleteChannelByName,
   deleteDashboardByName,
   readWatcherLog,
@@ -17,7 +16,6 @@ import {
   replaceSharedEnv,
   resetChannelRuntimeSessionsByName,
   upsertAgent,
-  upsertBot,
   upsertChannel,
   upsertDashboard,
 } from './admin-state.js';
@@ -287,28 +285,6 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     return;
   }
 
-  if (request.method === 'POST' && pathname === '/api/bots') {
-    const payload = await readJsonBody(request);
-    writeJson(response, 200, {
-      ok: true,
-      state: await upsertBot(
-        projectRoot,
-        payload.currentName || null,
-        payload.definition || payload,
-      ),
-    });
-    return;
-  }
-
-  if (request.method === 'DELETE' && pathname.startsWith('/api/bots/')) {
-    const name = decodeEntityPath(pathname, '/api/bots/');
-    writeJson(response, 200, {
-      ok: true,
-      state: await deleteBotByName(projectRoot, name),
-    });
-    return;
-  }
-
   if (request.method === 'POST' && pathname === '/api/discord-service/reload') {
     writeJson(response, 200, {
       ok: true,
@@ -443,24 +419,6 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
               action: 'reconnect-bot',
               agentName: name,
             }),
-    });
-    return;
-  }
-
-  if (
-    request.method === 'POST' &&
-    pathname.startsWith('/api/bots/') &&
-    pathname.endsWith('/reconnect')
-  ) {
-    const name = decodeEntityPath(pathname.slice(0, -'/reconnect'.length), '/api/bots/');
-    const config = loadConfig(projectRoot);
-    const bot = config.bots?.[name];
-    writeJson(response, 200, {
-      ok: true,
-      result: await queueDiscordServiceAction(projectRoot, {
-        action: 'reconnect-bot',
-        agentName: bot?.agent || name,
-      }),
     });
     return;
   }

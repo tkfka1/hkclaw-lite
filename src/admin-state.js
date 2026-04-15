@@ -28,23 +28,19 @@ import {
 } from './runtime-db.js';
 import {
   buildAgentDefinition,
-  buildBotDefinition,
   buildChannelDefinition,
   buildDashboardDefinition,
   buildLocalLlmConnectionDefinition,
   getDefaultChannelWorkspace,
   getAgent,
-  getBot,
   getChannel,
   getDashboard,
   listAgents,
-  listBots,
   listChannels,
   listDashboards,
   listLocalLlmConnections,
   loadConfig,
   removeAgent,
-  removeBot,
   removeChannel,
   removeDashboard,
   saveConfig,
@@ -56,7 +52,6 @@ export async function buildAdminSnapshot(projectRoot) {
   const channels = listChannels(config);
   const dashboards = listDashboards(config);
   const agents = buildAgentSummaries(projectRoot, config, channels);
-  const bots = buildBotSummaries(config, channels);
   const discord = buildDiscordStatus(projectRoot, config, channels);
   const telegram = buildTelegramStatus(projectRoot, config, channels);
   const tokenUsage = await buildTokenUsageSnapshot(projectRoot);
@@ -78,7 +73,6 @@ export async function buildAdminSnapshot(projectRoot) {
     sharedEnv: config.sharedEnv || {},
     localLlmConnections: listLocalLlmConnections(config),
     agents,
-    bots,
     channels: runtime.channels,
     dashboards,
     discord,
@@ -276,82 +270,23 @@ export async function deleteAgentByName(projectRoot, name) {
   const blockingAgents = listAgents(config)
     .filter((agent) => agent.fallbackAgent === name)
     .map((agent) => agent.name);
-  const blockingBots = listBots(config)
-    .filter((bot) => bot.agent === name)
-    .map((bot) => bot.name);
 
   assert(
     blockingDashboards.length === 0 &&
       blockingChannels.length === 0 &&
-      blockingAgents.length === 0 &&
-      blockingBots.length === 0,
+      blockingAgents.length === 0,
     `Agent "${name}" is referenced by ${[
       blockingDashboards.length > 0
         ? `dashboards: ${blockingDashboards.join(', ')}`
         : null,
       blockingChannels.length > 0 ? `channels: ${blockingChannels.join(', ')}` : null,
       blockingAgents.length > 0 ? `fallback agents: ${blockingAgents.join(', ')}` : null,
-      blockingBots.length > 0 ? `bots: ${blockingBots.join(', ')}` : null,
     ]
       .filter(Boolean)
       .join(' | ')}.`,
   );
 
   removeAgent(config, name);
-  saveConfig(projectRoot, config);
-  return await buildAdminSnapshot(projectRoot);
-}
-
-export async function upsertBot(projectRoot, currentName, input) {
-  const config = loadConfig(projectRoot);
-  const existing = currentName ? getBot(config, currentName) : null;
-  const nextName = String(input?.name || '').trim();
-
-  assert(nextName, 'Bot name is required.');
-
-  if (currentName) {
-    if (nextName !== currentName) {
-      assert(!config.bots[nextName], `Bot "${nextName}" already exists.`);
-      renameBotReferences(config, currentName, nextName);
-      delete config.bots[currentName];
-    }
-  } else {
-    assert(!config.bots[nextName], `Bot "${nextName}" already exists.`);
-  }
-
-  const previousAgentName = existing?.agent || null;
-  config.bots[nextName] = buildBotDefinition(
-    config,
-    nextName,
-    input,
-    config.bots[nextName] || existing || {},
-  );
-  if (previousAgentName !== config.bots[nextName].agent) {
-    syncChannelAgentsForBot(config, nextName);
-  }
-  saveConfig(projectRoot, config);
-  return await buildAdminSnapshot(projectRoot);
-}
-
-export async function deleteBotByName(projectRoot, name) {
-  const config = loadConfig(projectRoot);
-  getBot(config, name);
-
-  const blockingChannels = listChannels(config)
-    .filter(
-      (channel) =>
-        channel.bot === name ||
-        channel.reviewerBot === name ||
-        channel.arbiterBot === name,
-    )
-    .map((channel) => channel.name);
-
-  assert(
-    blockingChannels.length === 0,
-    `Bot "${name}" is referenced by channels: ${blockingChannels.join(', ')}.`,
-  );
-
-  removeBot(config, name);
   saveConfig(projectRoot, config);
   return await buildAdminSnapshot(projectRoot);
 }
@@ -513,40 +448,12 @@ function buildAgentSummaries(projectRoot, config, channels) {
   });
 }
 
-function buildBotSummaries(config, channels) {
-  const channelsByBot = buildChannelsByBot(channels);
-  return listBots(config).map((bot) => {
-    const mappedChannels = channelsByBot[bot.name] || [];
-    return {
-      ...bot,
-      discordTokenConfigured: Boolean(bot.discordToken),
-      mappedChannels: mappedChannels.map((channel) => ({
-        name: channel.name,
-        role: resolveBotRole(channel, bot.name),
-        workspace: channel.workspace,
-      })),
-      mappedChannelNames: unique(mappedChannels.map((channel) => channel.name)),
-    };
-  });
-}
-
 function buildChannelsByAgent(channels) {
   const output = {};
   for (const channel of channels) {
     for (const agentName of [channel.agent, channel.reviewer, channel.arbiter].filter(Boolean)) {
       output[agentName] = output[agentName] || [];
       output[agentName].push(channel);
-    }
-  }
-  return output;
-}
-
-function buildChannelsByBot(channels) {
-  const output = {};
-  for (const channel of channels) {
-    for (const botName of [channel.bot, channel.reviewerBot, channel.arbiterBot].filter(Boolean)) {
-      output[botName] = output[botName] || [];
-      output[botName].push(channel);
     }
   }
   return output;
@@ -560,19 +467,6 @@ function resolveAgentRole(channel, agentName) {
     return 'reviewer';
   }
   if (channel.arbiter === agentName) {
-    return 'arbiter';
-  }
-  return 'member';
-}
-
-function resolveBotRole(channel, botName) {
-  if (channel.bot === botName) {
-    return 'owner';
-  }
-  if (channel.reviewerBot === botName) {
-    return 'reviewer';
-  }
-  if (channel.arbiterBot === botName) {
     return 'arbiter';
   }
   return 'member';
@@ -682,38 +576,6 @@ function renameAgentReferences(config, currentName, nextName) {
   for (const bot of Object.values(config.bots || {})) {
     if (bot.agent === currentName) {
       bot.agent = nextName;
-    }
-  }
-}
-
-function renameBotReferences(config, currentName, nextName) {
-  for (const channel of Object.values(config.channels)) {
-    if (channel.bot === currentName) {
-      channel.bot = nextName;
-    }
-    if (channel.reviewerBot === currentName) {
-      channel.reviewerBot = nextName;
-    }
-    if (channel.arbiterBot === currentName) {
-      channel.arbiterBot = nextName;
-    }
-  }
-}
-
-function syncChannelAgentsForBot(config, botName) {
-  const bot = config.bots?.[botName];
-  if (!bot) {
-    return;
-  }
-  for (const channel of Object.values(config.channels)) {
-    if (channel.bot === botName) {
-      channel.agent = bot.agent;
-    }
-    if (channel.reviewerBot === botName) {
-      channel.reviewer = bot.agent;
-    }
-    if (channel.arbiterBot === botName) {
-      channel.arbiter = bot.agent;
     }
   }
 }

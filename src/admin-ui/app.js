@@ -19,11 +19,9 @@ const state = {
   },
   activeView: 'home',
   agentModalOpen: false,
-  botModalOpen: false,
   channelModalOpen: false,
   localLlmModalOpen: false,
   adminPasswordModalOpen: false,
-  botDraft: null,
   channelDraft: null,
   localLlmDraft: null,
   agentWizard: null,
@@ -236,26 +234,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'open-bot-modal') {
-    state.botModalOpen = true;
-    state.botDraft = createBlankBot();
-    render();
-    return;
-  }
-
-  if (action === 'edit-bot') {
-    const bot = state.data?.bots?.find((entry) => entry.name === button.dataset.name);
-    if (!bot) {
-      setNotice('error', '봇을 찾지 못했습니다.');
-      render();
-      return;
-    }
-    state.botModalOpen = true;
-    state.botDraft = createBotDraft(bot);
-    render();
-    return;
-  }
-
   if (action === 'reload-discord-service') {
     void reloadDiscordServiceConfig();
     return;
@@ -331,11 +309,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'reconnect-bot') {
-    void reconnectDiscordBot(button.dataset.name);
-    return;
-  }
-
   if (action === 'ai-auth-status') {
     void runAiManagerAction('status');
     render();
@@ -399,13 +372,6 @@ function handleClick(event) {
   if (action === 'close-agent-modal') {
     state.agentModalOpen = false;
     state.agentWizard = null;
-    render();
-    return;
-  }
-
-  if (action === 'close-bot-modal') {
-    state.botModalOpen = false;
-    state.botDraft = null;
     render();
     return;
   }
@@ -697,11 +663,6 @@ async function handleSubmit(event) {
       return;
     }
 
-    if (kind === 'bot') {
-      await saveBot(form);
-      return;
-    }
-
     if (kind === 'local-llm-connection') {
       await saveLocalLlmConnection(form);
       return;
@@ -859,31 +820,6 @@ async function saveChannel(form) {
   render();
 }
 
-async function saveBot(form) {
-  const values = new FormData(form);
-  const currentName = optionalText(values, 'currentName');
-  const definition = {
-    name: requiredText(values, 'name'),
-    agent: requiredText(values, 'agent'),
-    discordToken: requiredText(values, 'discordToken'),
-    description: optionalText(values, 'description'),
-  };
-
-  const response = await mutateJson('/api/bots', {
-    method: 'POST',
-    body: {
-      currentName,
-      definition,
-    },
-  });
-
-  state.data = response.state;
-  state.botModalOpen = false;
-  state.botDraft = null;
-  setNotice('info', `봇 "${definition.name}"을(를) ${currentName ? '수정' : '추가'}했습니다. 실행 중인 Discord 연결 반영은 수동 재연결로 처리합니다.`);
-  render();
-}
-
 async function saveLocalLlmConnection(form) {
   const values = new FormData(form);
   const draft = {
@@ -931,9 +867,7 @@ async function deleteEntity(kind, name) {
     state.data = response.state;
     setNotice(
       'info',
-      kind === 'bot'
-        ? `봇 "${name}"을(를) 삭제했습니다. 실행 중인 Discord 연결 정리는 전체 다시 읽기 때 반영됩니다.`
-        : `${localizeKind(kind)} "${name}"을(를) 삭제했습니다.`,
+      `${localizeKind(kind)} "${name}"을(를) 삭제했습니다.`,
     );
     render();
   } catch (error) {
@@ -1046,23 +980,6 @@ async function stopTelegramService() {
       method: 'POST',
     });
     setNotice('info', 'Telegram 서비스를 중지하고 있습니다.');
-    render();
-    void refreshStateAfterServiceCommand();
-  } catch (error) {
-    setNotice('error', localizeErrorMessage(error.message));
-    render();
-  }
-}
-
-async function reconnectDiscordBot(name) {
-  if (!name) {
-    return;
-  }
-  try {
-    await mutateJson(`/api/bots/${encodeURIComponent(name)}/reconnect`, {
-      method: 'POST',
-    });
-    setNotice('info', `봇 "${name}" 연결을 다시 시도합니다.`);
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1349,7 +1266,6 @@ function render() {
     ${renderTopBar()}
     ${renderActiveView()}
     ${state.agentModalOpen ? renderAgentModal() : ''}
-    ${state.botModalOpen ? renderBotModal() : ''}
     ${state.channelModalOpen ? renderChannelModal() : ''}
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
@@ -2516,46 +2432,6 @@ function renderChannelModal() {
   `;
 }
 
-function renderBotModal() {
-  const current = state.botDraft || createBlankBot();
-  const isEditing = Boolean(optionalDraftText(current.currentName));
-  return `
-    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="봇 ${isEditing ? '수정' : '추가'}">
-      <div class="modal-backdrop" data-action="close-bot-modal"></div>
-      <div class="panel modal-card">
-        <div class="section-head">
-          <h2>봇 ${isEditing ? '수정' : '추가'}</h2>
-          <button type="button" class="btn-secondary" data-action="close-bot-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
-        </div>
-        <form data-form="bot" class="form">
-          <input type="hidden" name="currentName" value="${escapeAttr(current.currentName || '')}" />
-          <div class="form-grid">
-            <div class="field">
-              <label for="bot-name">이름</label>
-              <input id="bot-name" name="name" value="${escapeAttr(current.name)}" />
-            </div>
-            <div class="field">
-              <label for="bot-agent">에이전트</label>
-              <select id="bot-agent" name="agent">${renderNameOptions(state.data.agents.map((entry) => entry.name), current.agent)}</select>
-            </div>
-            <div class="field field-full">
-              <label for="bot-discord-token">Discord 토큰</label>
-              <input id="bot-discord-token" name="discordToken" value="${escapeAttr(current.discordToken)}" />
-            </div>
-            <div class="field field-full">
-              <label for="bot-description">설명</label>
-              <textarea id="bot-description" name="description">${escapeHtml(current.description)}</textarea>
-            </div>
-          </div>
-          <div class="actions">
-            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${isEditing ? '저장' : '추가'}</button>
-          </div>
-        </form>
-      </div>
-    </section>
-  `;
-}
-
 function renderLocalLlmConnectionEditor() {
   const current = state.localLlmDraft || createLocalLlmConnectionDraft();
   const isEditing = Boolean(optionalDraftText(current.currentName));
@@ -3005,16 +2881,6 @@ function createAgentDraft(agent) {
     localLlmConnection: optionalDraftText(agent?.localLlmConnection) || getDefaultLocalLlmConnectionName(),
     baseUrl: optionalDraftText(agent?.baseUrl),
     command: agent?.command || '',
-  };
-}
-
-function createBotDraft(bot) {
-  return {
-    currentName: bot?.name || '',
-    name: bot?.name || '',
-    agent: bot?.agent || state.data?.agents?.[0]?.name || '',
-    discordToken: bot?.discordToken || '',
-    description: bot?.description || '',
   };
 }
 
@@ -3881,15 +3747,6 @@ function getDefaultChannelWorkspace() {
   return state.data?.defaults?.channelWorkspace || DEFAULT_CHANNEL_WORKSPACE;
 }
 
-function createBlankBot() {
-  return {
-    name: '',
-    agent: state.data.agents[0]?.name || '',
-    discordToken: '',
-    description: '',
-  };
-}
-
 function parseListText(rawValue) {
   return String(rawValue || '')
     .split(/[\n,]+/u)
@@ -4188,9 +4045,6 @@ function renderNameOptions(names, selectedValue, allowEmpty = false) {
 function localizeKind(kind) {
   if (kind === 'agent') {
     return '에이전트';
-  }
-  if (kind === 'bot') {
-    return '봇';
   }
   if (kind === 'channel') {
     return '채널';
