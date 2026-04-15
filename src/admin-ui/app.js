@@ -441,11 +441,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'delete-bot') {
-    void deleteEntity('bot', button.dataset.name);
-    return;
-  }
-
   if (action === 'delete-channel') {
     void deleteEntity('channel', button.dataset.name);
     return;
@@ -881,7 +876,7 @@ async function reloadDiscordServiceConfig() {
     await mutateJson('/api/discord-service/reload', {
       method: 'POST',
     });
-    setNotice('info', 'Discord 서비스가 최신 봇 설정을 다시 읽고 있습니다.');
+    setNotice('info', 'Discord 서비스가 최신 에이전트 연결 설정을 다시 읽고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -895,7 +890,7 @@ async function reloadTelegramServiceConfig() {
     await mutateJson('/api/telegram-service/reload', {
       method: 'POST',
     });
-    setNotice('info', 'Telegram 서비스가 최신 봇 설정을 다시 읽고 있습니다.');
+    setNotice('info', 'Telegram 서비스가 최신 에이전트 연결 설정을 다시 읽고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1647,8 +1642,8 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
     return '<div class="empty-inline">에이전트가 없습니다.</div>';
   }
 
-  const serviceBots = discordService?.bots || {};
-  const telegramBots = telegramService?.bots || {};
+  const serviceAgents = discordService?.agents || discordService?.bots || {};
+  const telegramAgents = telegramService?.agents || telegramService?.bots || {};
   return `
     <div class="card-list">
       ${agents
@@ -1657,8 +1652,8 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
             const platform = agent.platform || 'discord';
             const isDiscordPlatform = platform === 'discord';
             const platformLabel = localizeMessagingPlatform(platform);
-            const runtimeBot = serviceBots[agent.name] || {};
-            const telegramRuntime = telegramBots[agent.name] || {};
+            const runtimeAgent = serviceAgents[agent.name] || {};
+            const telegramRuntime = telegramAgents[agent.name] || {};
             const agentService = isDiscordPlatform ? (agent.discordService || null) : (agent.telegramService || null);
             const agentServiceLabel = agentService?.label || '중지';
             const agentServiceRunning = Boolean(agentService?.running);
@@ -1667,8 +1662,8 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
               ? agent.discordTokenConfigured
               : agent.telegramBotTokenConfigured;
             const connectionSummary = isDiscordPlatform
-              ? runtimeBot.connected
-                ? `연결됨${runtimeBot.tag ? ` · ${runtimeBot.tag}` : ''}`
+              ? runtimeAgent.connected
+                ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
                 : agentServiceRunning
                   ? '연결 안 됨'
                   : agentServiceStale
@@ -4334,9 +4329,6 @@ function localizeFieldName(key) {
     platform: '플랫폼',
     mode: '채널 모드',
     agent: '에이전트',
-    bot: '봇',
-    reviewerBot: 'reviewer 봇',
-    arbiterBot: 'arbiter 봇',
     discordToken: 'Discord 토큰',
     telegramBotToken: 'Telegram 봇 토큰',
     model: '모델',
@@ -4366,19 +4358,9 @@ function localizeErrorMessage(message) {
     return `에이전트 "${referencedMatch[1]}"이(가) 다른 항목에서 사용 중입니다.`;
   }
 
-  const botReferencedMatch = text.match(/^Bot "(.+)" is referenced by channels: (.+)\.$/u);
-  if (botReferencedMatch) {
-    return `봇 "${botReferencedMatch[1]}"이(가) 채널에서 사용 중입니다.`;
-  }
-
   const unknownAgentMatch = text.match(/^Channel references unknown agent "(.+)"\.$/u);
   if (unknownAgentMatch) {
     return `없는 에이전트입니다: "${unknownAgentMatch[1]}".`;
-  }
-
-  const unknownBotMatch = text.match(/^Channel references unknown bot "(.+)"\.$/u);
-  if (unknownBotMatch) {
-    return `없는 봇입니다: "${unknownBotMatch[1]}".`;
   }
 
   if (text === 'Password is required.') {
@@ -4441,15 +4423,6 @@ function localizeErrorMessage(message) {
   if (text === 'Arbiter must be different from the reviewer agent.') {
     return '중재 에이전트는 검토 에이전트와 달라야 합니다.';
   }
-  if (text === 'Reviewer bot must be different from the owner bot.') {
-    return 'reviewer 봇은 owner 봇과 달라야 합니다.';
-  }
-  if (text === 'Arbiter bot must be different from the owner bot.') {
-    return 'arbiter 봇은 owner 봇과 달라야 합니다.';
-  }
-  if (text === 'Arbiter bot must be different from the reviewer bot.') {
-    return 'arbiter 봇은 reviewer 봇과 달라야 합니다.';
-  }
   if (text === 'Tribunal channel requires a reviewer.') {
     return '검토 에이전트가 필요합니다.';
   }
@@ -4461,12 +4434,6 @@ function localizeErrorMessage(message) {
   }
   if (text === 'Single channel cannot define an arbiter.') {
     return '단일 채널에서는 중재 에이전트를 지정할 수 없습니다.';
-  }
-  if (text === 'Single channel cannot define a reviewer bot.') {
-    return '단일 채널에서는 reviewer 봇을 지정할 수 없습니다.';
-  }
-  if (text === 'Single channel cannot define an arbiter bot.') {
-    return '단일 채널에서는 arbiter 봇을 지정할 수 없습니다.';
   }
   if (text === 'reviewRounds must be a positive integer.') {
     return '검토 회차는 1 이상의 정수여야 합니다.';

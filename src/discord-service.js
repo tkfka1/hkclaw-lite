@@ -8,7 +8,7 @@ import {
   listDiscordServiceCommands,
   loadProjectEnvFile,
   writeDiscordAgentServiceStatus,
-  resolveChannelBotNames,
+  resolveChannelRoleAgentNames,
   resolveDiscordRoleTokens,
   writeDiscordServiceStatus,
 } from './discord-runtime-state.js';
@@ -41,7 +41,7 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
     running: false,
     envFilePath,
     heartbeatAt: timestamp(),
-    bots: buildDiscordBotStatus(botConfigs),
+    agents: buildDiscordAgentStatus(botConfigs),
   });
   persistServiceStatus(serviceStatus);
 
@@ -54,7 +54,7 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
   try {
     const Discord = await import('discord.js');
     clients = await createDiscordClients(botConfigs, Discord);
-    hydrateDiscordBotStatus(serviceStatus.bots, botConfigs, clients);
+    hydrateDiscordAgentStatus(serviceStatus.agents, botConfigs, clients);
     serviceStatus.running = true;
     serviceStatus.startedAt = serviceStatus.startedAt || timestamp();
     serviceStatus.stoppedAt = null;
@@ -78,13 +78,13 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
 
     await enqueueOutboxFlush(() =>
       flushPendingDiscordOutbox(projectRoot, clients, {
-        botName: agentName,
+        agentName,
       }),
     );
     outboxTimer = setInterval(() => {
       void enqueueOutboxFlush(() =>
         flushPendingDiscordOutbox(projectRoot, clients, {
-          botName: agentName,
+          agentName,
         }),
       ).catch((error) => {
         console.error(`Discord outbox flush error: ${toErrorMessage(error)}`);
@@ -101,7 +101,7 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
         client,
         channelQueues,
         enqueueOutboxFlush,
-        workerBotName: agentName,
+        workerAgentName: agentName,
       });
     }
 
@@ -199,8 +199,8 @@ async function createDiscordClient(token, Discord) {
 async function handleInboundMessage({
   projectRoot,
   clients,
-  botName,
-  workerBotName,
+  inboundAgentName,
+  workerAgentName,
   message,
   enqueueOutboxFlush,
 }) {
@@ -220,7 +220,7 @@ async function handleInboundMessage({
   if (!channel) {
     return;
   }
-  if (resolveChannelInboundBotName(channel) !== botName) {
+  if (resolveChannelInboundAgentName(channel) !== inboundAgentName) {
     return;
   }
 
@@ -255,7 +255,7 @@ async function handleInboundMessage({
   if (runId) {
     await enqueueOutboxFlush(() =>
       flushDiscordOutboxForRun(projectRoot, clients, channel, runId, message.channelId, {
-        botName: workerBotName,
+        agentName: workerAgentName,
       }),
     );
   }
@@ -265,7 +265,7 @@ function attachDiscordClientMessageHandler({
   projectRoot,
   clients,
   botName,
-  workerBotName,
+  workerAgentName,
   client,
   channelQueues,
   enqueueOutboxFlush,
@@ -275,8 +275,8 @@ function attachDiscordClientMessageHandler({
       await handleInboundMessage({
         projectRoot,
         clients,
-        botName,
-        workerBotName,
+        inboundAgentName: botName,
+        workerAgentName,
         message,
         enqueueOutboxFlush,
       });
@@ -334,7 +334,7 @@ async function processDiscordServiceCommands({
           agentName,
           clients,
           botConfigs: nextBotConfigs,
-          botName: command.botName,
+          targetAgentName: command.agentName || command.botName,
           serviceStatus,
           persistServiceStatus,
           channelQueues,
@@ -388,7 +388,7 @@ async function reloadDiscordServiceConfig({
       client,
       channelQueues,
       enqueueOutboxFlush,
-      workerBotName: agentName,
+      workerAgentName: agentName,
     });
     nextClients[botName] = client;
   }
@@ -405,12 +405,12 @@ async function reloadDiscordServiceConfig({
   }
   Object.assign(clients, nextClients);
 
-  serviceStatus.bots = buildDiscordBotStatus(nextBotConfigs);
-  hydrateDiscordBotStatus(serviceStatus.bots, nextBotConfigs, clients);
+  serviceStatus.agents = buildDiscordAgentStatus(nextBotConfigs);
+  hydrateDiscordAgentStatus(serviceStatus.agents, nextBotConfigs, clients);
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
   persistServiceStatus(serviceStatus);
-  console.log('Discord service reloaded bot configuration.');
+  console.log('Discord service reloaded agent configuration.');
   return nextBotConfigs;
 }
 
@@ -421,21 +421,21 @@ async function reconnectDiscordBot({
   agentName,
   clients,
   botConfigs,
-  botName,
+  targetAgentName,
   serviceStatus,
   persistServiceStatus,
   channelQueues,
   enqueueOutboxFlush,
 }) {
-  assert(botName, 'Bot name is required.');
+  assert(targetAgentName, 'Agent name is required.');
   const config = loadConfig(projectRoot);
   const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
   const nextBotConfigs = resolveDiscordBotConfigs(config, env, {
     requireReviewerAndArbiter: needsTribunalBots,
     agentName,
   });
-  const nextBot = nextBotConfigs[botName] || null;
-  const existingClient = clients[botName] || null;
+  const nextBot = nextBotConfigs[targetAgentName] || null;
+  const existingClient = clients[targetAgentName] || null;
   let nextClient = null;
 
   if (nextBot?.token) {
@@ -443,11 +443,11 @@ async function reconnectDiscordBot({
     attachDiscordClientMessageHandler({
       projectRoot,
       clients,
-      botName,
+      botName: targetAgentName,
       client: nextClient,
       channelQueues,
       enqueueOutboxFlush,
-      workerBotName: agentName,
+      workerAgentName: agentName,
     });
   }
 
@@ -456,17 +456,17 @@ async function reconnectDiscordBot({
   }
 
   if (nextClient) {
-    clients[botName] = nextClient;
+    clients[targetAgentName] = nextClient;
   } else {
-    delete clients[botName];
+    delete clients[targetAgentName];
   }
 
-  serviceStatus.bots = buildDiscordBotStatus(nextBotConfigs);
-  hydrateDiscordBotStatus(serviceStatus.bots, nextBotConfigs, clients);
+  serviceStatus.agents = buildDiscordAgentStatus(nextBotConfigs);
+  hydrateDiscordAgentStatus(serviceStatus.agents, nextBotConfigs, clients);
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
   persistServiceStatus(serviceStatus);
-  console.log(`Discord service reconnected agent "${botName}".`);
+  console.log(`Discord service reconnected agent "${targetAgentName}".`);
   return nextBotConfigs;
 }
 
@@ -581,16 +581,17 @@ export async function flushDiscordOutboxForRun(
   channel,
   runId,
   fallbackChannelId = null,
-  { botName = null } = {},
+  { agentName = null, botName = null } = {},
 ) {
+  const selectedAgentName = agentName || botName;
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { runId, limit: 100 });
   for (const event of events) {
-    const targetBotName = resolveEventBotName(channel, event.role);
-    if (botName && targetBotName !== botName) {
+    const targetAgentName = resolveEventAgentName(channel, event.role);
+    if (selectedAgentName && targetAgentName !== selectedAgentName) {
       continue;
     }
-    const client = clients[targetBotName];
-    assert(client, `${targetBotName || event.role} bot client is not configured.`);
+    const client = clients[targetAgentName];
+    assert(client, `${targetAgentName || event.role} agent client is not configured.`);
     const channelId = event.discordChannelId || fallbackChannelId;
     assert(channelId, `Discord channel id is missing for run ${runId}.`);
     await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
@@ -601,8 +602,9 @@ export async function flushDiscordOutboxForRun(
 export async function flushPendingDiscordOutbox(
   projectRoot,
   clients,
-  { limit = 100, botName = null } = {},
+  { limit = 100, agentName = null, botName = null } = {},
 ) {
+  const selectedAgentName = agentName || botName;
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { limit });
   if (events.length === 0) {
     return 0;
@@ -622,12 +624,12 @@ export async function flushPendingDiscordOutbox(
         mode: 'single',
         discordChannelId: event.discordChannelId,
       };
-    const targetBotName = resolveEventBotName(channel, event.role);
-    if (botName && targetBotName !== botName) {
+    const targetAgentName = resolveEventAgentName(channel, event.role);
+    if (selectedAgentName && targetAgentName !== selectedAgentName) {
       continue;
     }
-    const client = clients[targetBotName];
-    assert(client, `${targetBotName || event.role} bot client is not configured.`);
+    const client = clients[targetAgentName];
+    assert(client, `${targetAgentName || event.role} agent client is not configured.`);
     const channelId = event.discordChannelId || channel.discordChannelId;
     assert(channelId, `Discord channel id is missing for queued event ${event.eventId}.`);
     await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
@@ -745,7 +747,7 @@ function buildDiscordBotConfigSignature(botConfigs) {
   );
 }
 
-function buildDiscordBotStatus(botConfigs) {
+function buildDiscordAgentStatus(botConfigs) {
   return Object.fromEntries(
     Object.entries(botConfigs).map(([botName, bot]) => [
       botName,
@@ -760,10 +762,10 @@ function buildDiscordBotStatus(botConfigs) {
   );
 }
 
-function hydrateDiscordBotStatus(bots, botConfigs, clients) {
+function hydrateDiscordAgentStatus(agents, botConfigs, clients) {
   for (const [botName, bot] of Object.entries(botConfigs)) {
     const client = clients[botName];
-    bots[botName] = {
+    agents[botName] = {
       agent: bot.agent || '',
       tokenConfigured: Boolean(bot.token),
       connected: Boolean(client?.user),
@@ -773,20 +775,20 @@ function hydrateDiscordBotStatus(bots, botConfigs, clients) {
   }
 }
 
-function resolveChannelInboundBotName(channel) {
-  const botNames = resolveChannelBotNames(channel);
-  return botNames.owner || 'owner';
+function resolveChannelInboundAgentName(channel) {
+  const roleAgents = resolveChannelRoleAgentNames(channel);
+  return roleAgents.owner || 'owner';
 }
 
-function resolveEventBotName(channel, role) {
-  const botNames = resolveChannelBotNames(channel);
+function resolveEventAgentName(channel, role) {
+  const roleAgents = resolveChannelRoleAgentNames(channel);
   if (role === 'reviewer') {
-    return botNames.reviewer || 'reviewer';
+    return roleAgents.reviewer || 'reviewer';
   }
   if (role === 'arbiter') {
-    return botNames.arbiter || 'arbiter';
+    return roleAgents.arbiter || 'arbiter';
   }
-  return botNames.owner || 'owner';
+  return roleAgents.owner || 'owner';
 }
 
 function resolveRoleMessageTitle(channel, entry) {

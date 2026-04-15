@@ -33,7 +33,7 @@ function writeStatus(overrides = {}) {
         heartbeatAt: new Date().toISOString(),
         envFilePath: null,
         lastError: overrides.lastError || null,
-        bots: agentName
+        agents: agentName
           ? {
               [agentName]: {
                 agent: 'command',

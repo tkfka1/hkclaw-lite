@@ -126,7 +126,7 @@ export function resolveDiscordRoleTokens(env, options = {}) {
   return output;
 }
 
-export function resolveChannelBotNames(channel) {
+export function resolveChannelRoleAgentNames(channel) {
   return {
     owner: channel?.agent || null,
     reviewer: channel?.reviewer || null,
@@ -134,29 +134,30 @@ export function resolveChannelBotNames(channel) {
   };
 }
 
-export function inspectDiscordBotConfigs(config, channels, runtimeStatus = null) {
+export function inspectDiscordAgentConfigs(config, channels, runtimeStatus = null) {
   const tribunalChannelCount = channels.filter(
     (channel) => channel?.mode === 'tribunal' || Boolean(channel?.reviewer && channel?.arbiter),
   ).length;
   const agents = config?.agents || {};
+  const runtimeAgents = runtimeStatus?.agents || runtimeStatus?.bots || {};
 
   return {
     tribunalChannelCount,
     singleChannelCount: channels.length - tribunalChannelCount,
-    bots: Object.fromEntries(
+    agents: Object.fromEntries(
       Object.entries(agents).map(([name, agent]) => {
-        const runtimeBot = runtimeStatus?.bots?.[name] || {};
+        const runtimeAgent = runtimeAgents[name] || {};
         return [
           name,
           {
-            configured: Boolean(agent?.discordToken || runtimeBot.tokenConfigured),
+            configured: Boolean(agent?.discordToken || runtimeAgent.tokenConfigured),
             required: true,
             agent: agent?.agent || '',
-            source: agent?.discordToken ? 'config' : runtimeBot.tokenConfigured ? 'discord serve' : '없음',
-            tokenConfigured: Boolean(agent?.discordToken || runtimeBot.tokenConfigured),
-            connected: Boolean(runtimeBot.connected),
-            tag: runtimeBot.tag || '',
-            userId: runtimeBot.userId || '',
+            source: agent?.discordToken ? 'config' : runtimeAgent.tokenConfigured ? 'discord serve' : '없음',
+            tokenConfigured: Boolean(agent?.discordToken || runtimeAgent.tokenConfigured),
+            connected: Boolean(runtimeAgent.connected),
+            tag: runtimeAgent.tag || '',
+            userId: runtimeAgent.userId || '',
           },
         ];
       }),
@@ -261,10 +262,10 @@ export function buildDiscordServiceSnapshot(
     );
     const runningAgentNames = agentNames.filter((agentName) => agentServices[agentName].running);
     const staleAgentNames = agentNames.filter((agentName) => agentServices[agentName].stale);
-    const bots = Object.fromEntries(
+    const agents = Object.fromEntries(
       agentNames.map((agentName) => [
         agentName,
-        buildServiceBotSummary(agentStatuses[agentName]?.bots || {})[agentName] || {
+        buildServiceAgentSummary(agentStatuses[agentName]?.agents || agentStatuses[agentName]?.bots || {})[agentName] || {
           tokenConfigured: false,
           connected: false,
           tag: '',
@@ -292,7 +293,7 @@ export function buildDiscordServiceSnapshot(
       heartbeatAt: null,
       envFilePath: null,
       lastError: null,
-      bots,
+      agents,
       agentServices,
       runningAgentCount: runningAgentNames.length,
       totalAgentCount: agentNames.length,
@@ -315,7 +316,7 @@ export function buildDiscordAgentServiceSnapshot(
 }
 
 function buildSingleDiscordServiceSnapshot(rawStatus) {
-  const emptyBots = {};
+  const emptyAgents = {};
   if (!rawStatus) {
     return {
       state: 'stopped',
@@ -327,7 +328,7 @@ function buildSingleDiscordServiceSnapshot(rawStatus) {
       heartbeatAt: null,
       envFilePath: null,
       lastError: null,
-      bots: emptyBots,
+      agents: emptyAgents,
     };
   }
 
@@ -355,7 +356,7 @@ function buildSingleDiscordServiceSnapshot(rawStatus) {
     heartbeatAt: rawStatus.heartbeatAt || null,
     envFilePath: rawStatus.envFilePath || null,
     lastError: rawStatus.lastError || null,
-    bots: buildServiceBotSummary(rawStatus.bots),
+    agents: buildServiceAgentSummary(rawStatus.agents || rawStatus.bots),
   };
 }
 
@@ -371,7 +372,7 @@ export function createDiscordServiceStatus(projectRoot, options = {}) {
     heartbeatAt: options.heartbeatAt || timestamp(),
     envFilePath: options.envFilePath || null,
     lastError: options.lastError || null,
-    bots: buildServiceBotSummary(options.bots),
+    agents: buildServiceAgentSummary(options.agents || options.bots),
   };
 }
 
@@ -450,7 +451,7 @@ function resolveTokenSource({ envKey, envEntries, baseEnv, runtimeConfigured }) 
   return '없음';
 }
 
-function buildServiceBotSummary(input = {}) {
+function buildServiceAgentSummary(input = {}) {
   return Object.fromEntries(
     Object.entries(input || {}).map(([name, source]) => [
       name,

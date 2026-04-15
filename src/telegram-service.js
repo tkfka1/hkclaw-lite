@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 
 import { executeChannelTurn, isTribunalChannel } from './channel-runtime.js';
-import { resolveChannelBotNames } from './discord-runtime-state.js';
+import { resolveChannelRoleAgentNames } from './discord-runtime-state.js';
 import {
   listPendingRuntimeOutboxEvents,
   markRuntimeOutboxEventDispatched,
@@ -34,7 +34,7 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
     agentName,
     running: false,
     heartbeatAt: timestamp(),
-    bots: buildTelegramBotStatus(botConfigs),
+    agents: buildTelegramAgentStatus(botConfigs),
   });
   persistServiceStatus(serviceStatus);
 
@@ -48,7 +48,7 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
 
   try {
     clients = await createTelegramClients(botConfigs);
-    hydrateTelegramBotStatus(serviceStatus.bots, botConfigs, clients);
+    hydrateTelegramAgentStatus(serviceStatus.agents, botConfigs, clients);
     serviceStatus.running = true;
     serviceStatus.startedAt = serviceStatus.startedAt || timestamp();
     serviceStatus.stoppedAt = null;
@@ -70,11 +70,11 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
     heartbeatTimer.unref?.();
 
     await enqueueOutboxFlush(() =>
-      flushPendingTelegramOutbox(projectRoot, clients, { botName: agentName }),
+      flushPendingTelegramOutbox(projectRoot, clients, { agentName }),
     );
     outboxTimer = setInterval(() => {
       void enqueueOutboxFlush(() =>
-        flushPendingTelegramOutbox(projectRoot, clients, { botName: agentName }),
+        flushPendingTelegramOutbox(projectRoot, clients, { agentName }),
       ).catch((error) => {
         console.error(`Telegram outbox flush error: ${toErrorMessage(error)}`);
       });
@@ -165,7 +165,7 @@ async function runTelegramPollingLoop({
             projectRoot,
             clients,
             botName,
-            workerBotName: agentName,
+            workerAgentName: agentName,
             client,
             channelQueues,
             serviceStatus,
@@ -212,7 +212,7 @@ async function pollTelegramUpdates({
   projectRoot,
   clients,
   botName,
-  workerBotName,
+  workerAgentName,
   client,
   channelQueues,
   serviceStatus,
@@ -246,8 +246,8 @@ async function pollTelegramUpdates({
       await handleInboundTelegramMessage({
         projectRoot,
         clients,
-        botName,
-        workerBotName,
+        inboundAgentName: botName,
+        workerAgentName,
         message,
       });
     }).catch((error) => {
@@ -267,8 +267,8 @@ async function pollTelegramUpdates({
 async function handleInboundTelegramMessage({
   projectRoot,
   clients,
-  botName,
-  workerBotName,
+  inboundAgentName,
+  workerAgentName,
   message,
 }) {
   const prompt = String(message?.text || '').trim();
@@ -298,7 +298,7 @@ async function handleInboundTelegramMessage({
   if (!channel) {
     return;
   }
-  if (resolveChannelInboundBotName(channel) !== botName) {
+  if (resolveChannelInboundAgentName(channel) !== inboundAgentName) {
     return;
   }
 
@@ -326,7 +326,7 @@ async function handleInboundTelegramMessage({
         channel,
         runId,
         chatId,
-        { botName: workerBotName, fallbackThreadId: threadId },
+        { agentName: workerAgentName, fallbackThreadId: threadId },
       );
     }
     throw error;
@@ -339,7 +339,7 @@ async function handleInboundTelegramMessage({
       channel,
       runId,
       chatId,
-      { botName: workerBotName, fallbackThreadId: threadId },
+      { agentName: workerAgentName, fallbackThreadId: threadId },
     );
   }
 }
@@ -396,17 +396,17 @@ async function reloadTelegramServiceConfig({
 }) {
   const config = loadConfig(projectRoot);
   const nextBotConfigs = resolveTelegramBotConfigs(config, { agentName });
-  const botName = String(command?.agentName || command?.botName || '').trim();
-  const nextBot = nextBotConfigs[botName];
+  const targetAgentName = String(command?.agentName || command?.botName || '').trim();
+  const nextBot = nextBotConfigs[targetAgentName];
 
   if (nextBot?.token) {
-    clients[botName] = await createTelegramClient(nextBot.token, nextBot.agent);
+    clients[targetAgentName] = await createTelegramClient(nextBot.token, nextBot.agent);
   } else {
-    delete clients[botName];
+    delete clients[targetAgentName];
   }
 
-  serviceStatus.bots = buildTelegramBotStatus(nextBotConfigs);
-  hydrateTelegramBotStatus(serviceStatus.bots, nextBotConfigs, clients);
+  serviceStatus.agents = buildTelegramAgentStatus(nextBotConfigs);
+  hydrateTelegramAgentStatus(serviceStatus.agents, nextBotConfigs, clients);
   serviceStatus.lastError = null;
   serviceStatus.heartbeatAt = timestamp();
   persistServiceStatus(serviceStatus);
@@ -513,16 +513,17 @@ export async function flushTelegramOutboxForRun(
   channel,
   runId,
   fallbackChatId = null,
-  { botName = null, fallbackThreadId = null } = {},
+  { agentName = null, botName = null, fallbackThreadId = null } = {},
 ) {
+  const selectedAgentName = agentName || botName;
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { runId, limit: 100 });
   for (const event of events) {
-    const targetBotName = resolveEventBotName(channel, event.role);
-    if (botName && targetBotName !== botName) {
+    const targetAgentName = resolveEventAgentName(channel, event.role);
+    if (selectedAgentName && targetAgentName !== selectedAgentName) {
       continue;
     }
-    const client = clients[targetBotName];
-    assert(client, `${targetBotName || event.role} telegram client is not configured.`);
+    const client = clients[targetAgentName];
+    assert(client, `${targetAgentName || event.role} telegram client is not configured.`);
     const chatId = channel?.telegramChatId || fallbackChatId;
     assert(chatId, `Telegram chat id is missing for run ${runId}.`);
     const threadId = channel?.telegramThreadId || fallbackThreadId || null;
@@ -536,8 +537,9 @@ export async function flushTelegramOutboxForRun(
 export async function flushPendingTelegramOutbox(
   projectRoot,
   clients,
-  { limit = 100, botName = null } = {},
+  { limit = 100, agentName = null, botName = null } = {},
 ) {
+  const selectedAgentName = agentName || botName;
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { limit });
   if (events.length === 0) {
     return 0;
@@ -552,12 +554,12 @@ export async function flushPendingTelegramOutbox(
     if (!channel || (channel.platform || 'discord') !== 'telegram') {
       continue;
     }
-    const targetBotName = resolveEventBotName(channel, event.role);
-    if (botName && targetBotName !== botName) {
+    const targetAgentName = resolveEventAgentName(channel, event.role);
+    if (selectedAgentName && targetAgentName !== selectedAgentName) {
       continue;
     }
-    const client = clients[targetBotName];
-    assert(client, `${targetBotName || event.role} telegram client is not configured.`);
+    const client = clients[targetAgentName];
+    assert(client, `${targetAgentName || event.role} telegram client is not configured.`);
     const chatId = String(channel.telegramChatId || '').trim();
     assert(chatId, `Telegram chat id is missing for queued event ${event.eventId}.`);
     const threadId = String(channel.telegramThreadId || '').trim() || null;
@@ -650,7 +652,7 @@ function resolveTelegramBotConfigs(config, { agentName = null } = {}) {
   );
 }
 
-function buildTelegramBotStatus(botConfigs) {
+function buildTelegramAgentStatus(botConfigs) {
   return Object.fromEntries(
     Object.entries(botConfigs).map(([botName, bot]) => [
       botName,
@@ -665,10 +667,10 @@ function buildTelegramBotStatus(botConfigs) {
   );
 }
 
-function hydrateTelegramBotStatus(bots, botConfigs, clients) {
+function hydrateTelegramAgentStatus(agents, botConfigs, clients) {
   for (const [botName, bot] of Object.entries(botConfigs)) {
     const client = clients[botName];
-    bots[botName] = {
+    agents[botName] = {
       agent: bot.agent || '',
       tokenConfigured: Boolean(bot.token),
       connected: Boolean(client?.me?.id),
@@ -678,20 +680,20 @@ function hydrateTelegramBotStatus(bots, botConfigs, clients) {
   }
 }
 
-function resolveChannelInboundBotName(channel) {
-  const botNames = resolveChannelBotNames(channel);
-  return botNames.owner || 'owner';
+function resolveChannelInboundAgentName(channel) {
+  const roleAgents = resolveChannelRoleAgentNames(channel);
+  return roleAgents.owner || 'owner';
 }
 
-function resolveEventBotName(channel, role) {
-  const botNames = resolveChannelBotNames(channel);
+function resolveEventAgentName(channel, role) {
+  const roleAgents = resolveChannelRoleAgentNames(channel);
   if (role === 'reviewer') {
-    return botNames.reviewer || 'reviewer';
+    return roleAgents.reviewer || 'reviewer';
   }
   if (role === 'arbiter') {
-    return botNames.arbiter || 'arbiter';
+    return roleAgents.arbiter || 'arbiter';
   }
-  return botNames.owner || 'owner';
+  return roleAgents.owner || 'owner';
 }
 
 function resolveRoleMessageTitle(channel, entry) {

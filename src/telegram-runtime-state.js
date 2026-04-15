@@ -35,19 +35,20 @@ export function getTelegramCommandQueuePath(projectRoot, agentName = null) {
   return path.join(getProjectLayout(projectRoot).toolRoot, TELEGRAM_COMMANDS_DIRNAME);
 }
 
-export function inspectTelegramBotConfigs(config, channels, runtimeStatus = null) {
+export function inspectTelegramAgentConfigs(config, channels, runtimeStatus = null) {
   const telegramChannels = channels.filter((channel) => (channel?.platform || 'discord') === 'telegram');
   const agents = config?.agents || {};
+  const runtimeAgents = runtimeStatus?.agents || runtimeStatus?.bots || {};
 
   return {
     telegramChannelCount: telegramChannels.length,
-    bots: Object.fromEntries(
+    agents: Object.fromEntries(
       Object.entries(agents).map(([name, agent]) => {
-        const runtimeBot = runtimeStatus?.bots?.[name] || {};
+        const runtimeAgent = runtimeAgents[name] || {};
         return [
           name,
           {
-            configured: Boolean(agent?.telegramBotToken || runtimeBot.tokenConfigured),
+            configured: Boolean(agent?.telegramBotToken || runtimeAgent.tokenConfigured),
             required: telegramChannels.some(
               (channel) =>
                 channel.agent === name ||
@@ -55,11 +56,11 @@ export function inspectTelegramBotConfigs(config, channels, runtimeStatus = null
                 channel.arbiter === name,
             ),
             agent: agent?.agent || '',
-            source: agent?.telegramBotToken ? 'config' : runtimeBot.tokenConfigured ? 'telegram serve' : '없음',
-            tokenConfigured: Boolean(agent?.telegramBotToken || runtimeBot.tokenConfigured),
-            connected: Boolean(runtimeBot.connected),
-            username: runtimeBot.username || '',
-            userId: runtimeBot.userId || '',
+            source: agent?.telegramBotToken ? 'config' : runtimeAgent.tokenConfigured ? 'telegram serve' : '없음',
+            tokenConfigured: Boolean(agent?.telegramBotToken || runtimeAgent.tokenConfigured),
+            connected: Boolean(runtimeAgent.connected),
+            username: runtimeAgent.username || '',
+            userId: runtimeAgent.userId || '',
           },
         ];
       }),
@@ -117,10 +118,10 @@ export function buildTelegramServiceSnapshot(projectRoot, rawStatus = undefined)
     );
     const runningAgentNames = agentNames.filter((agentName) => agentServices[agentName].running);
     const staleAgentNames = agentNames.filter((agentName) => agentServices[agentName].stale);
-    const bots = Object.fromEntries(
+    const agents = Object.fromEntries(
       agentNames.map((agentName) => [
         agentName,
-        buildServiceBotSummary(agentStatuses[agentName]?.bots || {})[agentName] || {
+        buildServiceAgentSummary(agentStatuses[agentName]?.agents || agentStatuses[agentName]?.bots || {})[agentName] || {
           tokenConfigured: false,
           connected: false,
           username: '',
@@ -147,7 +148,7 @@ export function buildTelegramServiceSnapshot(projectRoot, rawStatus = undefined)
       stoppedAt: null,
       heartbeatAt: null,
       lastError: null,
-      bots,
+      agents,
       agentServices,
       runningAgentCount: runningAgentNames.length,
       totalAgentCount: agentNames.length,
@@ -170,7 +171,7 @@ export function buildTelegramAgentServiceSnapshot(
 }
 
 function buildSingleTelegramServiceSnapshot(rawStatus) {
-  const emptyBots = {};
+  const emptyAgents = {};
   if (!rawStatus) {
     return {
       state: 'stopped',
@@ -184,7 +185,7 @@ function buildSingleTelegramServiceSnapshot(rawStatus) {
       stoppedAt: null,
       heartbeatAt: null,
       lastError: null,
-      bots: emptyBots,
+      agents: emptyAgents,
     };
   }
 
@@ -211,7 +212,7 @@ function buildSingleTelegramServiceSnapshot(rawStatus) {
     stoppedAt: rawStatus.stoppedAt || null,
     heartbeatAt: rawStatus.heartbeatAt || null,
     lastError: rawStatus.lastError || null,
-    bots: buildServiceBotSummary(rawStatus.bots),
+    agents: buildServiceAgentSummary(rawStatus.agents || rawStatus.bots),
   };
 }
 
@@ -226,7 +227,7 @@ export function createTelegramServiceStatus(projectRoot, options = {}) {
     stoppedAt: options.stoppedAt || null,
     heartbeatAt: options.heartbeatAt || timestamp(),
     lastError: options.lastError || null,
-    bots: buildServiceBotSummary(options.bots),
+    agents: buildServiceAgentSummary(options.agents || options.bots),
   };
 }
 
@@ -282,7 +283,7 @@ export function deleteTelegramServiceCommand(commandOrPath) {
   return true;
 }
 
-function buildServiceBotSummary(input = {}) {
+function buildServiceAgentSummary(input = {}) {
   return Object.fromEntries(
     Object.entries(input || {}).map(([name, source]) => [
       name,

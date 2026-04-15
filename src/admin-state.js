@@ -11,11 +11,11 @@ import {
 } from './constants.js';
 import {
   buildDiscordServiceSnapshot,
-  inspectDiscordBotConfigs,
+  inspectDiscordAgentConfigs,
 } from './discord-runtime-state.js';
 import {
   buildTelegramServiceSnapshot,
-  inspectTelegramBotConfigs,
+  inspectTelegramAgentConfigs,
 } from './telegram-runtime-state.js';
 import { inspectAgentRuntime } from './runners.js';
 import {
@@ -197,13 +197,13 @@ function mergeUsageAggregate(target, source) {
 function buildDiscordStatus(projectRoot, config, channels) {
   const tribunalChannelCount = channels.filter(isTribunalChannel).length;
   const service = buildDiscordServiceSnapshot(projectRoot);
-  const tokenStatus = inspectDiscordBotConfigs(config, channels, service);
+  const tokenStatus = inspectDiscordAgentConfigs(config, channels, service);
 
   return {
     envFilePath: service.envFilePath,
     tribunalChannelCount,
     singleChannelCount: channels.length - tribunalChannelCount,
-    bots: tokenStatus.bots,
+    agents: tokenStatus.agents,
     service,
     agentServices: service.agentServices || {},
   };
@@ -211,11 +211,11 @@ function buildDiscordStatus(projectRoot, config, channels) {
 
 function buildTelegramStatus(projectRoot, config, channels) {
   const service = buildTelegramServiceSnapshot(projectRoot);
-  const tokenStatus = inspectTelegramBotConfigs(config, channels, service);
+  const tokenStatus = inspectTelegramAgentConfigs(config, channels, service);
 
   return {
     telegramChannelCount: tokenStatus.telegramChannelCount,
-    bots: tokenStatus.bots,
+    agents: tokenStatus.agents,
     service,
     agentServices: service.agentServices || {},
   };
@@ -414,16 +414,16 @@ export function readWatcherLog(projectRoot, watcherId) {
 function buildAgentSummaries(projectRoot, config, channels) {
   const channelsByAgent = buildChannelsByAgent(channels);
   const discordService = buildDiscordServiceSnapshot(projectRoot);
-  const discordRuntimeBots = discordService.bots || {};
+  const discordRuntimeAgents = discordService.agents || discordService.bots || {};
   const agentServices = discordService.agentServices || {};
   const telegramService = buildTelegramServiceSnapshot(projectRoot);
-  const telegramRuntimeBots = telegramService.bots || {};
+  const telegramRuntimeAgents = telegramService.agents || telegramService.bots || {};
   const telegramAgentServices = telegramService.agentServices || {};
   return listAgents(config).map((agent) => {
     const mappedChannels = channelsByAgent[agent.name] || [];
-    const discordRuntime = discordRuntimeBots[agent.name] || {};
+    const discordRuntime = discordRuntimeAgents[agent.name] || {};
     const service = agentServices[agent.name] || null;
-    const telegramRuntime = telegramRuntimeBots[agent.name] || {};
+    const telegramRuntime = telegramRuntimeAgents[agent.name] || {};
     const telegramServiceState = telegramAgentServices[agent.name] || null;
     return {
       ...agent,

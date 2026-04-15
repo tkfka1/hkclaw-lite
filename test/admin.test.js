@@ -639,7 +639,7 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     running: true,
     startedAt: '2026-04-07T00:00:00.000Z',
     heartbeatAt: new Date().toISOString(),
-    bots: {
+    agents: {
       worker: {
         agent: 'command',
         tokenConfigured: true,
@@ -699,10 +699,10 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     assert.deepEqual(payload.agents[0].mappedChannelNames, ['main']);
     assert.equal(payload.agents[0].discordTokenConfigured, true);
     assert.equal(payload.discord.service.state, 'running');
-    assert.equal(payload.discord.bots.worker.configured, true);
-    assert.equal(payload.discord.bots.worker.required, true);
-    assert.equal(payload.discord.bots.worker.agent, 'command');
-    assert.equal(payload.discord.service.bots.worker.tag, 'owner#0001');
+    assert.equal(payload.discord.agents.worker.configured, true);
+    assert.equal(payload.discord.agents.worker.required, true);
+    assert.equal(payload.discord.agents.worker.agent, 'command');
+    assert.equal(payload.discord.service.agents.worker.tag, 'owner#0001');
     assert.equal(payload.runtime.pendingOutboxCount, 1);
     assert.equal(payload.runtime.recentRuns.length, 1);
     assert.equal(payload.runtime.recentRuns[0].channelName, 'main');
@@ -851,7 +851,7 @@ test('admin server queues manual Discord service commands instead of auto reload
     running: true,
     startedAt: '2026-04-15T00:00:00.000Z',
     heartbeatAt: new Date().toISOString(),
-    bots: {
+    agents: {
       worker: {
         agent: 'command',
         tokenConfigured: true,
@@ -994,7 +994,7 @@ test('admin server restores previously running Discord service on startup', asyn
     running: true,
     startedAt: '2026-04-15T00:00:00.000Z',
     heartbeatAt: '2026-04-15T00:00:00.000Z',
-    bots: {
+    agents: {
       worker: {
         agent: 'command',
         tokenConfigured: true,
@@ -1122,7 +1122,7 @@ test('admin server restores previously running Telegram service on startup', asy
     running: true,
     startedAt: '2026-04-15T00:00:00.000Z',
     heartbeatAt: '2026-04-15T00:00:00.000Z',
-    bots: {
+    agents: {
       worker: {
         agent: 'command',
         tokenConfigured: true,
