@@ -1371,11 +1371,12 @@ function renderAiView() {
                 data-action="open-local-llm-create"
                 ${state.busy ? 'disabled' : ''}
               >
-                로컬 LLM 추가
+                신규 LLM 추가
               </button>`
             : ''
         }
       </div>
+      <div class="field-hint">AI 카드를 누르면 해당 AI의 관리 화면이 열립니다.</div>
       ${renderAiList()}
     </section>
   `;
@@ -1721,6 +1722,7 @@ function renderAiList() {
               <div class="card-main">
                 <strong class="card-title">${escapeHtml(localizeOptionLabel(entry))}</strong>
                 <span class="card-meta">${escapeHtml(localizeAiMeta(entry.value))}</span>
+                <div class="field-hint">카드를 눌러 관리</div>
                 ${
                   ready
                     ? `<div class="card-tags"><span class="mini-chip mini-chip--ok">사용 가능</span></div>`
@@ -1749,23 +1751,12 @@ function renderAiList() {
               <div class="card-main">
                 <strong class="card-title">${escapeHtml(connection.name)}</strong>
                 <span class="card-meta">${escapeHtml(`로컬 LLM · ${connection.baseUrl}`)}</span>
-                <div class="field-hint">${connection.apiKey ? 'API 키 설정됨' : 'API 키 없음'}${connection.description ? ` · ${escapeHtml(connection.description)}` : ''}</div>
+                <div class="field-hint">카드를 눌러 관리 · ${connection.apiKey ? 'API 키 설정됨' : 'API 키 없음'}${connection.description ? ` · ${escapeHtml(connection.description)}` : ''}</div>
                 ${
                   ready
                     ? `<div class="card-tags"><span class="mini-chip mini-chip--ok">사용 가능</span></div>`
                     : ''
                 }
-              </div>
-              <div class="inline-actions">
-                <button
-                  type="button"
-                  class="btn-secondary"
-                  data-action="open-local-llm-manager"
-                  data-local-llm-connection="${escapeAttr(connection.name)}"
-                  ${state.busy ? 'disabled' : ''}
-                >
-                  관리
-                </button>
               </div>
             </article>
           `;
@@ -1852,7 +1843,7 @@ function renderAiModal() {
           <div class="inline-actions">
             ${
               entry.value === 'local-llm'
-                ? `<button type="button" class="btn-secondary" data-action="open-local-llm-modal" ${state.busy ? 'disabled' : ''}>연결 추가</button>`
+                ? `<button type="button" class="btn-secondary" data-action="open-local-llm-modal" ${state.busy ? 'disabled' : ''}>신규 LLM 추가</button>`
                 : ''
             }
             <button type="button" class="btn-secondary" data-action="close-ai-modal" ${state.busy ? 'disabled' : ''}>닫기</button>
@@ -3091,7 +3082,7 @@ function renderAiCredentialFields(agentType) {
               ? renderLocalLlmConnectionEditor()
               : `<div class="actions env-editor-actions">
                   <button type="button" class="btn-secondary btn-inline" data-action="edit-local-llm-connection" data-name="${escapeAttr(selectedConnection?.name || '')}" ${state.busy || !selectedConnection ? 'disabled' : ''}>현재 연결 수정</button>
-                  <button type="button" class="btn-secondary btn-inline" data-action="open-local-llm-modal" ${state.busy ? 'disabled' : ''}>연결 추가</button>
+                  <button type="button" class="btn-secondary btn-inline" data-action="open-local-llm-modal" ${state.busy ? 'disabled' : ''}>신규 LLM 추가</button>
                 </div>`
           }
         </div>
