@@ -1174,18 +1174,24 @@ function clearNotice() {
 }
 
 function render() {
+  const previousScrollX = window.scrollX;
+  const previousScrollY = window.scrollY;
+
   if (!state.data && state.loading) {
     app.innerHTML = renderFrame(renderEmptyState('불러오는 중', true));
+    restoreScrollPosition(previousScrollX, previousScrollY);
     return;
   }
 
   if (state.auth.enabled && !state.auth.authenticated) {
     app.innerHTML = renderFrame(renderLoginScreen(), 'app-shell--auth');
+    restoreScrollPosition(previousScrollX, previousScrollY);
     return;
   }
 
   if (!state.data) {
     app.innerHTML = renderFrame(renderEmptyState('데이터 없음'));
+    restoreScrollPosition(previousScrollX, previousScrollY);
     return;
   }
 
@@ -1198,6 +1204,13 @@ function render() {
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
   `);
+  restoreScrollPosition(previousScrollX, previousScrollY);
+}
+
+function restoreScrollPosition(x, y) {
+  window.requestAnimationFrame(() => {
+    window.scrollTo(x, y);
+  });
 }
 
 function renderFrame(content, className = '') {
@@ -3276,6 +3289,7 @@ function startAiManagerStatusPolling(agentType) {
 
     attempts += 1;
     try {
+      const previousFingerprint = buildAiAuthResultFingerprint(state.aiManager?.authResult);
       const response = await requestJson('/api/agent-auth', {
         method: 'POST',
         body: {
@@ -3288,7 +3302,11 @@ function startAiManagerStatusPolling(agentType) {
         return;
       }
       applyAiManagerAuthResult(agentType, response.result, 'status');
-      render();
+      const nextFingerprint = buildAiAuthResultFingerprint(state.aiManager?.authResult);
+      const statusChanged = previousFingerprint !== nextFingerprint;
+      if (statusChanged) {
+        render();
+      }
 
       const loggedIn = Boolean(response.result?.details?.loggedIn);
       const pendingLogin = Boolean(response.result?.details?.pendingLogin);
@@ -3300,7 +3318,9 @@ function startAiManagerStatusPolling(agentType) {
       }
       if (!pendingLogin || attempts >= AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS) {
         stopAiManagerStatusPolling();
-        render();
+        if (statusChanged) {
+          render();
+        }
         return;
       }
     } catch (error) {
@@ -3324,6 +3344,22 @@ function startAiManagerStatusPolling(agentType) {
   };
 
   aiManagerStatusPollTimer = window.setTimeout(poll, AI_MANAGER_STATUS_POLL_INTERVAL_MS);
+}
+
+function buildAiAuthResultFingerprint(result) {
+  const details = result?.details || {};
+  return JSON.stringify({
+    summary: details.summary || '',
+    pendingLogin: Boolean(details.pendingLogin),
+    loggedIn: Boolean(details.loggedIn),
+    runtimeReady: Boolean(details.runtimeReady),
+    configured: Boolean(details.configured),
+    url: details.url || '',
+    code: details.code || '',
+    requiresCode: Boolean(details.requiresCode),
+    completionHint: details.completionHint || '',
+    output: result?.output || '',
+  });
 }
 
 function buildAiCredentialDraft(agentType, sharedEnv) {
