@@ -33,6 +33,7 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
   const serviceStatus = createTelegramServiceStatus(projectRoot, {
     agentName,
     running: false,
+    desiredRunning: true,
     heartbeatAt: timestamp(),
     agents: buildTelegramAgentStatus(agentConfigs),
   });

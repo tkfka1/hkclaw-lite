@@ -23,7 +23,6 @@ const DISCORD_MESSAGE_LIMIT = 1900;
 const DISCORD_OUTBOX_FLUSH_INTERVAL_MS = 1_000;
 const DISCORD_COMMAND_POLL_INTERVAL_MS = 1_000;
 const DISCORD_TYPING_REFRESH_MS = 8_000;
-const DISCORD_PROGRESS_UPDATE_INTERVAL_MS = 5_000;
 
 export async function serveDiscord(projectRoot, { envFile = null, agentName = null } = {}) {
   const { envFilePath } = loadProjectEnvFile(projectRoot, envFile);
@@ -40,6 +39,7 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
   const serviceStatus = createDiscordServiceStatus(projectRoot, {
     agentName,
     running: false,
+    desiredRunning: true,
     envFilePath,
     heartbeatAt: timestamp(),
     agents: buildDiscordAgentStatus(agentConfigs),
@@ -243,25 +243,18 @@ async function handleInboundMessage({
   assert(fs.existsSync(workdir), `Workspace does not exist: ${workdir}`);
 
   const typingInterval = startTypingIndicator(message.channel);
-  const progressTracker = createDiscordProgressTracker(message, channel);
   let runId = null;
   try {
-    await progressTracker.start();
     const result = await executeChannelTurn({
       projectRoot,
       config,
       channel,
       prompt,
       workdir,
-      onTransition: async (entry) => {
-        await progressTracker.transition(entry);
-      },
     });
     runId = result.runId || null;
-    await progressTracker.complete(result);
   } catch (error) {
     runId = error?.runtimeRunId || null;
-    await progressTracker.fail(error);
     if (runId) {
       await enqueueOutboxFlush(() =>
         flushDiscordOutboxForRun(projectRoot, clients, channel, runId, message.channelId),
@@ -269,7 +262,6 @@ async function handleInboundMessage({
     }
     throw error;
   } finally {
-    progressTracker.dispose();
     stopTypingIndicator(typingInterval);
   }
 
@@ -596,48 +588,6 @@ export function formatDiscordRoleMessage(channel, entry) {
     .join('\n');
 }
 
-export function formatDiscordProgressMessage(channel, progress, { now = Date.now() } = {}) {
-  const meta = [];
-  if (channel?.name) {
-    meta.push(channel.name);
-  }
-  if (isTribunalChannel(channel) && progress?.currentRound && progress?.maxRounds) {
-    meta.push(`${progress.currentRound}/${progress.maxRounds}`);
-  }
-  if (progress?.reviewerVerdict) {
-    meta.push(localizeReviewerVerdict(progress.reviewerVerdict));
-  }
-  meta.push(`${formatDiscordElapsedDuration(progress?.startedAt, now)} 경과`);
-
-  return [`⏱ **${resolveDiscordProgressTitle(channel, progress)}**`, meta.join(' · ')]
-    .filter(Boolean)
-    .join('\n');
-}
-
-export function formatDiscordProgressFinalMessage(channel, progress, { now = Date.now() } = {}) {
-  const completedAt = progress?.completedAt || now;
-  const status = progress?.status === 'failed' ? 'failed' : 'completed';
-  const meta = [];
-  if (channel?.name) {
-    meta.push(channel.name);
-  }
-  if (isTribunalChannel(channel) && progress?.currentRound && progress?.maxRounds) {
-    meta.push(`${progress.currentRound}/${progress.maxRounds}`);
-  }
-  if (progress?.reviewerVerdict) {
-    meta.push(localizeReviewerVerdict(progress.reviewerVerdict));
-  }
-  meta.push(`${formatDiscordElapsedDuration(progress?.startedAt, completedAt)} 소요`);
-
-  return [
-    `${status === 'failed' ? '❌' : '✅'} **${resolveDiscordProgressFinalTitle(channel, progress)}**`,
-    meta.join(' · '),
-    status === 'failed' && progress?.error ? '' : null,
-    status === 'failed' && progress?.error ? String(progress.error).trim() : null,
-  ]
-    .filter((line, index) => index === 2 || Boolean(line))
-    .join('\n');
-}
 
 export async function flushDiscordOutboxForRun(
   projectRoot,
@@ -869,191 +819,6 @@ function resolveRoleMessageTitle(channel, entry) {
     return 'arbiter 최종';
   }
   return entry?.role || '응답';
-}
-
-function createDiscordProgressTracker(message, channel) {
-  const initialState = {
-    status: 'queued',
-    activeRole: 'owner',
-    currentRound: 1,
-    maxRounds: channel?.mode === 'tribunal' ? channel?.reviewRounds || 2 : 1,
-    reviewerVerdict: null,
-    startedAt: Date.now(),
-    completedAt: null,
-    error: '',
-  };
-  let currentState = initialState;
-  let progressMessage = null;
-  let interval = null;
-  let queue = Promise.resolve();
-  let disposed = false;
-  let lastRenderedText = '';
-
-  const enqueue = (task) => {
-    queue = queue
-      .catch(() => {})
-      .then(task)
-      .catch((error) => {
-        console.error(`Discord progress update error: ${toErrorMessage(error)}`);
-      });
-    return queue;
-  };
-
-  const renderProgress = async (force = false) => {
-    if (disposed || typeof message?.channel?.send !== 'function') {
-      return;
-    }
-    const nextText = formatDiscordProgressMessage(channel, currentState);
-    if (!force && nextText === lastRenderedText) {
-      return;
-    }
-    if (!progressMessage) {
-      progressMessage = await message.channel.send(nextText);
-    } else if (typeof progressMessage.edit === 'function') {
-      await progressMessage.edit(nextText);
-    }
-    lastRenderedText = nextText;
-  };
-
-  const renderFinal = async () => {
-    if (disposed || typeof message?.channel?.send !== 'function') {
-      return;
-    }
-    const nextText = formatDiscordProgressFinalMessage(channel, currentState);
-    if (!progressMessage) {
-      progressMessage = await message.channel.send(nextText);
-    } else if (typeof progressMessage.edit === 'function') {
-      await progressMessage.edit(nextText);
-    }
-    lastRenderedText = nextText;
-  };
-
-  return {
-    async start() {
-      await enqueue(() => renderProgress(true));
-      interval = setInterval(() => {
-        void enqueue(() => renderProgress(false));
-      }, DISCORD_PROGRESS_UPDATE_INTERVAL_MS);
-      interval.unref?.();
-    },
-    async transition(entry = {}) {
-      currentState = {
-        ...currentState,
-        ...entry,
-        startedAt: entry.startedAt || currentState.startedAt,
-        reviewerVerdict:
-          entry.reviewerVerdict === undefined
-            ? currentState.reviewerVerdict
-            : entry.reviewerVerdict,
-      };
-      await enqueue(() => renderProgress(true));
-    },
-    async complete(result = {}) {
-      currentState = {
-        ...currentState,
-        status: 'completed',
-        activeRole: result.role || currentState.activeRole,
-        reviewerVerdict:
-          result.reviewerVerdict === undefined
-            ? currentState.reviewerVerdict
-            : result.reviewerVerdict,
-        completedAt: Date.now(),
-      };
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-      await enqueue(renderFinal);
-    },
-    async fail(error) {
-      currentState = {
-        ...currentState,
-        status: 'failed',
-        completedAt: Date.now(),
-        error: toErrorMessage(error),
-      };
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-      await enqueue(renderFinal);
-    },
-    dispose() {
-      disposed = true;
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-    },
-  };
-}
-
-function resolveDiscordProgressTitle(channel, progress) {
-  if (!isTribunalChannel(channel)) {
-    return '응답 생성 중';
-  }
-  if (progress?.status === 'awaiting_revision') {
-    return 'owner 수정 준비 중';
-  }
-  if (progress?.activeRole === 'reviewer' || progress?.status === 'reviewer_running') {
-    return 'reviewer 검토 중';
-  }
-  if (progress?.activeRole === 'arbiter' || progress?.status === 'arbiter_running') {
-    return 'arbiter 정리 중';
-  }
-  return 'owner 작성 중';
-}
-
-function resolveDiscordProgressFinalTitle(channel, progress) {
-  if (progress?.status === 'failed') {
-    return '실행 실패';
-  }
-  if (!isTribunalChannel(channel)) {
-    return '응답 완료';
-  }
-  if (progress?.activeRole === 'arbiter') {
-    return 'arbiter 완료';
-  }
-  if (progress?.reviewerVerdict === 'approved') {
-    return 'reviewer 승인 완료';
-  }
-  return 'owner 완료';
-}
-
-function formatDiscordElapsedDuration(startedAt, endedAt) {
-  const startMs = normalizeDiscordProgressTime(startedAt);
-  const endMs = normalizeDiscordProgressTime(endedAt);
-  if (startMs === null || endMs === null || endMs < startMs) {
-    return '0초';
-  }
-
-  const totalSeconds = Math.max(0, Math.floor((endMs - startMs) / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const parts = [];
-  if (hours > 0) {
-    parts.push(`${hours}시간`);
-  }
-  if (minutes > 0 || hours > 0) {
-    parts.push(`${minutes}분`);
-  }
-  parts.push(`${seconds}초`);
-  return parts.join(' ');
-}
-
-function normalizeDiscordProgressTime(value) {
-  if (value instanceof Date) {
-    return value.getTime();
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Date.parse(value);
-    return Number.isNaN(parsed) ? null : parsed;
-  }
-  return null;
 }
 
 function localizeReviewerVerdict(verdict) {

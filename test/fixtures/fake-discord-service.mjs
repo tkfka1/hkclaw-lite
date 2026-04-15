@@ -27,6 +27,7 @@ function writeStatus(overrides = {}) {
         agentName,
         pid: process.pid,
         running: overrides.running ?? true,
+        desiredRunning: overrides.desiredRunning ?? true,
         startedAt:
           overrides.startedAt === undefined ? new Date().toISOString() : overrides.startedAt,
         stoppedAt: overrides.stoppedAt || null,
@@ -64,6 +65,7 @@ const shutdown = () => {
     startedAt: undefined,
     lastError: null,
     running: false,
+    desiredRunning: true,
   });
   process.exit(0);
 };

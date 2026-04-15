@@ -13,6 +13,7 @@ import {
   enqueueDiscordServiceCommand,
   getDiscordAgentStatusPath,
   listDiscordServiceCommands,
+  readDiscordAgentServiceStatus,
   writeDiscordAgentServiceStatus,
   writeDiscordServiceStatus,
 } from '../src/discord-runtime-state.js';
@@ -21,6 +22,7 @@ import {
   enqueueTelegramServiceCommand,
   getTelegramAgentStatusPath,
   listTelegramServiceCommands,
+  readTelegramAgentServiceStatus,
   writeTelegramAgentServiceStatus,
 } from '../src/telegram-runtime-state.js';
 import { recordRuntimeUsageEvent } from '../src/runtime-db.js';
@@ -1049,6 +1051,7 @@ test('admin server can start, restart, and stop Discord service', async () => {
         return worker && !worker.running && !worker.pidAlive ? snapshot : null;
       });
       assert.equal(stopped?.agentServices?.worker?.running, false);
+      assert.equal(readDiscordAgentServiceStatus(projectRoot, 'worker')?.desiredRunning, false);
     });
   } finally {
     if (previousEntry === undefined) {
@@ -1059,7 +1062,7 @@ test('admin server can start, restart, and stop Discord service', async () => {
   }
 });
 
-test('admin server restores previously running Discord service on startup', async () => {
+test('admin server restores desired Discord service on startup', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
   const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
@@ -1077,7 +1080,8 @@ test('admin server restores previously running Discord service on startup', asyn
     projectRoot,
     agentName: 'worker',
     pid: 999999,
-    running: true,
+    running: false,
+    desiredRunning: true,
     startedAt: '2026-04-15T00:00:00.000Z',
     heartbeatAt: '2026-04-15T00:00:00.000Z',
     agents: {
@@ -1098,6 +1102,7 @@ test('admin server restores previously running Discord service on startup', asyn
         return snapshot.agentServices?.worker?.running ? snapshot : null;
       });
       assert.equal(Boolean(restored?.agentServices?.worker?.running), true);
+      assert.equal(restored?.agentServices?.worker?.desiredRunning, true);
       assert.equal(Number.isInteger(restored?.agentServices?.worker?.pid), true);
       assert.notEqual(restored?.agentServices?.worker?.pid, 999999);
 
@@ -1176,6 +1181,7 @@ test('admin server can start, restart, and stop Telegram service', async () => {
         return worker && !worker.running && !worker.pidAlive ? snapshot : null;
       });
       assert.equal(stopped?.agentServices?.worker?.running, false);
+      assert.equal(readTelegramAgentServiceStatus(projectRoot, 'worker')?.desiredRunning, false);
     });
   } finally {
     if (previousEntry === undefined) {
@@ -1186,7 +1192,7 @@ test('admin server can start, restart, and stop Telegram service', async () => {
   }
 });
 
-test('admin server restores previously running Telegram service on startup', async () => {
+test('admin server restores desired Telegram service on startup', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
   const previousEntry = process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY;
@@ -1205,7 +1211,8 @@ test('admin server restores previously running Telegram service on startup', asy
     projectRoot,
     agentName: 'worker',
     pid: 999999,
-    running: true,
+    running: false,
+    desiredRunning: true,
     startedAt: '2026-04-15T00:00:00.000Z',
     heartbeatAt: '2026-04-15T00:00:00.000Z',
     agents: {
@@ -1226,6 +1233,7 @@ test('admin server restores previously running Telegram service on startup', asy
         return snapshot.agentServices?.worker?.running ? snapshot : null;
       });
       assert.equal(Boolean(restored?.agentServices?.worker?.running), true);
+      assert.equal(restored?.agentServices?.worker?.desiredRunning, true);
       assert.equal(Number.isInteger(restored?.agentServices?.worker?.pid), true);
       assert.notEqual(restored?.agentServices?.worker?.pid, 999999);
 

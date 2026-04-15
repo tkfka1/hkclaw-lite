@@ -7,8 +7,6 @@ import path from 'node:path';
 import {
   flushPendingDiscordOutbox,
   flushDiscordOutboxForRun,
-  formatDiscordProgressFinalMessage,
-  formatDiscordProgressMessage,
   formatDiscordRoleMessage,
 } from '../src/discord-service.js';
 import {
@@ -95,51 +93,6 @@ test('discord formatter keeps single channels concise', () => {
   );
 
   assert.equal(text, 'done');
-});
-
-test('discord progress formatter shows tribunal elapsed state clearly', () => {
-  const text = formatDiscordProgressMessage(
-    {
-      name: 'tribunal-main',
-      mode: 'tribunal',
-      reviewRounds: 2,
-    },
-    {
-      status: 'reviewer_running',
-      activeRole: 'reviewer',
-      currentRound: 1,
-      maxRounds: 2,
-      startedAt: '2026-04-16T00:00:00.000Z',
-    },
-    {
-      now: new Date('2026-04-16T00:01:55.000Z').getTime(),
-    },
-  );
-
-  assert.match(text, /⏱ \*\*reviewer 검토 중\*\*/u);
-  assert.match(text, /tribunal-main · 1\/2 · 1분 55초 경과/u);
-});
-
-test('discord progress formatter shows final elapsed state clearly', () => {
-  const text = formatDiscordProgressFinalMessage(
-    {
-      name: 'tribunal-main',
-      mode: 'tribunal',
-      reviewRounds: 2,
-    },
-    {
-      status: 'completed',
-      activeRole: 'arbiter',
-      currentRound: 2,
-      maxRounds: 2,
-      reviewerVerdict: 'blocked',
-      startedAt: '2026-04-16T00:00:00.000Z',
-      completedAt: '2026-04-16T00:01:55.000Z',
-    },
-  );
-
-  assert.match(text, /✅ \*\*arbiter 완료\*\*/u);
-  assert.match(text, /tribunal-main · 2\/2 · 수정 필요 · 1분 55초 소요/u);
 });
 
 test('discord service flushes queued runtime outbox events', async () => {
