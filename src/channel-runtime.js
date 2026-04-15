@@ -541,7 +541,9 @@ async function createRuntimeRecorder(projectRoot, { channel, prompt, workdir }) 
 async function swallowRuntimePersistenceError(callback) {
   try {
     await callback();
-  } catch {}
+  } catch (error) {
+    console.error(`Runtime persistence error: ${toErrorMessage(error)}`);
+  }
 }
 
 async function loadRoleSessionHistory(projectRoot, { channel, role, runId }) {

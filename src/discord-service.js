@@ -22,6 +22,7 @@ import { assert, timestamp, toErrorMessage } from './utils.js';
 const DISCORD_MESSAGE_LIMIT = 1900;
 const DISCORD_OUTBOX_FLUSH_INTERVAL_MS = 1_000;
 const DISCORD_COMMAND_POLL_INTERVAL_MS = 1_000;
+const DISCORD_TYPING_REFRESH_MS = 8_000;
 
 export async function serveDiscord(projectRoot, { envFile = null, agentName = null } = {}) {
   const { envFilePath } = loadProjectEnvFile(projectRoot, envFile);
@@ -228,7 +229,7 @@ async function handleInboundMessage({
   const workdir = resolveProjectPath(projectRoot, workspace);
   assert(fs.existsSync(workdir), `Workspace does not exist: ${workdir}`);
 
-  await message.channel.sendTyping();
+  const typingInterval = startTypingIndicator(message.channel);
   let runId = null;
   try {
     const result = await executeChannelTurn({
@@ -247,6 +248,8 @@ async function handleInboundMessage({
       );
     }
     throw error;
+  } finally {
+    stopTypingIndicator(typingInterval);
   }
 
   if (runId) {
@@ -279,7 +282,8 @@ function attachDiscordClientMessageHandler({
       });
     }).catch(async (error) => {
       console.error(`Discord handler error: ${toErrorMessage(error)}`);
-      await sendDiscordText(client, message.channelId, `오류: ${toErrorMessage(error)}`);
+      const userMessage = formatDiscordErrorMessage(error);
+      await sendDiscordText(client, message.channelId, userMessage);
     });
   });
 }
@@ -469,6 +473,46 @@ async function sendDiscordText(client, channelId, text) {
   assert(channel?.isTextBased?.(), `Discord channel "${channelId}" is not text-based.`);
   for (const chunk of splitDiscordMessage(text)) {
     await channel.send(chunk);
+  }
+}
+
+function formatDiscordErrorMessage(error) {
+  const raw = toErrorMessage(error);
+  if (/timeout|timed?\s*out/iu.test(raw)) {
+    return '⏱ 에이전트 응답 시간이 초과되었습니다. 다시 시도해 주세요.';
+  }
+  if (/ECONNREFUSED|ENOTFOUND|fetch failed/iu.test(raw)) {
+    return '🔌 AI 서비스에 연결할 수 없습니다. 서비스 상태를 확인해 주세요.';
+  }
+  if (/auth|unauthorized|forbidden|login/iu.test(raw)) {
+    return '🔑 AI 인증에 실패했습니다. 웹 어드민에서 로그인 상태를 확인해 주세요.';
+  }
+  if (/rate.?limit|too many requests|429/iu.test(raw)) {
+    return '⚠️ API 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.';
+  }
+  if (/workspace does not exist/iu.test(raw)) {
+    return '📁 워크스페이스 경로를 찾을 수 없습니다. 채널 설정을 확인해 주세요.';
+  }
+  const truncated = raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
+  return `오류: ${truncated}`;
+}
+
+function startTypingIndicator(discordChannel) {
+  try {
+    discordChannel.sendTyping();
+  } catch {}
+  const interval = setInterval(() => {
+    try {
+      discordChannel.sendTyping();
+    } catch {}
+  }, DISCORD_TYPING_REFRESH_MS);
+  interval.unref?.();
+  return interval;
+}
+
+function stopTypingIndicator(interval) {
+  if (interval) {
+    clearInterval(interval);
   }
 }
 

@@ -33,6 +33,8 @@ import {
   verifyAdminPassword,
 } from './runtime-db.js';
 import {
+  CLAUDE_ACP_DISABLED_ENV_KEYS,
+  GEMINI_CLI_DISABLED_ENV_KEYS,
   inspectAgentRuntime,
   resolveManagedAgentCli,
   runAgentTurn,
@@ -69,19 +71,6 @@ const moduleRequire = createRequire(import.meta.url);
 const codexAuthFlows = new Map();
 const claudeAuthFlows = new Map();
 const geminiAuthFlows = new Map();
-const CLAUDE_ACP_DISABLED_ENV_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_BASE_URL',
-  'ANTHROPIC_VERSION',
-];
-const GEMINI_CLI_DISABLED_ENV_KEYS = [
-  'GEMINI_API_KEY',
-  'GOOGLE_API_KEY',
-  'GEMINI_BASE_URL',
-  'GOOGLE_APPLICATION_CREDENTIALS',
-  'GOOGLE_CLOUD_ACCESS_TOKEN',
-  'GOOGLE_GENAI_USE_GCA',
-];
 const GEMINI_GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GEMINI_GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GEMINI_GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';

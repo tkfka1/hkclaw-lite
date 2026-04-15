@@ -73,12 +73,12 @@ const CODEX_PLATFORM_BUNDLES = {
     targetTriple: 'aarch64-pc-windows-msvc',
   },
 };
-const CLAUDE_ACP_DISABLED_ENV_KEYS = [
+export const CLAUDE_ACP_DISABLED_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_VERSION',
 ];
-const GEMINI_CLI_DISABLED_ENV_KEYS = [
+export const GEMINI_CLI_DISABLED_ENV_KEYS = [
   'GEMINI_API_KEY',
   'GOOGLE_API_KEY',
   'GEMINI_BASE_URL',

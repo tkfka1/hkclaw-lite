@@ -676,13 +676,18 @@ async function login(form) {
 }
 
 async function logout() {
-  const response = await mutateJson('/api/logout', {
-    method: 'POST',
-  });
-  state.auth = response;
-  state.data = null;
-  setNotice('info', '로그아웃했습니다.');
-  render();
+  try {
+    const response = await mutateJson('/api/logout', {
+      method: 'POST',
+    });
+    state.auth = response;
+    state.data = null;
+    setNotice('info', '로그아웃했습니다.');
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function changeAdminPassword(form) {
@@ -846,105 +851,164 @@ async function deleteEntity(kind, name) {
     return;
   }
 
-  const response = await mutateJson(`/api/${kind}s/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-  });
+  try {
+    const response = await mutateJson(`/api/${kind}s/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
 
-  state.data = response.state;
-  setNotice(
-    'info',
-    kind === 'bot'
-      ? `봇 "${name}"을(를) 삭제했습니다. 실행 중인 Discord 연결 정리는 전체 다시 읽기 때 반영됩니다.`
-      : `${localizeKind(kind)} "${name}"을(를) 삭제했습니다.`,
-  );
-  render();
+    state.data = response.state;
+    setNotice(
+      'info',
+      kind === 'bot'
+        ? `봇 "${name}"을(를) 삭제했습니다. 실행 중인 Discord 연결 정리는 전체 다시 읽기 때 반영됩니다.`
+        : `${localizeKind(kind)} "${name}"을(를) 삭제했습니다.`,
+    );
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function reloadDiscordServiceConfig() {
-  await mutateJson('/api/discord-service/reload', {
-    method: 'POST',
-  });
-  setNotice('info', 'Discord 서비스가 최신 봇 설정을 다시 읽고 있습니다.');
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson('/api/discord-service/reload', {
+      method: 'POST',
+    });
+    setNotice('info', 'Discord 서비스가 최신 봇 설정을 다시 읽고 있습니다.');
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function startDiscordService() {
-  await mutateJson('/api/discord-service/start', {
-    method: 'POST',
-  });
-  setNotice('info', 'Discord 서비스를 시작하고 있습니다.');
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson('/api/discord-service/start', {
+      method: 'POST',
+    });
+    setNotice('info', 'Discord 서비스를 시작하고 있습니다.');
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function restartDiscordService() {
-  await mutateJson('/api/discord-service/restart', {
-    method: 'POST',
-  });
-  setNotice('info', 'Discord 서비스를 재시작하고 있습니다.');
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson('/api/discord-service/restart', {
+      method: 'POST',
+    });
+    setNotice('info', 'Discord 서비스를 재시작하고 있습니다.');
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function stopDiscordService() {
-  await mutateJson('/api/discord-service/stop', {
-    method: 'POST',
-  });
-  setNotice('info', 'Discord 서비스를 중지하고 있습니다.');
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson('/api/discord-service/stop', {
+      method: 'POST',
+    });
+    setNotice('info', 'Discord 서비스를 중지하고 있습니다.');
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function reconnectDiscordBot(name) {
   if (!name) {
     return;
   }
-  await mutateJson(`/api/bots/${encodeURIComponent(name)}/reconnect`, {
-    method: 'POST',
-  });
-  setNotice('info', `봇 "${name}" 연결을 다시 시도합니다.`);
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson(`/api/bots/${encodeURIComponent(name)}/reconnect`, {
+      method: 'POST',
+    });
+    setNotice('info', `봇 "${name}" 연결을 다시 시도합니다.`);
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function reconnectAgent(name) {
   if (!name) {
     return;
   }
-  await mutateJson(`/api/agents/${encodeURIComponent(name)}/reconnect`, {
-    method: 'POST',
-  });
-  setNotice('info', `에이전트 "${name}" Discord 연결을 다시 시도합니다.`);
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson(`/api/agents/${encodeURIComponent(name)}/reconnect`, {
+      method: 'POST',
+    });
+    setNotice('info', `에이전트 "${name}" Discord 연결을 다시 시도합니다.`);
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function startAgentDiscordService(name) {
   if (!name) {
     return;
   }
-  await mutateJson(`/api/agents/${encodeURIComponent(name)}/start`, {
-    method: 'POST',
-  });
-  setNotice('info', `에이전트 "${name}" Discord 워커를 시작하고 있습니다.`);
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson(`/api/agents/${encodeURIComponent(name)}/start`, {
+      method: 'POST',
+    });
+    setNotice('info', `에이전트 "${name}" Discord 워커를 시작하고 있습니다.`);
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function restartAgentDiscordService(name) {
   if (!name) {
     return;
   }
-  await mutateJson(`/api/agents/${encodeURIComponent(name)}/restart`, {
-    method: 'POST',
-  });
-  setNotice('info', `에이전트 "${name}" Discord 워커를 재시작하고 있습니다.`);
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson(`/api/agents/${encodeURIComponent(name)}/restart`, {
+      method: 'POST',
+    });
+    setNotice('info', `에이전트 "${name}" Discord 워커를 재시작하고 있습니다.`);
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function stopAgentDiscordService(name) {
   if (!name) {
     return;
   }
-  await mutateJson(`/api/agents/${encodeURIComponent(name)}/stop`, {
-    method: 'POST',
-  });
-  setNotice('info', `에이전트 "${name}" Discord 워커를 중지하고 있습니다.`);
-  void refreshStateAfterDiscordCommand();
+  try {
+    await mutateJson(`/api/agents/${encodeURIComponent(name)}/stop`, {
+      method: 'POST',
+    });
+    setNotice('info', `에이전트 "${name}" Discord 워커를 중지하고 있습니다.`);
+    render();
+    void refreshStateAfterDiscordCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function refreshStateAfterDiscordCommand() {
@@ -981,25 +1045,30 @@ async function deleteLocalLlmConnection(name) {
   }
 
   const nextConnections = currentEntries.filter((entry) => entry.name !== name);
-  const response = await mutateJson('/api/local-llm-connections', {
-    method: 'PUT',
-    body: {
-      connections: nextConnections,
-    },
-  });
+  try {
+    const response = await mutateJson('/api/local-llm-connections', {
+      method: 'PUT',
+      body: {
+        connections: nextConnections,
+      },
+    });
 
-  state.data = response.state;
-  if (
-    state.aiManager?.type === 'local-llm' &&
-    optionalDraftText(state.aiManager?.localLlmConnection) === name
-  ) {
-    const fallbackName = nextConnections[0]?.name || '';
-    state.aiManager = fallbackName
-      ? createAiManager('local-llm', { localLlmConnection: fallbackName })
-      : null;
+    state.data = response.state;
+    if (
+      state.aiManager?.type === 'local-llm' &&
+      optionalDraftText(state.aiManager?.localLlmConnection) === name
+    ) {
+      const fallbackName = nextConnections[0]?.name || '';
+      state.aiManager = fallbackName
+        ? createAiManager('local-llm', { localLlmConnection: fallbackName })
+        : null;
+    }
+    setNotice('info', `로컬 LLM 연결 "${name}"을(를) 삭제했습니다.`);
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
   }
-  setNotice('info', `로컬 LLM 연결 "${name}"을(를) 삭제했습니다.`);
-  render();
 }
 
 async function resetChannelRuntimeSessions(name) {
@@ -1014,16 +1083,21 @@ async function resetChannelRuntimeSessions(name) {
     return;
   }
 
-  const response = await mutateJson(
-    `/api/channels/${encodeURIComponent(name)}/runtime-sessions`,
-    {
-      method: 'DELETE',
-    },
-  );
+  try {
+    const response = await mutateJson(
+      `/api/channels/${encodeURIComponent(name)}/runtime-sessions`,
+      {
+        method: 'DELETE',
+      },
+    );
 
-  state.data = response.state;
-  setNotice('info', `채널 "${name}"의 Claude 세션 매핑을 초기화했습니다.`);
-  render();
+    state.data = response.state;
+    setNotice('info', `채널 "${name}"의 Claude 세션 매핑을 초기화했습니다.`);
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function mutateJson(url, options) {
@@ -2859,41 +2933,46 @@ async function saveAiCredentials() {
   }
 
   const agentType = optionalDraftText(state.aiManager.type);
-  let response;
-  if (agentType === 'local-llm') {
-    response = await mutateJson('/api/local-llm-connections', {
-      method: 'PUT',
-      body: {
-        connections: parseLocalLlmConnectionEntries(state.aiManager.credentials.connections),
-      },
-    });
-  } else {
-    const nextSharedEnv = {
-      ...(state.data?.sharedEnv || {}),
-    };
+  try {
+    let response;
+    if (agentType === 'local-llm') {
+      response = await mutateJson('/api/local-llm-connections', {
+        method: 'PUT',
+        body: {
+          connections: parseLocalLlmConnectionEntries(state.aiManager.credentials.connections),
+        },
+      });
+    } else {
+      const nextSharedEnv = {
+        ...(state.data?.sharedEnv || {}),
+      };
 
-    for (const key of getAiManagedCredentialKeys(agentType)) {
-      const value = optionalDraftText(state.aiManager.credentials?.[key]);
-      if (value) {
-        nextSharedEnv[key] = value;
-      } else {
-        delete nextSharedEnv[key];
+      for (const key of getAiManagedCredentialKeys(agentType)) {
+        const value = optionalDraftText(state.aiManager.credentials?.[key]);
+        if (value) {
+          nextSharedEnv[key] = value;
+        } else {
+          delete nextSharedEnv[key];
+        }
       }
+
+      response = await mutateJson('/api/shared-env', {
+        method: 'PUT',
+        body: {
+          sharedEnv: nextSharedEnv,
+        },
+      });
     }
 
-    response = await mutateJson('/api/shared-env', {
-      method: 'PUT',
-      body: {
-        sharedEnv: nextSharedEnv,
-      },
-    });
+    state.data = response.state;
+    await refreshAiStatuses();
+    state.aiManager = createAiManager(agentType);
+    setNotice('info', agentType === 'local-llm' ? '로컬 LLM 연결 목록을 저장했습니다.' : `${localizeAgentTypeValue(agentType)} 자격정보를 저장했습니다.`);
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
   }
-
-  state.data = response.state;
-  await refreshAiStatuses();
-  state.aiManager = createAiManager(agentType);
-  setNotice('info', agentType === 'local-llm' ? '로컬 LLM 연결 목록을 저장했습니다.' : `${localizeAgentTypeValue(agentType)} 자격정보를 저장했습니다.`);
-  render();
 }
 
 function buildAiManagerTestDefinition(agentType) {
