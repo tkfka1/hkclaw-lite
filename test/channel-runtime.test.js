@@ -93,6 +93,47 @@ if (args[0] === 'auth' && args[1] === 'status' && args[2] === '--json') {
     model: 'claude-sonnet-test',
   }) + '\\n');
   process.stdout.write(JSON.stringify({
+    type: 'content_block_start',
+    index: 0,
+    session_id: sessionId,
+    content_block: {
+      type: 'thinking',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_delta',
+    index: 0,
+    session_id: sessionId,
+    delta: {
+      type: 'thinking_delta',
+      thinking: 'analyze request ',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_start',
+    index: 1,
+    session_id: sessionId,
+    content_block: {
+      type: 'tool_use',
+      id: 'toolu_runtime',
+      name: 'bash',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_delta',
+    index: 1,
+    session_id: sessionId,
+    delta: {
+      type: 'input_json_delta',
+      partial_json: '{\"cmd\":\"pwd\"}',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_stop',
+    index: 1,
+    session_id: sessionId,
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
     type: 'result',
     subtype: 'success',
     session_id: sessionId,
@@ -558,5 +599,100 @@ test('single channel reuses Claude CLI sessions per channel role', async () => {
       assert.equal(sessionsAfterSecond[0].runtimeSessionId, sessionsAfterFirst[0].runtimeSessionId);
       assert.equal(sessionsAfterSecond[0].runCount, 2);
     },
+  );
+});
+
+test('single channel forwards Claude stream events with role metadata', async () => {
+  const projectRoot = createProject();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'claude-code',
+    model: 'claude-sonnet-4-6',
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    mode: 'single',
+    discordChannelId: '123',
+    workspace: 'workspace',
+    agent: 'owner',
+  });
+  saveConfig(projectRoot, config);
+
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const streamEvents = [];
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      const loaded = loadConfig(projectRoot);
+      const channel = getChannel(loaded, 'main');
+
+      await executeChannelTurn({
+        projectRoot,
+        config: loaded,
+        channel,
+        prompt: 'stream this',
+        workdir: workspacePath,
+        onStreamEvent: async (event) => {
+          streamEvents.push(event);
+        },
+      });
+    },
+  );
+
+  assert.deepEqual(
+    streamEvents.map((event) => ({
+      role: event.role,
+      agentName: event.agentName,
+      agentType: event.agentType,
+      kind: event.kind,
+      phase: event.phase || null,
+      toolName: event.toolName || null,
+      text: event.text || '',
+    })),
+    [
+      {
+        role: 'owner',
+        agentName: 'owner',
+        agentType: 'claude-code',
+        kind: 'thinking',
+        phase: null,
+        toolName: null,
+        text: 'analyze request ',
+      },
+      {
+        role: 'owner',
+        agentName: 'owner',
+        agentType: 'claude-code',
+        kind: 'tool',
+        phase: 'start',
+        toolName: 'bash',
+        text: '',
+      },
+      {
+        role: 'owner',
+        agentName: 'owner',
+        agentType: 'claude-code',
+        kind: 'tool',
+        phase: 'input',
+        toolName: 'bash',
+        text: '{"cmd":"pwd"}',
+      },
+      {
+        role: 'owner',
+        agentName: 'owner',
+        agentType: 'claude-code',
+        kind: 'tool',
+        phase: 'stop',
+        toolName: 'bash',
+        text: '',
+      },
+    ],
   );
 });

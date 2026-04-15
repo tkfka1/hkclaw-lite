@@ -100,6 +100,61 @@ if (args.includes('-p') && args.includes('--output-format') && args.includes('st
     model: model || 'sonnet',
   }) + '\\n');
   process.stdout.write(JSON.stringify({
+    type: 'content_block_start',
+    index: 0,
+    session_id: sessionId,
+    content_block: {
+      type: 'thinking',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_delta',
+    index: 0,
+    session_id: sessionId,
+    delta: {
+      type: 'thinking_delta',
+      thinking: 'first thought ',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_start',
+    index: 1,
+    session_id: sessionId,
+    content_block: {
+      type: 'tool_use',
+      id: 'toolu_test',
+      name: 'bash',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_delta',
+    index: 1,
+    session_id: sessionId,
+    delta: {
+      type: 'input_json_delta',
+      partial_json: '{\"cmd\":\"ls\"}',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_stop',
+    index: 1,
+    session_id: sessionId,
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_delta',
+    index: 0,
+    session_id: sessionId,
+    delta: {
+      type: 'thinking_delta',
+      thinking: 'second thought',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'content_block_stop',
+    index: 0,
+    session_id: sessionId,
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
     type: 'message_delta',
     session_id: sessionId,
     usage: {
@@ -426,6 +481,79 @@ test('runAgentTurn returns Claude usage metadata when captureRuntimeMetadata is 
       });
       assert.equal(output.runtimeMeta?.runtimeBackend, 'claude-cli');
     },
+  );
+});
+
+test('runAgentTurn forwards Claude stream events while preserving the final result', async () => {
+  const projectRoot = createTempDir();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const events = [];
+
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      const output = await runAgentTurn({
+        projectRoot,
+        agent: {
+          name: 'claude-agent',
+          agent: 'claude-code',
+        },
+        prompt: 'Return exactly OK.',
+        rawPrompt: 'Return exactly OK.',
+        workdir: 'workspace',
+        sharedEnv: {},
+        onStreamEvent: async (event) => {
+          events.push(event);
+        },
+      });
+
+      assert.equal(typeof output, 'string');
+    },
+  );
+
+  assert.deepEqual(
+    events.map((event) => ({
+      kind: event.kind,
+      phase: event.phase || null,
+      toolName: event.toolName || null,
+      text: event.text || '',
+    })),
+    [
+      {
+        kind: 'thinking',
+        phase: null,
+        toolName: null,
+        text: 'first thought ',
+      },
+      {
+        kind: 'tool',
+        phase: 'start',
+        toolName: 'bash',
+        text: '',
+      },
+      {
+        kind: 'tool',
+        phase: 'input',
+        toolName: 'bash',
+        text: '{"cmd":"ls"}',
+      },
+      {
+        kind: 'tool',
+        phase: 'stop',
+        toolName: 'bash',
+        text: '',
+      },
+      {
+        kind: 'thinking',
+        phase: null,
+        toolName: null,
+        text: 'second thought',
+      },
+    ],
   );
 });
 

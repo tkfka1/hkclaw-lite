@@ -117,6 +117,7 @@ export async function runAgentTurn({
   role = null,
   runtimeSession = null,
   captureRuntimeMetadata = false,
+  onStreamEvent = null,
 }) {
   let result;
   switch (agent.agent) {
@@ -141,6 +142,7 @@ export async function runAgentTurn({
         channel,
         role,
         runtimeSession,
+        onStreamEvent,
       });
       break;
     case 'gemini-cli':
@@ -320,6 +322,7 @@ async function runClaude({
   channel,
   role,
   runtimeSession,
+  onStreamEvent,
 }) {
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const env = stripClaudeAcpEnv(buildChildEnv({
@@ -368,6 +371,7 @@ async function runClaude({
     args.push('--effort', service.effort);
   }
 
+  const streamState = createClaudeCliStreamState();
   const result = await runChildProcess({
     command: cli.command,
     args,
@@ -375,6 +379,16 @@ async function runClaude({
     env: applyEnvPatch(env, cli.envPatch),
     input: prompt,
     timeoutMs: service.timeoutMs,
+    onStdoutLine:
+      typeof onStreamEvent === 'function'
+        ? async (line) => {
+            const message = parseClaudeCliStreamJsonLine(line);
+            const event = extractClaudeCliStreamEvent(message, streamState);
+            if (event) {
+              await onStreamEvent(event);
+            }
+          }
+        : null,
   });
   return parseClaudeCliStreamJson(result.stdout, {
     fallbackSessionId: sessionSpec.newSessionId || sessionSpec.resumeSessionId || null,
@@ -586,6 +600,7 @@ function runChildProcess({
   env,
   input,
   timeoutMs,
+  onStdoutLine = null,
 }) {
   return new Promise((resolve, reject) => {
     const child = spawnResolved(command, args, {
@@ -596,8 +611,41 @@ function runChildProcess({
 
     let stdout = '';
     let stderr = '';
+    let stdoutLineBuffer = '';
     let settled = false;
     let timeout = null;
+    let lineTask = Promise.resolve();
+    let lineError = null;
+
+    const enqueueStdoutLine = (line) => {
+      if (typeof onStdoutLine !== 'function' || !line) {
+        return;
+      }
+      lineTask = lineTask
+        .then(() => onStdoutLine(line))
+        .catch((error) => {
+          lineError = error;
+          child.kill('SIGTERM');
+        });
+    };
+
+    const flushStdoutLines = ({ flushRemainder = false } = {}) => {
+      while (true) {
+        const newlineIndex = stdoutLineBuffer.indexOf('\n');
+        if (newlineIndex < 0) {
+          break;
+        }
+        const line = stdoutLineBuffer.slice(0, newlineIndex).replace(/\r$/u, '').trim();
+        stdoutLineBuffer = stdoutLineBuffer.slice(newlineIndex + 1);
+        enqueueStdoutLine(line);
+      }
+
+      if (flushRemainder) {
+        const remainder = stdoutLineBuffer.trim();
+        stdoutLineBuffer = '';
+        enqueueStdoutLine(remainder);
+      }
+    };
 
     if (timeoutMs) {
       timeout = setTimeout(() => {
@@ -606,7 +654,10 @@ function runChildProcess({
     }
 
     child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      stdoutLineBuffer += text;
+      flushStdoutLines();
     });
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
@@ -622,28 +673,36 @@ function runChildProcess({
       reject(error);
     });
     child.on('close', (code, signal) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      if (code !== 0) {
-        reject(
-          new Error(
-            [
-              `${command} exited with code ${code ?? 'unknown'}`,
-              signal ? `signal=${signal}` : null,
-              stderr.trim() || stdout.trim() || null,
-            ]
-              .filter(Boolean)
-              .join('\n'),
-          ),
-        );
-        return;
-      }
-      resolve({ stdout, stderr });
+      void (async () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeout) {
+          clearTimeout(timeout);
+        }
+        flushStdoutLines({ flushRemainder: true });
+        await lineTask;
+        if (lineError) {
+          reject(new Error(toErrorMessage(lineError)));
+          return;
+        }
+        if (code !== 0) {
+          reject(
+            new Error(
+              [
+                `${command} exited with code ${code ?? 'unknown'}`,
+                signal ? `signal=${signal}` : null,
+                stderr.trim() || stdout.trim() || null,
+              ]
+                .filter(Boolean)
+                .join('\n'),
+            ),
+          );
+          return;
+        }
+        resolve({ stdout, stderr });
+      })();
     });
 
     if (input) {
@@ -728,9 +787,9 @@ function parseClaudeCliStreamJson(stdout, { fallbackSessionId = null } = {}) {
   for (const line of lines) {
     let message;
     try {
-      message = JSON.parse(line);
+      message = parseClaudeCliStreamJsonLine(line);
     } catch (error) {
-      throw new Error(`Invalid Claude stream-json output: ${toErrorMessage(error)}`);
+      throw new Error(toErrorMessage(error));
     }
 
     if (!sessionId && typeof message?.session_id === 'string' && message.session_id.trim()) {
@@ -771,6 +830,126 @@ function parseClaudeCliStreamJson(stdout, { fallbackSessionId = null } = {}) {
         }
       : null,
   };
+}
+
+function parseClaudeCliStreamJsonLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch (error) {
+    throw new Error(`Invalid Claude stream-json output: ${toErrorMessage(error)}`);
+  }
+}
+
+function createClaudeCliStreamState() {
+  return {
+    blocks: new Map(),
+  };
+}
+
+function extractClaudeCliStreamEvent(message, state) {
+  if (!message || typeof message !== 'object') {
+    return null;
+  }
+
+  const blockIndex = Number.isInteger(message.index) ? message.index : null;
+  if (message.type === 'content_block_start') {
+    const contentBlock = message.content_block || null;
+    if (!contentBlock || typeof contentBlock !== 'object') {
+      return null;
+    }
+    if (blockIndex !== null) {
+      state.blocks.set(blockIndex, {
+        type: String(contentBlock.type || '').trim() || null,
+        id: String(contentBlock.id || '').trim() || null,
+        name: String(contentBlock.name || '').trim() || null,
+      });
+    }
+    if (contentBlock.type === 'tool_use') {
+      const initialInput = formatClaudeToolInput(contentBlock.input);
+      return {
+        source: 'claude-cli',
+        kind: 'tool',
+        phase: 'start',
+        toolName: String(contentBlock.name || '').trim() || null,
+        toolUseId: String(contentBlock.id || '').trim() || null,
+        text: initialInput,
+      };
+    }
+    return null;
+  }
+
+  if (message.type === 'content_block_delta') {
+    const delta = message.delta || null;
+    if (!delta || typeof delta !== 'object') {
+      return null;
+    }
+    if (delta.type === 'thinking_delta') {
+      const text = String(delta.thinking || '');
+      return text
+        ? {
+            source: 'claude-cli',
+            kind: 'thinking',
+            text,
+          }
+        : null;
+    }
+    if (delta.type === 'text_delta') {
+      const text = String(delta.text || '');
+      return text
+        ? {
+            source: 'claude-cli',
+            kind: 'text',
+            text,
+          }
+        : null;
+    }
+    if (delta.type === 'input_json_delta') {
+      const block = blockIndex !== null ? state.blocks.get(blockIndex) : null;
+      const text = String(delta.partial_json || '');
+      if (!block || block.type !== 'tool_use' || !text) {
+        return null;
+      }
+      return {
+        source: 'claude-cli',
+        kind: 'tool',
+        phase: 'input',
+        toolName: block.name,
+        toolUseId: block.id,
+        text,
+      };
+    }
+    return null;
+  }
+
+  if (message.type === 'content_block_stop') {
+    const block = blockIndex !== null ? state.blocks.get(blockIndex) : null;
+    if (blockIndex !== null) {
+      state.blocks.delete(blockIndex);
+    }
+    if (block?.type === 'tool_use') {
+      return {
+        source: 'claude-cli',
+        kind: 'tool',
+        phase: 'stop',
+        toolName: block.name,
+        toolUseId: block.id,
+        text: '',
+      };
+    }
+  }
+
+  return null;
+}
+
+function formatClaudeToolInput(value) {
+  if (value === undefined || value === null || value === '') {
+    return '';
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function extractClaudeCliUsage(message) {

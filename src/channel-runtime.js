@@ -23,6 +23,7 @@ export async function executeChannelTurn({
   workdir,
   onRoleMessage = null,
   onTransition = null,
+  onStreamEvent = null,
 }) {
   const recorder = await createRuntimeRecorder(projectRoot, {
     channel,
@@ -47,6 +48,7 @@ export async function executeChannelTurn({
         workdir,
         recorder,
         onRoleMessage: emitPersistedRoleMessage,
+        onStreamEvent,
       });
     } else {
       const agent = getAgent(config, channel.agent);
@@ -70,6 +72,7 @@ export async function executeChannelTurn({
           role: 'owner',
           runId: recorder.runId,
         }),
+        onStreamEvent,
       });
       const content = ownerTurn.content;
 
@@ -123,6 +126,7 @@ async function executeTribunalTurn({
   workdir,
   recorder,
   onRoleMessage,
+  onStreamEvent = null,
 }) {
   const owner = getAgent(config, channel.agent);
   const reviewer = getAgent(config, channel.reviewer);
@@ -154,6 +158,7 @@ async function executeTribunalTurn({
         role: 'owner',
         runId: recorder.runId,
       }),
+      onStreamEvent,
     });
     ownerResponse = ownerTurn.content;
     await emitRoleMessage(onRoleMessage, {
@@ -193,6 +198,7 @@ async function executeTribunalTurn({
         role: 'reviewer',
         runId: recorder.runId,
       }),
+      onStreamEvent,
     });
     reviewerResponse = reviewerTurn.content;
     const reviewerVerdict = parseReviewerVerdict(reviewerResponse);
@@ -242,6 +248,7 @@ async function executeTribunalTurn({
           reviewerVerdict,
         }),
         workdir: resolveRoleWorkdir(projectRoot, channel, 'arbiter', workdir),
+        onStreamEvent,
       });
       const arbiterResponse = arbiterTurn.content;
       await emitRoleMessage(onRoleMessage, {
@@ -305,6 +312,7 @@ async function executeTribunalTurn({
       maxRounds,
     }),
     workdir: resolveRoleWorkdir(projectRoot, channel, 'arbiter', workdir),
+    onStreamEvent,
   });
   const arbiterResponse = arbiterTurn.content;
   await emitRoleMessage(onRoleMessage, {
@@ -353,6 +361,7 @@ async function executeAgentTurnWithFallback({
   workdir,
   sessionHistory = [],
   visitedAgents = [],
+  onStreamEvent = null,
 }) {
   assert(
     !visitedAgents.includes(agent.name),
@@ -395,6 +404,18 @@ async function executeAgentTurnWithFallback({
       role,
       runtimeSession,
       captureRuntimeMetadata: true,
+      onStreamEvent:
+        typeof onStreamEvent === 'function'
+          ? async (event) => {
+              await onStreamEvent({
+                ...event,
+                role,
+                agentName: agent.name,
+                agentType: agent.agent,
+                channelName: channel?.name || null,
+              });
+            }
+          : null,
     });
     const normalized = normalizeTurnResult(result);
     await recordRuntimeUsageEvent(projectRoot, {
@@ -426,6 +447,7 @@ async function executeAgentTurnWithFallback({
         workdir,
         sessionHistory,
         visitedAgents: [...visitedAgents, agent.name],
+        onStreamEvent,
       });
     } catch (fallbackError) {
       throw new Error(

@@ -23,6 +23,8 @@ const DISCORD_MESSAGE_LIMIT = 1900;
 const DISCORD_OUTBOX_FLUSH_INTERVAL_MS = 1_000;
 const DISCORD_COMMAND_POLL_INTERVAL_MS = 1_000;
 const DISCORD_TYPING_REFRESH_MS = 8_000;
+const DISCORD_STREAM_FLUSH_INTERVAL_MS = 2_000;
+const DISCORD_STREAM_THINKING_FLUSH_CHARS = 800;
 
 export async function serveDiscord(projectRoot, { envFile = null, agentName = null } = {}) {
   const { envFilePath } = loadProjectEnvFile(projectRoot, envFile);
@@ -243,6 +245,9 @@ async function handleInboundMessage({
   assert(fs.existsSync(workdir), `Workspace does not exist: ${workdir}`);
 
   const typingInterval = startTypingIndicator(message.channel);
+  const intermediatePublisher = isTribunalChannel(channel)
+    ? null
+    : createDiscordIntermediatePublisher(message.channel);
   let runId = null;
   try {
     const result = await executeChannelTurn({
@@ -251,6 +256,12 @@ async function handleInboundMessage({
       channel,
       prompt,
       workdir,
+      onStreamEvent:
+        intermediatePublisher
+          ? async (event) => {
+              await intermediatePublisher.push(event);
+            }
+          : null,
     });
     runId = result.runId || null;
   } catch (error) {
@@ -262,6 +273,9 @@ async function handleInboundMessage({
     }
     throw error;
   } finally {
+    if (intermediatePublisher) {
+      await intermediatePublisher.finish();
+    }
     stopTypingIndicator(typingInterval);
   }
 
@@ -555,6 +569,92 @@ function splitDiscordMessage(text) {
     chunks.push(remaining);
   }
   return chunks.filter(Boolean);
+}
+
+function createDiscordIntermediatePublisher(discordChannel) {
+  let thinkingBuffer = '';
+  let activeTool = null;
+  let lastThinkingFlushAt = 0;
+
+  const flushThinking = async ({ force = false } = {}) => {
+    const trimmed = thinkingBuffer.trim();
+    if (!trimmed) {
+      thinkingBuffer = '';
+      return;
+    }
+    const now = Date.now();
+    if (
+      !force &&
+      trimmed.length < DISCORD_STREAM_THINKING_FLUSH_CHARS &&
+      now - lastThinkingFlushAt < DISCORD_STREAM_FLUSH_INTERVAL_MS
+    ) {
+      return;
+    }
+    thinkingBuffer = '';
+    lastThinkingFlushAt = now;
+    await sendDiscordText(discordChannel.client, discordChannel.id, `생각\n${trimmed}`);
+  };
+
+  const flushTool = async () => {
+    if (!activeTool) {
+      return;
+    }
+    const lines = [`도구: ${activeTool.name || 'unknown'}`];
+    const body = String(activeTool.inputText || '').trim();
+    if (body) {
+      lines.push(body);
+    }
+    activeTool = null;
+    await sendDiscordText(discordChannel.client, discordChannel.id, lines.join('\n'));
+  };
+
+  return {
+    async push(event) {
+      if (!event || event.source !== 'claude-cli') {
+        return;
+      }
+
+      if (event.kind === 'thinking') {
+        if (activeTool) {
+          await flushTool();
+        }
+        thinkingBuffer += String(event.text || '');
+        await flushThinking();
+        return;
+      }
+
+      if (event.kind === 'tool') {
+        await flushThinking({ force: true });
+        if (event.phase === 'start') {
+          if (activeTool) {
+            await flushTool();
+          }
+          activeTool = {
+            name: String(event.toolName || 'unknown').trim() || 'unknown',
+            inputText: String(event.text || ''),
+          };
+          return;
+        }
+        if (event.phase === 'input') {
+          if (!activeTool) {
+            activeTool = {
+              name: String(event.toolName || 'unknown').trim() || 'unknown',
+              inputText: '',
+            };
+          }
+          activeTool.inputText += String(event.text || '');
+          return;
+        }
+        if (event.phase === 'stop') {
+          await flushTool();
+        }
+      }
+    },
+    async finish() {
+      await flushThinking({ force: true });
+      await flushTool();
+    },
+  };
 }
 
 export function formatDiscordRoleMessage(channel, entry) {
