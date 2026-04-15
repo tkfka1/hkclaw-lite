@@ -60,3 +60,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-bootstrap" (include "hkclaw-lite.fullname" .) -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "hkclaw-lite.adminSecretName" -}}
+{{- if .Values.adminSecret.name -}}
+{{- .Values.adminSecret.name -}}
+{{- else if .Values.adminExternalSecret.target.name -}}
+{{- .Values.adminExternalSecret.target.name -}}
+{{- else -}}
+{{- printf "%s-env" (include "hkclaw-lite.fullname" .) -}}
+{{- end -}}
+{{- end -}}

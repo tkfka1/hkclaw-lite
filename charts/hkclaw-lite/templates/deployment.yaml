@@ -88,9 +88,13 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.envFrom }}
+          {{- if .Values.envFrom }}
           envFrom:
-            {{- toYaml . | nindent 12 }}
+            {{- toYaml .Values.envFrom | nindent 12 }}
+          {{- else if or .Values.adminExternalSecret.enabled .Values.adminSecret.enabled }}
+          envFrom:
+            - secretRef:
+                name: {{ include "hkclaw-lite.adminSecretName" . }}
           {{- end }}
           {{- if .Values.service.enabled }}
           ports:

@@ -106,6 +106,13 @@ adminExternalSecret:
         decodingStrategy: None
         metadataPolicy: None
 
+adminSecret:
+  enabled: false
+  annotations: {}
+  name: hkclaw-lite-env
+  type: Opaque
+  stringData: {}
+
 command: []
 # Images do not auto-start a role on install.
 # Kubernetes runs only the explicit command/args below.
