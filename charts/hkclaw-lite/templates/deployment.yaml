@@ -36,7 +36,7 @@ spec:
           image: {{ include "hkclaw-lite.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
-            - /bin/sh
+            - /bin/bash
             - -lc
           args:
             - |
@@ -64,7 +64,7 @@ spec:
           image: {{ include "hkclaw-lite.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
-            - /bin/sh
+            - /bin/bash
             - -lc
           args:
             - |
