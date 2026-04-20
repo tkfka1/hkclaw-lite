@@ -180,6 +180,7 @@ function buildSingleTelegramServiceSnapshot(rawStatus) {
       state: 'stopped',
       label: '중지',
       running: false,
+      starting: false,
       stale: false,
       desiredRunning: false,
       pid: null,
@@ -200,6 +201,13 @@ function buildSingleTelegramServiceSnapshot(rawStatus) {
   let state = 'stopped';
   if (rawStatus.running && pidAlive && heartbeatFresh) {
     state = 'running';
+  } else if (
+    Boolean(rawStatus.desiredRunning ?? rawStatus.running) &&
+    pidAlive &&
+    heartbeatFresh &&
+    !rawStatus.lastError
+  ) {
+    state = 'starting';
   } else if (rawStatus.running) {
     state = 'stale';
   }
@@ -208,6 +216,7 @@ function buildSingleTelegramServiceSnapshot(rawStatus) {
     state,
     label: localizeTelegramServiceState(state),
     running: state === 'running',
+    starting: state === 'starting',
     stale: state === 'stale',
     desiredRunning: Boolean(rawStatus.desiredRunning ?? rawStatus.running),
     pid: rawStatus.pid || null,
@@ -340,6 +349,9 @@ function localizeTelegramServiceState(state) {
   if (state === 'running') {
     return '가동 중';
   }
+  if (state === 'starting') {
+    return '시작 중';
+  }
   if (state === 'stale') {
     return '끊김';
   }
@@ -349,6 +361,9 @@ function localizeTelegramServiceState(state) {
 function buildAggregateTelegramServiceLabel({ state, runningCount, totalCount, staleCount }) {
   if (state === 'running') {
     return `가동 중 ${runningCount}/${totalCount}`;
+  }
+  if (state === 'starting') {
+    return totalCount > 0 ? `시작 중 ${runningCount}/${totalCount}` : '시작 중';
   }
   if (state === 'stale') {
     return staleCount > 0 ? `끊김 ${staleCount}/${totalCount}` : '끊김';

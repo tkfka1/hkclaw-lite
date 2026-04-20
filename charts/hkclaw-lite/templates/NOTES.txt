@@ -6,7 +6,8 @@ Important runtime notes:
 
   - HOME is {{ .Values.state.mountPath }}. Claude/Gemini login state and .hkclaw-lite runtime state live there.
   - The default chart runs a single admin Pod. Discord workers started from the web admin run in the same container as child processes.
-  - The workspace volume is {{ if .Values.workspace.enabled }}mounted at {{ .Values.workspace.mountPath }}{{ else }}disabled{{ end }}.
+  - The default channel workspace is {{ .Values.workspace.mountPath }}.
+  - The workspace volume is {{ if .Values.workspace.enabled }}mounted separately at {{ .Values.workspace.mountPath }}{{ else }}stored inside the state volume{{ end }}.
   - In containerized deployments the default channel workspace is {{ .Values.workspace.mountPath }}.
   - If you explicitly set a channel workspace to "~", it resolves to HOME, which is {{ .Values.state.mountPath }} in this chart.
   - Only if you intentionally run extra Pods such as a dedicated discord serve worker must they share the same {{ .Values.state.mountPath }} volume.

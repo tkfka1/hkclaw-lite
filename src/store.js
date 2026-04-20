@@ -38,6 +38,10 @@ export function getProjectLayout(projectRoot) {
 }
 
 export function getDefaultChannelWorkspace() {
+  const overridden = String(process.env.HKCLAW_LITE_DEFAULT_CHANNEL_WORKSPACE || '').trim();
+  if (overridden) {
+    return overridden;
+  }
   return fs.existsSync(CONTAINER_CHANNEL_WORKSPACE)
     ? CONTAINER_CHANNEL_WORKSPACE
     : DEFAULT_CHANNEL_WORKSPACE;

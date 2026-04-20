@@ -45,6 +45,12 @@ const fakeDiscordServicePath = path.join(
   'fixtures',
   'fake-discord-service.mjs',
 );
+const fakeSlowDiscordServicePath = path.join(
+  repoRoot,
+  'test',
+  'fixtures',
+  'fake-slow-discord-service.mjs',
+);
 const fakeTelegramServicePath = path.join(
   repoRoot,
   'test',
@@ -1052,6 +1058,52 @@ test('admin server can start, restart, and stop Discord service', async () => {
       });
       assert.equal(stopped?.agentServices?.worker?.running, false);
       assert.equal(readDiscordAgentServiceStatus(projectRoot, 'worker')?.desiredRunning, false);
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
+test('admin server accepts Discord service while it is still starting', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeSlowDiscordServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'owner-token',
+  });
+  saveConfig(projectRoot, config);
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const startResponse = await requestJson(`${url}/api/agents/worker/start`, {
+        method: 'POST',
+      });
+      assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
+      assert.equal(startResponse.payload.result.action, 'start');
+      assert.equal(startResponse.payload.result.agentName, 'worker');
+      assert.equal(Boolean(startResponse.payload.result.running || startResponse.payload.result.starting), true);
+
+      const starting = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        const worker = snapshot.agentServices?.worker;
+        return worker?.starting ? snapshot : null;
+      });
+      assert.equal(starting?.agentServices?.worker?.state, 'starting');
+
+      const running = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(running?.agentServices?.worker?.running), true);
     });
   } finally {
     if (previousEntry === undefined) {

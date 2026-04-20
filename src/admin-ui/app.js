@@ -1667,6 +1667,7 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
             const agentService = isDiscordPlatform ? (agent.discordService || null) : (agent.telegramService || null);
             const agentServiceLabel = agentService?.label || '중지';
             const agentServiceRunning = Boolean(agentService?.running);
+            const agentServiceStarting = Boolean(agentService?.starting);
             const agentServiceStale = Boolean(agentService?.stale);
             const tokenConfigured = isDiscordPlatform
               ? agent.discordTokenConfigured
@@ -1676,6 +1677,8 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
                 ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
                 : agentServiceRunning
                   ? '연결 안 됨'
+                  : agentServiceStarting
+                    ? '워커 시작 중'
                   : agentServiceStale
                     ? '워커 끊김'
                     : '워커 중지'
@@ -1683,6 +1686,8 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
                 ? `연결됨${telegramRuntime.username ? ` · @${telegramRuntime.username}` : ''}`
                 : agentServiceRunning
                   ? '연결 안 됨'
+                  : agentServiceStarting
+                    ? '워커 시작 중'
                   : agentServiceStale
                     ? '워커 끊김'
                     : '워커 중지';
@@ -1694,9 +1699,9 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
                   <div class="field-hint">${escapeHtml(platformLabel)} 토큰 ${tokenConfigured ? '설정됨' : '미설정'} · ${isDiscordPlatform ? `워커 ${escapeHtml(agentServiceLabel)} · ` : ''}${escapeHtml(connectionSummary)} · 채널 ${escapeHtml(String((agent.mappedChannelNames || []).length))}개</div>
                 </div>
                 <div class="inline-actions">
-                  <button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || agentServiceRunning ? 'disabled' : ''}>실행</button>
+                  <button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || agentServiceRunning || agentServiceStarting ? 'disabled' : ''}>실행</button>
                   <button type="button" class="btn-secondary" data-action="restart-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>재시작</button>
-                  <button type="button" class="btn-secondary" data-action="stop-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>중지</button>
+                  <button type="button" class="btn-secondary" data-action="stop-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale && !agentServiceStarting) ? 'disabled' : ''}>중지</button>
                   <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>수정</button>
                   ${
                     isDiscordPlatform

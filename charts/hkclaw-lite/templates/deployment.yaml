@@ -29,7 +29,7 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if or .Values.bootstrapBackup.enabled .Values.extraInitContainers }}
+      {{- if or .Values.bootstrapBackup.enabled (not .Values.workspace.enabled) .Values.extraInitContainers }}
       initContainers:
         {{- if .Values.bootstrapBackup.enabled }}
         - name: bootstrap-backup
@@ -59,6 +59,23 @@ spec:
               mountPath: /bootstrap
               readOnly: true
         {{- end }}
+        {{- if not .Values.workspace.enabled }}
+        - name: prepare-workspace
+          image: {{ include "hkclaw-lite.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              set -euo pipefail
+              mkdir -p "{{ .Values.workspace.mountPath }}"
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: {{ .Values.state.mountPath }}
+        {{- end }}
         {{- with .Values.extraInitContainers }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -81,6 +98,8 @@ spec:
           env:
             - name: HOME
               value: {{ .Values.state.mountPath | quote }}
+            - name: HKCLAW_LITE_DEFAULT_CHANNEL_WORKSPACE
+              value: {{ .Values.workspace.mountPath | quote }}
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

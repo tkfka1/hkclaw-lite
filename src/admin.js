@@ -84,10 +84,10 @@ const GEMINI_GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GEMINI_GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GEMINI_GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';
 const GEMINI_GOOGLE_MANUAL_REDIRECT_URI = 'https://codeassist.google.com/authcode';
-const DISCORD_SERVICE_START_TIMEOUT_MS = 8_000;
+const DISCORD_SERVICE_START_TIMEOUT_MS = 15_000;
 const DISCORD_SERVICE_STOP_TIMEOUT_MS = 8_000;
 const DISCORD_SERVICE_ENTRY_ENV = 'HKCLAW_LITE_DISCORD_SERVICE_ENTRY';
-const TELEGRAM_SERVICE_START_TIMEOUT_MS = 8_000;
+const TELEGRAM_SERVICE_START_TIMEOUT_MS = 15_000;
 const TELEGRAM_SERVICE_STOP_TIMEOUT_MS = 8_000;
 const TELEGRAM_SERVICE_ENTRY_ENV = 'HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY';
 
@@ -776,15 +776,19 @@ async function startDiscordServiceProcess(projectRoot, agentName) {
   const service = await waitForDiscordServiceSnapshot(
     projectRoot,
     agentName,
-    (snapshot) => snapshot.running || Boolean(snapshot.lastError),
+    (snapshot) => snapshot.running || snapshot.starting || Boolean(snapshot.lastError),
     DISCORD_SERVICE_START_TIMEOUT_MS,
   );
-  assert(service.running, service.lastError || 'Discord 서비스 시작을 확인하지 못했습니다.');
+  assert(
+    service.running || service.starting,
+    service.lastError || 'Discord 서비스 시작을 확인하지 못했습니다.',
+  );
 
   return {
     action: 'start',
     agentName,
-    running: true,
+    running: service.running,
+    starting: service.starting,
     pid: service.pid,
     startedAt: service.startedAt,
   };
@@ -951,16 +955,20 @@ async function startTelegramServiceProcess(projectRoot, agentName) {
   const service = await waitForTelegramServiceSnapshot(
     projectRoot,
     agentName,
-    (snapshot) => snapshot.running || Boolean(snapshot.lastError),
+    (snapshot) => snapshot.running || snapshot.starting || Boolean(snapshot.lastError),
     TELEGRAM_SERVICE_START_TIMEOUT_MS,
   );
-  assert(service.running, service.lastError || 'Telegram 서비스 시작을 확인하지 못했습니다.');
+  assert(
+    service.running || service.starting,
+    service.lastError || 'Telegram 서비스 시작을 확인하지 못했습니다.',
+  );
 
   return {
     action: 'start',
     agentName,
     platform: 'telegram',
-    running: true,
+    running: service.running,
+    starting: service.starting,
     pid: service.pid,
     startedAt: service.startedAt,
   };

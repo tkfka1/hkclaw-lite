@@ -46,8 +46,8 @@ state:
     size: 5Gi
 
 workspace:
-  enabled: true
-  mountPath: /workspace
+  enabled: false
+  mountPath: /home/hkclaw/workspace
   persistence:
     enabled: false
     existingClaim: ""
