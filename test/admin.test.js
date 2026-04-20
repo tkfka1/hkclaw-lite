@@ -683,6 +683,24 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     assert.match(html, /hkclaw-lite/i);
     assert.match(html, /\/favicon\.svg/u);
 
+    const appJsResponse = await fetch(`${url}/app.js`);
+    const appJs = await appJsResponse.text();
+    assert.equal(appJsResponse.status, 200);
+    assert.match(appJsResponse.headers.get('content-type') || '', /text\/javascript/u);
+    assert.match(appJs, /ui-shell\.js/u);
+
+    const shellJsResponse = await fetch(`${url}/ui-shell.js`);
+    const shellJs = await shellJsResponse.text();
+    assert.equal(shellJsResponse.status, 200);
+    assert.match(shellJsResponse.headers.get('content-type') || '', /text\/javascript/u);
+    assert.match(shellJs, /renderFrame/u);
+
+    const viewsJsResponse = await fetch(`${url}/ui-views.js`);
+    const viewsJs = await viewsJsResponse.text();
+    assert.equal(viewsJsResponse.status, 200);
+    assert.match(viewsJsResponse.headers.get('content-type') || '', /text\/javascript/u);
+    assert.match(viewsJs, /renderHomeView/u);
+
     const faviconResponse = await fetch(`${url}/favicon.ico`);
     const favicon = await faviconResponse.text();
     assert.equal(faviconResponse.status, 200);
@@ -694,6 +712,12 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     });
     assert.equal(faviconHeadResponse.status, 200);
     assert.match(faviconHeadResponse.headers.get('content-type') || '', /image\/svg\+xml/u);
+
+    const healthResponse = await fetch(`${url}/healthz`);
+    const healthPayload = await healthResponse.json();
+    assert.equal(healthResponse.status, 200);
+    assert.equal(healthPayload.ok, true);
+    assert.equal(healthPayload.status, 'healthy');
 
     const { response, payload } = await requestJson(`${url}/api/state`);
     assert.equal(response.status, 200);

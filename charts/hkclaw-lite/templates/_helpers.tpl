@@ -70,3 +70,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-env" (include "hkclaw-lite.fullname" .) -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "hkclaw-lite.adminChecksum" -}}
+{{- if .Values.envFrom -}}
+{{- toYaml .Values.envFrom | sha256sum -}}
+{{- else if .Values.adminExternalSecret.enabled -}}
+{{- include (print $.Template.BasePath "/admin-externalsecret.yaml") . | sha256sum -}}
+{{- else if .Values.adminSecret.enabled -}}
+{{- include (print $.Template.BasePath "/admin-secret.yaml") . | sha256sum -}}
+{{- else -}}
+disabled
+{{- end -}}
+{{- end -}}
+
+{{- define "hkclaw-lite.bootstrapChecksum" -}}
+{{- if .Values.bootstrapBackup.enabled -}}
+{{- include (print $.Template.BasePath "/bootstrap-secret.yaml") . | sha256sum -}}
+{{- else -}}
+disabled
+{{- end -}}
+{{- end -}}

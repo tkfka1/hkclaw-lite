@@ -1,4 +1,11 @@
 replicaCount: 1
+revisionHistoryLimit: 3
+
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
 
 image:
   repository: ghcr.io/tkfka1/hkclaw-lite
@@ -22,6 +29,8 @@ serviceAccount:
 
 podAnnotations: {}
 podLabels: {}
+enableServiceLinks: false
+terminationGracePeriodSeconds: 30
 
 podSecurityContext:
   fsGroup: 10001
@@ -131,6 +140,27 @@ envFrom: []
 extraVolumes: []
 extraVolumeMounts: []
 extraInitContainers: []
+
+probes:
+  enabled: true
+  startup:
+    path: /healthz
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 30
+  readiness:
+    path: /healthz
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 0
+    periodSeconds: 20
+    timeoutSeconds: 2
+    failureThreshold: 3
 
 resources: {}
 

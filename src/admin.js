@@ -65,10 +65,14 @@ import { listAgentModels } from './model-catalog.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import { assert, parseInteger, toErrorMessage } from './utils.js';
 
-const ADMIN_HTML = fs.readFileSync(new URL('./admin-ui/index.html', import.meta.url), 'utf8');
-const ADMIN_CSS = fs.readFileSync(new URL('./admin-ui/styles.css', import.meta.url), 'utf8');
-const ADMIN_JS = fs.readFileSync(new URL('./admin-ui/app.js', import.meta.url), 'utf8');
-const ADMIN_FAVICON = fs.readFileSync(new URL('./admin-ui/favicon.svg', import.meta.url), 'utf8');
+const ADMIN_UI_ROOT = fileURLToPath(new URL('./admin-ui/', import.meta.url));
+const ADMIN_STATIC_CONTENT_TYPES = new Map([
+  ['.html', 'text/html; charset=utf-8'],
+  ['.css', 'text/css; charset=utf-8'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.svg', 'image/svg+xml; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+]);
 const CLI_ENTRY_PATH = fileURLToPath(new URL('../bin/hkclaw-lite.js', import.meta.url));
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const ADMIN_PASSWORD_ENV = 'HKCLAW_LITE_ADMIN_PASSWORD';
@@ -190,23 +194,20 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
   const pathname = url.pathname;
   const isStaticRequest = request.method === 'GET' || request.method === 'HEAD';
 
-  if (isStaticRequest && pathname === '/') {
-    writeText(response, 200, ADMIN_HTML, 'text/html; charset=utf-8');
-    return;
-  }
-
-  if (isStaticRequest && pathname === '/app.css') {
-    writeText(response, 200, ADMIN_CSS, 'text/css; charset=utf-8');
-    return;
-  }
-
-  if (isStaticRequest && pathname === '/app.js') {
-    writeText(response, 200, ADMIN_JS, 'text/javascript; charset=utf-8');
-    return;
-  }
-
-  if (isStaticRequest && (pathname === '/favicon.svg' || pathname === '/favicon.ico')) {
-    writeText(response, 200, ADMIN_FAVICON, 'image/svg+xml; charset=utf-8');
+  if (isStaticRequest && !pathname.startsWith('/api/')) {
+    if (pathname === '/healthz') {
+      writeJson(response, 200, {
+        ok: true,
+        status: 'healthy',
+      });
+      return;
+    }
+    const asset = resolveAdminStaticAsset(pathname);
+    if (asset) {
+      writeText(response, 200, asset.body, asset.contentType);
+      return;
+    }
+    writeJson(response, 404, { error: 'Not found.' });
     return;
   }
 
@@ -521,6 +522,27 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
   }
 
   writeJson(response, 404, { error: 'Not found.' });
+}
+
+function resolveAdminStaticAsset(pathname) {
+  const normalizedPath = pathname === '/' ? '/index.html' : pathname;
+  const aliasedPath = normalizedPath === '/favicon.ico' ? '/favicon.svg' : normalizedPath;
+  const relativePath = aliasedPath.replace(/^\/+/, '');
+  const resolvedPath = path.resolve(ADMIN_UI_ROOT, relativePath);
+  const normalizedRoot = path.resolve(ADMIN_UI_ROOT);
+  if (!resolvedPath.startsWith(`${normalizedRoot}${path.sep}`) && resolvedPath !== normalizedRoot) {
+    return null;
+  }
+  if (!fs.existsSync(resolvedPath) || fs.statSync(resolvedPath).isDirectory()) {
+    return null;
+  }
+  const contentType =
+    ADMIN_STATIC_CONTENT_TYPES.get(path.extname(resolvedPath).toLowerCase()) ||
+    'application/octet-stream';
+  return {
+    body: fs.readFileSync(resolvedPath),
+    contentType,
+  };
 }
 
 async function readJsonBody(request) {

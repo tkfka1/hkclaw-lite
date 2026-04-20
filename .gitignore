@@ -7,3 +7,5 @@ node_modules/
 .admin-password
 npm-debug.log*
 *.tgz
+.gstack/
+.omx/

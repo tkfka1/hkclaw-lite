@@ -1,7 +1,24 @@
+import {
+  getDashboardStats as buildDashboardStats,
+  getViewMeta as resolveViewMeta,
+  renderDetailList as buildDetailList,
+  renderFrame as buildFrame,
+  renderTopBar as buildTopBar,
+} from './ui-shell.js';
+import {
+  renderAgentsView as buildAgentsView,
+  renderAiView as buildAiView,
+  renderAllView as buildAllView,
+  renderChannelsView as buildChannelsView,
+  renderHomeView as buildHomeView,
+} from './ui-views.js';
+import {
+  AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
+  getAiManagerStatusPollDelay,
+} from './polling.js';
+
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
-const AI_MANAGER_STATUS_POLL_INTERVAL_MS = 5_000;
-const AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS = 12;
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 let noticeTimer = null;
 let aiManagerStatusPollTimer = null;
@@ -1204,24 +1221,23 @@ function clearNotice() {
 }
 
 function render() {
-  const previousScrollX = window.scrollX;
-  const previousScrollY = window.scrollY;
+  const previousViewState = captureRenderState();
 
   if (!state.data && state.loading) {
     app.innerHTML = renderFrame(renderEmptyState('불러오는 중', true));
-    restoreScrollPosition(previousScrollX, previousScrollY);
+    restoreRenderState(previousViewState);
     return;
   }
 
   if (state.auth.enabled && !state.auth.authenticated) {
     app.innerHTML = renderFrame(renderLoginScreen(), 'app-shell--auth');
-    restoreScrollPosition(previousScrollX, previousScrollY);
+    restoreRenderState(previousViewState);
     return;
   }
 
   if (!state.data) {
     app.innerHTML = renderFrame(renderEmptyState('데이터 없음'));
-    restoreScrollPosition(previousScrollX, previousScrollY);
+    restoreRenderState(previousViewState);
     return;
   }
 
@@ -1233,60 +1249,154 @@ function render() {
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
   `);
-  restoreScrollPosition(previousScrollX, previousScrollY);
+  restoreRenderState(previousViewState);
 }
 
-function restoreScrollPosition(x, y) {
+function restoreRenderState(viewState) {
   window.requestAnimationFrame(() => {
-    window.scrollTo(x, y);
+    window.scrollTo(viewState?.scrollX || 0, viewState?.scrollY || 0);
+    restoreFocusedElement(viewState?.focus);
   });
 }
 
+function captureRenderState() {
+  return {
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+    focus: captureFocusedElement(),
+  };
+}
+
+function captureFocusedElement() {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLElement) || !app.contains(activeElement)) {
+    return null;
+  }
+
+  const focusable =
+    activeElement instanceof HTMLInputElement ||
+    activeElement instanceof HTMLTextAreaElement ||
+    activeElement instanceof HTMLSelectElement ||
+    activeElement instanceof HTMLButtonElement;
+  if (!focusable) {
+    return null;
+  }
+
+  const form = activeElement.closest('[data-form]');
+  return {
+    tagName: activeElement.tagName.toLowerCase(),
+    id: activeElement.id || '',
+    name: 'name' in activeElement ? activeElement.name || '' : '',
+    formKind: form?.dataset.form || '',
+    selectionStart:
+      'selectionStart' in activeElement && typeof activeElement.selectionStart === 'number'
+        ? activeElement.selectionStart
+        : null,
+    selectionEnd:
+      'selectionEnd' in activeElement && typeof activeElement.selectionEnd === 'number'
+        ? activeElement.selectionEnd
+        : null,
+    selectionDirection:
+      'selectionDirection' in activeElement &&
+      typeof activeElement.selectionDirection === 'string'
+        ? activeElement.selectionDirection
+        : 'none',
+  };
+}
+
+function restoreFocusedElement(focusState) {
+  if (!focusState) {
+    return;
+  }
+
+  const target = findFocusableElement(focusState);
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  try {
+    target.focus({ preventScroll: true });
+  } catch {
+    target.focus();
+  }
+
+  if (
+    typeof focusState.selectionStart === 'number' &&
+    typeof focusState.selectionEnd === 'number' &&
+    'setSelectionRange' in target
+  ) {
+    try {
+      target.setSelectionRange(
+        focusState.selectionStart,
+        focusState.selectionEnd,
+        focusState.selectionDirection,
+      );
+    } catch {
+      // Ignore selection restore failures for non-text inputs.
+    }
+  }
+}
+
+function findFocusableElement(focusState) {
+  if (!focusState) {
+    return null;
+  }
+
+  if (focusState.id) {
+    const elementById = document.getElementById(focusState.id);
+    if (elementById && app.contains(elementById)) {
+      return elementById;
+    }
+  }
+
+  let scope = app;
+  if (focusState.formKind) {
+    const form = app.querySelector(
+      `[data-form="${escapeSelectorValue(focusState.formKind)}"]`,
+    );
+    if (form) {
+      scope = form;
+    }
+  }
+
+  if (focusState.name) {
+    const selector = `${focusState.tagName}[name="${escapeSelectorValue(focusState.name)}"]`;
+    const elementByName = scope.querySelector(selector);
+    if (elementByName) {
+      return elementByName;
+    }
+  }
+
+  return null;
+}
+
+function escapeSelectorValue(value) {
+  if (window.CSS?.escape) {
+    return window.CSS.escape(value);
+  }
+  return String(value).replace(/["\\]/gu, '\\$&');
+}
+
 function renderFrame(content, className = '') {
-  return `
-    <div class="app-shell ${escapeAttr(className)}">
-      <div class="shell">
-        ${content}
-      </div>
-      ${renderNotice()}
-    </div>
-  `;
+  return buildFrame({
+    content,
+    className,
+    state,
+    escapeAttr,
+    escapeHtml,
+    renderNotice,
+    getActiveViewMeta,
+    getDashboardStats,
+  });
 }
 
 function renderTopBar() {
-  const tabs = [
-    { view: 'home', label: '홈', icon: '⌂' },
-    { view: 'agents', label: '에이전트', icon: '◍' },
-    { view: 'channels', label: '채널', icon: '≡' },
-    { view: 'ai', label: 'AI', icon: '◌' },
-    { view: 'tokens', label: '토큰', icon: '◫' },
-    { view: 'all', label: '전체', icon: '▦' },
-  ];
-
-  return `
-    <section class="panel topbar">
-      <div class="tabs" role="tablist" aria-label="관리 메뉴">
-        ${tabs
-          .map(
-            (tab) => `
-              <button
-                type="button"
-                class="tab ${state.activeView === tab.view ? 'is-active' : ''}"
-                data-action="switch-view"
-                data-view="${escapeAttr(tab.view)}"
-                role="tab"
-                aria-selected="${state.activeView === tab.view ? 'true' : 'false'}"
-                ${state.busy ? 'disabled' : ''}
-              >
-                <span class="tab-icon" aria-hidden="true">${escapeHtml(tab.icon)}</span>
-                <span>${escapeHtml(tab.label)}</span>
-              </button>
-            `,
-          )
-          .join('')}
-      </div>
-    </section>
-  `;
+  return buildTopBar({
+    state,
+    escapeHtml,
+    getActiveViewMeta,
+    stats: getDashboardStats(),
+  });
 }
 
 function renderActiveView() {
@@ -1308,131 +1418,72 @@ function renderActiveView() {
   return renderAllView();
 }
 
+function getViewMeta(view = state.activeView) {
+  return resolveViewMeta(view);
+}
+
+function getActiveViewMeta() {
+  return getViewMeta(state.activeView);
+}
+
+function getDashboardStats() {
+  return buildDashboardStats({
+    data: state.data,
+    aiStatuses: state.aiStatuses,
+    getLocalLlmConnectionEntries,
+    isAiReady,
+    localizeAgentTypeValue,
+    localizeChannelMode,
+    localizeMessagingPlatform,
+  });
+}
+
+function renderDetailList(rows, emptyText = '표시할 정보가 없습니다.') {
+  return buildDetailList(rows, escapeHtml, emptyText);
+}
+
 function renderHomeView() {
-  return `
-    <section class="metrics">
-      <article class="metric">
-        <span class="metric-label">에이전트 수</span>
-        <strong class="metric-value">${escapeHtml(String(state.data.agents.length))}</strong>
-      </article>
-      <article class="metric">
-        <span class="metric-label">채널 수</span>
-        <strong class="metric-value">${escapeHtml(String(state.data.channels.length))}</strong>
-      </article>
-    </section>
-  `;
+  return buildHomeView({
+    state,
+    getDashboardStats,
+    escapeHtml,
+    escapeAttr,
+  });
 }
 
 function renderAgentsView() {
-  const discordService = state.data?.discord?.service || {};
-  const telegramService = state.data?.telegram?.service || {};
-  const serviceLabel = discordService.label || '중지';
-  const telegramLabel = telegramService.label || '중지';
-  const canStartDiscord = !state.busy && !discordService.running;
-  const canRestartDiscord = !state.busy && (discordService.running || discordService.stale);
-  const canStopDiscord = !state.busy && (discordService.running || discordService.stale);
-  const canReloadDiscord = !state.busy && discordService.running;
-  const canStartTelegram = !state.busy && !telegramService.running;
-  const canRestartTelegram = !state.busy && (telegramService.running || telegramService.stale);
-  const canStopTelegram = !state.busy && (telegramService.running || telegramService.stale);
-  const canReloadTelegram = !state.busy && telegramService.running;
-  return `
-    <section class="panel section-panel">
-      <div class="section-head">
-        <h2>에이전트 목록</h2>
-        <div class="inline-actions">
-          <span class="field-hint">Discord 워커 ${escapeHtml(serviceLabel)}</span>
-          <button type="button" class="btn-secondary" data-action="start-discord-service" ${canStartDiscord ? '' : 'disabled'}>전체 실행</button>
-          <button type="button" class="btn-secondary" data-action="restart-discord-service" ${canRestartDiscord ? '' : 'disabled'}>전체 재시작</button>
-          <button type="button" class="btn-secondary" data-action="stop-discord-service" ${canStopDiscord ? '' : 'disabled'}>전체 중지</button>
-          <button type="button" class="btn-secondary" data-action="reload-discord-service" ${canReloadDiscord ? '' : 'disabled'}>전체 다시 읽기</button>
-          <span class="field-hint">Telegram 워커 ${escapeHtml(telegramLabel)}</span>
-          <button type="button" class="btn-secondary" data-action="start-telegram-service" ${canStartTelegram ? '' : 'disabled'}>전체 실행</button>
-          <button type="button" class="btn-secondary" data-action="restart-telegram-service" ${canRestartTelegram ? '' : 'disabled'}>전체 재시작</button>
-          <button type="button" class="btn-secondary" data-action="stop-telegram-service" ${canStopTelegram ? '' : 'disabled'}>전체 중지</button>
-          <button type="button" class="btn-secondary" data-action="reload-telegram-service" ${canReloadTelegram ? '' : 'disabled'}>전체 다시 읽기</button>
-          <button type="button" class="btn-primary" data-action="open-agent-modal" ${state.busy ? 'disabled' : ''}>추가</button>
-        </div>
-      </div>
-      ${renderAgentList(state.data.agents, discordService, telegramService)}
-    </section>
-  `;
+  return buildAgentsView({
+    state,
+    getDashboardStats,
+    escapeHtml,
+    renderAgentList,
+  });
 }
 
 function renderChannelsView() {
-  return `
-    <section class="panel section-panel">
-      <div class="section-head">
-        <h2>채널 목록</h2>
-        <button type="button" class="btn-primary" data-action="open-channel-modal" ${state.busy ? 'disabled' : ''}>추가</button>
-      </div>
-      ${renderChannelList(state.data.channels, state.data.agents)}
-    </section>
-  `;
+  return buildChannelsView({
+    state,
+    getDashboardStats,
+    escapeHtml,
+    renderChannelList,
+  });
 }
 
 function renderAllView() {
-  return `
-    <section class="panel section-panel">
-      <div class="section-head">
-        <h2>관리</h2>
-      </div>
-      <div class="card-list">
-        <article
-          class="card card--clickable"
-          data-action="open-admin-password-modal"
-          data-clickable="true"
-          role="button"
-          tabindex="${state.busy ? '-1' : '0'}"
-          aria-disabled="${state.busy ? 'true' : 'false'}"
-        >
-          <div class="card-main">
-            <strong class="card-title">관리자 비밀번호</strong>
-            <span class="card-meta">${escapeHtml(state.auth.enabled ? '설정됨' : '미설정')}</span>
-          </div>
-        </article>
-        <article
-          class="card card--clickable card--danger"
-          ${state.auth.enabled ? 'data-action="logout" data-clickable="true"' : ''}
-          role="button"
-          tabindex="${state.busy || !state.auth.enabled ? '-1' : '0'}"
-          aria-disabled="${state.busy || !state.auth.enabled ? 'true' : 'false'}"
-        >
-          <div class="card-main">
-            <strong class="card-title">로그아웃</strong>
-            <span class="card-meta">${escapeHtml(state.auth.enabled ? '현재 세션 종료' : '비활성화됨')}</span>
-          </div>
-        </article>
-      </div>
-    </section>
-  `;
+  return buildAllView({
+    state,
+    escapeHtml,
+  });
 }
 
 function renderAiView() {
-  const supportsLocalLlm = (state.data?.choices?.agentTypes || []).some(
-    (entry) => entry.value === 'local-llm',
-  );
-  return `
-    <section class="panel section-panel">
-      <div class="section-head">
-        <h2>AI 관리</h2>
-        ${
-          supportsLocalLlm
-            ? `<button
-                type="button"
-                class="btn-secondary"
-                data-action="open-local-llm-create"
-                ${state.busy ? 'disabled' : ''}
-              >
-                신규 LLM 추가
-              </button>`
-            : ''
-        }
-      </div>
-      <div class="field-hint">AI 카드를 누르면 해당 AI의 관리 화면이 열립니다.</div>
-      ${renderAiList()}
-    </section>
-  `;
+  return buildAiView({
+    state,
+    getDashboardStats,
+    escapeHtml,
+    renderAiList,
+    getLocalLlmConnectionEntries,
+  });
 }
 
 function renderTokenView() {
@@ -2349,7 +2400,15 @@ function renderLoginScreen() {
   return `
     <section class="login-shell">
       <section class="panel login-panel">
+        <span class="hero-eyebrow">Secure Access</span>
         <h1>관리 화면</h1>
+        <p class="hero-description">콘솔 접근은 비밀번호로 보호됩니다. 로그인 후 에이전트, 채널, AI 런타임 구성을 바로 관리할 수 있습니다.</p>
+        <div class="login-summary">
+          ${renderDetailList([
+            { label: '보호 변수', value: state.auth.passwordEnv || 'HKCLAW_LITE_ADMIN_PASSWORD' },
+            { label: '현재 상태', value: state.auth.enabled ? '로그인 필요' : '보호 비활성화' },
+          ])}
+        </div>
         <form data-form="login" class="form">
           <div class="field">
             <label for="login-password">비밀번호</label>
@@ -2367,7 +2426,9 @@ function renderLoginScreen() {
 function renderEmptyState(title, loading = false) {
   return `
     <section class="empty-state ${loading ? 'is-loading' : ''}">
+      <span class="hero-eyebrow">${escapeHtml(loading ? 'Loading' : 'Ready')}</span>
       <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(loading ? '상태와 구성을 불러오는 중입니다.' : '표시할 데이터가 없거나 아직 초기화되지 않았습니다.')}</p>
     </section>
   `;
 }
@@ -3261,10 +3322,13 @@ function startAiManagerStatusPolling(agentType) {
       }
     }
 
-    aiManagerStatusPollTimer = window.setTimeout(poll, AI_MANAGER_STATUS_POLL_INTERVAL_MS);
+    aiManagerStatusPollTimer = window.setTimeout(
+      poll,
+      getAiManagerStatusPollDelay(attempts + 1),
+    );
   };
 
-  aiManagerStatusPollTimer = window.setTimeout(poll, AI_MANAGER_STATUS_POLL_INTERVAL_MS);
+  aiManagerStatusPollTimer = window.setTimeout(poll, getAiManagerStatusPollDelay(1));
 }
 
 function buildAiAuthResultFingerprint(result) {
