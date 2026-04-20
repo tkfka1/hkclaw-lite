@@ -112,7 +112,6 @@ export async function runAgentTurn({
   prompt,
   rawPrompt,
   workdir,
-  sharedEnv = {},
   channel = null,
   role = null,
   runtimeSession = null,
@@ -128,7 +127,6 @@ export async function runAgentTurn({
         prompt,
         rawPrompt,
         workdir,
-        sharedEnv,
       });
       break;
     case 'claude-code':
@@ -138,7 +136,6 @@ export async function runAgentTurn({
         prompt,
         rawPrompt,
         workdir,
-        sharedEnv,
         channel,
         role,
         runtimeSession,
@@ -152,7 +149,6 @@ export async function runAgentTurn({
         prompt,
         rawPrompt,
         workdir,
-        sharedEnv,
       });
       break;
     case 'local-llm':
@@ -162,7 +158,6 @@ export async function runAgentTurn({
         prompt,
         rawPrompt,
         workdir,
-        sharedEnv,
       });
       break;
     case 'command':
@@ -172,7 +167,6 @@ export async function runAgentTurn({
         prompt,
         rawPrompt,
         workdir,
-        sharedEnv,
       });
       break;
     default:
@@ -248,7 +242,6 @@ async function runCodex({
   prompt,
   rawPrompt,
   workdir,
-  sharedEnv,
 }) {
   const cli = requireManagedAgentCli('codex');
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
@@ -286,7 +279,6 @@ async function runCodex({
       service,
       rawPrompt,
       fullPrompt: prompt,
-      sharedEnv,
     }),
     cli.envPatch,
   );
@@ -318,7 +310,6 @@ async function runClaude({
   prompt,
   rawPrompt,
   workdir,
-  sharedEnv,
   channel,
   role,
   runtimeSession,
@@ -331,7 +322,6 @@ async function runClaude({
     service,
     rawPrompt,
     fullPrompt: prompt,
-    sharedEnv,
   }));
   const cli = requireClaudeCli(env);
   const permissionMode = service.dangerous
@@ -401,7 +391,6 @@ async function runGeminiCli({
   prompt,
   rawPrompt,
   workdir,
-  sharedEnv,
 }) {
   const cli = requireManagedAgentCli('gemini-cli');
   ensureGeminiCliRuntimeFiles(cli);
@@ -417,7 +406,6 @@ async function runGeminiCli({
     service,
     rawPrompt,
     fullPrompt: prompt,
-    sharedEnv,
   }));
   geminiEnv.GOOGLE_GENAI_USE_GCA = 'true';
 
@@ -452,15 +440,11 @@ async function runLocalLlm({
   prompt,
   rawPrompt,
   workdir,
-  sharedEnv,
 }) {
   void rawPrompt;
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const config = loadConfig(projectRoot);
-  const resolvedConnection = resolveLocalLlmConnectionConfig(config, service, {
-    sharedEnv,
-    processEnv: process.env,
-  });
+  const resolvedConnection = resolveLocalLlmConnectionConfig(config, service);
   const baseUrl = (resolvedConnection.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL).replace(/\/$/, '');
   const headers = {
     'content-type': 'application/json',
@@ -514,7 +498,6 @@ async function runCommand({
   prompt,
   rawPrompt,
   workdir,
-  sharedEnv,
 }) {
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const env = buildChildEnv({
@@ -523,7 +506,6 @@ async function runCommand({
     service,
     rawPrompt,
     fullPrompt: prompt,
-    sharedEnv,
   });
   const execution = buildCommandExecutionSpec(service.command, {
     env,
@@ -545,12 +527,9 @@ function buildChildEnv({
   service,
   rawPrompt,
   fullPrompt,
-  sharedEnv,
 }) {
   return {
     ...process.env,
-    ...sharedEnv,
-    ...service.env,
     HKCLAW_LITE_PROJECT_ROOT: projectRoot,
     HKCLAW_LITE_AGENT_NAME: service.name,
     HKCLAW_LITE_SERVICE_NAME: service.name,

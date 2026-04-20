@@ -412,30 +412,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'add-agent-env-row') {
-    if (!state.agentWizard) {
-      return;
-    }
-    state.agentWizard.draft.envEntries = normalizeEnvEntries(state.agentWizard.draft.envEntries);
-    state.agentWizard.draft.envEntries.push(createEnvEntry());
-    render();
-    return;
-  }
-
-  if (action === 'remove-agent-env-row') {
-    if (!state.agentWizard) {
-      return;
-    }
-    const index = Number(button.dataset.index);
-    const entries = normalizeEnvEntries(state.agentWizard.draft.envEntries);
-    if (Number.isInteger(index) && index >= 0 && index < entries.length) {
-      entries.splice(index, 1);
-    }
-    state.agentWizard.draft.envEntries = entries.length ? entries : [createEnvEntry()];
-    render();
-    return;
-  }
-
   if (action === 'delete-agent') {
     void deleteEntity('agent', button.dataset.name);
     return;
@@ -480,8 +456,7 @@ function handleInput(event) {
   }
 
   const isAgentWizardField = Boolean(state.agentWizard && target.closest('[data-form="agent-wizard"]'));
-  const isAgentWizardEnvField = Boolean(target.dataset.envEntryField);
-  if (!isAgentWizardField || (!target.name && !isAgentWizardEnvField)) {
+  if (!isAgentWizardField || !target.name) {
     if (
       state.aiManager &&
       target.closest('[data-form="ai-manager"]') &&
@@ -546,22 +521,6 @@ function handleInput(event) {
       if (target.name === 'mode') {
         render();
       }
-    }
-    return;
-  }
-
-  if (target.dataset.envEntryField) {
-    const index = Number(target.dataset.envIndex);
-    const field = target.dataset.envEntryField;
-    const entries = normalizeEnvEntries(state.agentWizard.draft.envEntries);
-    if (
-      Number.isInteger(index) &&
-      index >= 0 &&
-      index < entries.length &&
-      (field === 'key' || field === 'value')
-    ) {
-      entries[index][field] = target.value;
-      state.agentWizard.draft.envEntries = entries;
     }
     return;
   }
@@ -743,7 +702,6 @@ async function saveAgentWizard() {
     systemPromptFile: optionalDraftText(values.systemPromptFile),
     skills: parseListText(values.skillsText),
     contextFiles: parseListText(values.contextFilesText),
-    env: parseEnvEntries(values.envEntries),
     sandbox:
       values.agent === 'codex'
         ? resolveCodexAccessMode(values)
@@ -2521,11 +2479,6 @@ function getAgentWizardSteps(draft) {
             <div class="field-hint">처음 실행할 때 함께 읽게 할 문서나 설정 파일 경로입니다. 줄바꿈이나 쉼표로 구분하세요.</div>
             <textarea id="wizard-agent-context" name="contextFilesText" placeholder="예: README.md&#10;docs/architecture.md">${escapeHtml(draft.contextFilesText)}</textarea>
           </div>
-          <div class="field field-full">
-            <label>환경 변수</label>
-            <div class="field-hint">필요한 값만 키와 값으로 추가하세요. 빈 줄은 자동으로 무시됩니다.</div>
-            ${renderAgentWizardEnvEditor(draft)}
-          </div>
         </div>
       `,
     },
@@ -2728,10 +2681,6 @@ function validateAgentWizardStep() {
     }
   }
 
-  if (currentStep.id === 'context') {
-    parseEnvEntries(draft.envEntries);
-  }
-
   return true;
 }
 
@@ -2755,7 +2704,6 @@ function createBlankAgent(agentType = null) {
     systemPromptFile: '',
     skillsText: '',
     contextFilesText: '',
-    envEntries: [createEnvEntry()],
     sandbox: state.data.choices.codexSandboxes[0]?.value || '',
     codexAccess: 'workspace-write',
     permissionMode: defaultClaudePermissionMode,
@@ -2784,7 +2732,6 @@ function createAgentDraft(agent) {
     systemPromptFile: agent?.systemPromptFile || '',
     skillsText: Array.isArray(agent?.skills) ? agent.skills.join('\n') : '',
     contextFilesText: Array.isArray(agent?.contextFiles) ? agent.contextFiles.join('\n') : '',
-    envEntries: Object.entries(agent?.env || {}).map(([key, value]) => createEnvEntry(key, value)),
     sandbox: optionalDraftText(agent?.sandbox) || state.data?.choices?.codexSandboxes?.[0]?.value || '',
     codexAccess: resolveCodexAccessMode(agent),
     permissionMode:
@@ -2982,40 +2929,17 @@ async function saveAiCredentials() {
 
   const agentType = optionalDraftText(state.aiManager.type);
   try {
-    let response;
-    if (agentType === 'local-llm') {
-      response = await mutateJson('/api/local-llm-connections', {
-        method: 'PUT',
-        body: {
-          connections: parseLocalLlmConnectionEntries(state.aiManager.credentials.connections),
-        },
-      });
-    } else {
-      const nextSharedEnv = {
-        ...(state.data?.sharedEnv || {}),
-      };
-
-      for (const key of getAiManagedCredentialKeys(agentType)) {
-        const value = optionalDraftText(state.aiManager.credentials?.[key]);
-        if (value) {
-          nextSharedEnv[key] = value;
-        } else {
-          delete nextSharedEnv[key];
-        }
-      }
-
-      response = await mutateJson('/api/shared-env', {
-        method: 'PUT',
-        body: {
-          sharedEnv: nextSharedEnv,
-        },
-      });
-    }
+    const response = await mutateJson('/api/local-llm-connections', {
+      method: 'PUT',
+      body: {
+        connections: parseLocalLlmConnectionEntries(state.aiManager.credentials.connections),
+      },
+    });
 
     state.data = response.state;
     await refreshAiStatuses();
     state.aiManager = createAiManager(agentType);
-    setNotice('info', agentType === 'local-llm' ? '로컬 LLM 연결 목록을 저장했습니다.' : `${localizeAgentTypeValue(agentType)} 자격정보를 저장했습니다.`);
+    setNotice('info', '로컬 LLM 연결 목록을 저장했습니다.');
     render();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
@@ -3097,60 +3021,35 @@ function renderAiCredentialFields(agentType) {
     return '';
   }
 
-  if (agentType === 'local-llm') {
-    const selectedConnection = resolveLocalLlmConnectionEntry(
-      optionalDraftText(state.aiManager?.localLlmConnection) ||
-        optionalDraftText(state.aiManager?.testConfig?.localLlmConnection),
-    );
-    return `
-      <div class="form-grid">
-        <div class="field field-full">
-          <label>로컬 LLM 연결</label>
-          <div class="field-hint">AI 목록의 각 로컬 LLM 항목이 연결 하나입니다. 여기서는 현재 항목만 수정합니다.</div>
-          ${
-            selectedConnection
-              ? `<div class="local-llm-current">
-                  <strong>${escapeHtml(selectedConnection.name)}</strong>
-                  <span>${escapeHtml(selectedConnection.baseUrl)}</span>
-                  <span>${selectedConnection.apiKey ? 'API 키 설정됨' : 'API 키 없음'}${selectedConnection.description ? ` · ${escapeHtml(selectedConnection.description)}` : ''}</span>
-                </div>`
-              : ''
-          }
-          ${
-            state.localLlmDraft
-              ? renderLocalLlmConnectionEditor()
-              : `<div class="actions env-editor-actions">
-                  <button type="button" class="btn-secondary btn-inline" data-action="edit-local-llm-connection" data-name="${escapeAttr(selectedConnection?.name || '')}" ${state.busy || !selectedConnection ? 'disabled' : ''}>현재 연결 수정</button>
-                  <button type="button" class="btn-secondary btn-inline" data-action="open-local-llm-modal" ${state.busy ? 'disabled' : ''}>신규 LLM 추가</button>
-                </div>`
-          }
-        </div>
-      </div>
-    `;
-  }
-
-  const credentials = state.aiManager?.credentials || {};
-  const fields = [];
-
-  for (const field of getAiCredentialFields(agentType)) {
-    fields.push(`
+  const selectedConnection = resolveLocalLlmConnectionEntry(
+    optionalDraftText(state.aiManager?.localLlmConnection) ||
+      optionalDraftText(state.aiManager?.testConfig?.localLlmConnection),
+  );
+  return `
+    <div class="form-grid">
       <div class="field field-full">
-        <label for="${escapeAttr(field.inputId)}">${escapeHtml(field.label)}</label>
-        <input
-          id="${escapeAttr(field.inputId)}"
-          type="${escapeAttr(field.type || 'text')}"
-          name="${escapeAttr(field.envKey)}"
-          value="${escapeAttr(credentials[field.envKey] || '')}"
-          data-ai-credential-key="${escapeAttr(field.envKey)}"
-          autocomplete="off"
-          placeholder="${escapeAttr(field.placeholder || '')}"
-        />
-        ${field.hint ? `<div class="field-hint">${escapeHtml(field.hint)}</div>` : ''}
+        <label>로컬 LLM 연결</label>
+        <div class="field-hint">AI 목록의 각 로컬 LLM 항목이 연결 하나입니다. 여기서는 현재 항목만 수정합니다.</div>
+        ${
+          selectedConnection
+            ? `<div class="local-llm-current">
+                <strong>${escapeHtml(selectedConnection.name)}</strong>
+                <span>${escapeHtml(selectedConnection.baseUrl)}</span>
+                <span>${selectedConnection.apiKey ? 'API 키 설정됨' : 'API 키 없음'}${selectedConnection.description ? ` · ${escapeHtml(selectedConnection.description)}` : ''}</span>
+              </div>`
+            : ''
+        }
+        ${
+          state.localLlmDraft
+            ? renderLocalLlmConnectionEditor()
+            : `<div class="actions env-editor-actions">
+                <button type="button" class="btn-secondary btn-inline" data-action="edit-local-llm-connection" data-name="${escapeAttr(selectedConnection?.name || '')}" ${state.busy || !selectedConnection ? 'disabled' : ''}>현재 연결 수정</button>
+                <button type="button" class="btn-secondary btn-inline" data-action="open-local-llm-modal" ${state.busy ? 'disabled' : ''}>신규 LLM 추가</button>
+              </div>`
+        }
       </div>
-    `);
-  }
-
-  return `<div class="form-grid">${fields.join('')}</div>`;
+    </div>
+  `;
 }
 
 function renderAiAuthFields(agentType) {
@@ -3384,15 +3283,13 @@ function buildAiAuthResultFingerprint(result) {
   });
 }
 
-function buildAiCredentialDraft(agentType, sharedEnv) {
+function buildAiCredentialDraft(agentType) {
   if (agentType === 'local-llm') {
     return {
       connections: [],
     };
   }
-  return Object.fromEntries(
-    getAiManagedCredentialKeys(agentType).map((key) => [key, sharedEnv?.[key] || '']),
-  );
+  return {};
 }
 
 async function loadModelCatalog(scope) {
@@ -3546,17 +3443,6 @@ function isAiStatusSupported(agentType) {
   return ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
 }
 
-function getAiManagedCredentialKeys(agentType) {
-  return [];
-}
-
-function getAiCredentialFields(agentType) {
-  if (agentType === 'local-llm') {
-    return [];
-  }
-  return [];
-}
-
 function renderModelField({
   inputId,
   inputName,
@@ -3691,13 +3577,6 @@ function parseListText(rawValue) {
     .filter(Boolean);
 }
 
-function createEnvEntry(key = '', value = '') {
-  return {
-    key: String(key),
-    value: String(value),
-  };
-}
-
 function createLocalLlmConnectionEntry(
   name = 'LLM1',
   baseUrl = 'http://127.0.0.1:11434/v1',
@@ -3723,13 +3602,6 @@ function createLocalLlmConnectionDraft(entry = null) {
   };
 }
 
-function normalizeEnvEntries(entries) {
-  if (!Array.isArray(entries) || !entries.length) {
-    return [createEnvEntry()];
-  }
-  return entries.map((entry) => createEnvEntry(entry?.key, entry?.value));
-}
-
 function normalizeLocalLlmConnectionEntries(entries) {
   if (!Array.isArray(entries) || !entries.length) {
     return [createLocalLlmConnectionEntry()];
@@ -3742,24 +3614,6 @@ function normalizeLocalLlmConnectionEntries(entries) {
       entry?.description,
     ),
   );
-}
-
-function parseEnvEntries(entries) {
-  const output = {};
-
-  for (const entry of normalizeEnvEntries(entries)) {
-    const key = String(entry.key || '').trim();
-    const value = String(entry.value || '');
-    if (!key) {
-      if (value) {
-        throw new Error('환경 변수 키를 입력하세요.');
-      }
-      continue;
-    }
-    output[key] = value;
-  }
-
-  return output;
 }
 
 function parseLocalLlmConnectionEntries(entries) {
@@ -3806,53 +3660,6 @@ function upsertLocalLlmConnectionEntries(entries, draft) {
     );
   }
   return parseLocalLlmConnectionEntries(nextEntries);
-}
-
-function renderAgentWizardEnvEditor(draft) {
-  const entries = normalizeEnvEntries(draft.envEntries);
-  return `
-    <div class="env-editor">
-      <div class="env-editor-head">
-        <span>키</span>
-        <span>값</span>
-        <span></span>
-      </div>
-      <div class="env-editor-rows">
-        ${entries
-          .map(
-            (entry, index) => `
-              <div class="env-entry">
-                <input
-                  data-env-entry-field="key"
-                  data-env-index="${index}"
-                  placeholder="예: OPENAI_BASE_URL"
-                  value="${escapeAttr(entry.key)}"
-                />
-                <input
-                  data-env-entry-field="value"
-                  data-env-index="${index}"
-                  placeholder="예: http://localhost:3000/v1"
-                  value="${escapeAttr(entry.value)}"
-                />
-                <button
-                  type="button"
-                  class="btn-secondary btn-inline"
-                  data-action="remove-agent-env-row"
-                  data-index="${index}"
-                  ${entries.length === 1 ? 'disabled' : ''}
-                >
-                  삭제
-                </button>
-              </div>
-            `,
-          )
-          .join('')}
-      </div>
-      <div class="actions env-editor-actions">
-        <button type="button" class="btn-secondary btn-inline" data-action="add-agent-env-row">환경 변수 추가</button>
-      </div>
-    </div>
-  `;
 }
 
 function renderLocalLlmConnectionList(entries) {

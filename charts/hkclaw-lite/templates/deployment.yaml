@@ -98,8 +98,6 @@ spec:
           env:
             - name: HOME
               value: {{ .Values.state.mountPath | quote }}
-            - name: HKCLAW_LITE_DEFAULT_CHANNEL_WORKSPACE
-              value: {{ .Values.workspace.mountPath | quote }}
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

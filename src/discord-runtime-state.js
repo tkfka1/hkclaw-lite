@@ -5,30 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { getProjectLayout } from './store.js';
 import { assert, readJson, timestamp, writeJson } from './utils.js';
 
-export const DISCORD_ROLE_NAMES = ['owner', 'reviewer', 'arbiter'];
-
 const DISCORD_STATUS_FILENAME = 'discord-status.json';
 const DISCORD_AGENT_STATUSES_DIRNAME = 'discord-agent-statuses';
 const DISCORD_COMMANDS_DIRNAME = 'discord-commands';
 const DISCORD_AGENT_COMMANDS_DIRNAME = 'discord-agent-commands';
 const DISCORD_HEARTBEAT_STALE_MS = 45_000;
-const ROLE_TOKEN_ENV_KEYS = {
-  owner: [
-    'OWNER_BOT_TOKEN',
-    'OWNER_DISCORD_BOT_TOKEN',
-    'HKCLAW_LITE_OWNER_BOT_TOKEN',
-  ],
-  reviewer: [
-    'REVIEWER_BOT_TOKEN',
-    'REVIEWER_DISCORD_BOT_TOKEN',
-    'HKCLAW_LITE_REVIEWER_BOT_TOKEN',
-  ],
-  arbiter: [
-    'ARBITER_BOT_TOKEN',
-    'ARBITER_DISCORD_BOT_TOKEN',
-    'HKCLAW_LITE_ARBITER_BOT_TOKEN',
-  ],
-};
 
 export function getDiscordStatusPath(projectRoot) {
   return path.join(getProjectLayout(projectRoot).toolRoot, DISCORD_STATUS_FILENAME);
@@ -52,78 +33,6 @@ export function getDiscordCommandQueuePath(projectRoot, agentName = null) {
     );
   }
   return path.join(getProjectLayout(projectRoot).toolRoot, DISCORD_COMMANDS_DIRNAME);
-}
-
-export function parseDotEnv(source) {
-  const output = {};
-  for (const rawLine of String(source || '').split(/\r?\n/u)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) {
-      continue;
-    }
-    const separatorIndex = line.indexOf('=');
-    if (separatorIndex <= 0) {
-      continue;
-    }
-    const key = line.slice(0, separatorIndex).trim();
-    let value = line.slice(separatorIndex + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    output[key] = value;
-  }
-  return output;
-}
-
-export function readProjectEnvEntries(projectRoot, envFile = null) {
-  const envFilePath = envFile
-    ? path.resolve(projectRoot, envFile)
-    : path.join(projectRoot, '.env');
-
-  if (!fs.existsSync(envFilePath)) {
-    return {
-      envFilePath,
-      entries: {},
-    };
-  }
-
-  return {
-    envFilePath,
-    entries: parseDotEnv(fs.readFileSync(envFilePath, 'utf8')),
-  };
-}
-
-export function loadProjectEnvFile(projectRoot, envFile = null, targetEnv = process.env) {
-  const { envFilePath, entries } = readProjectEnvEntries(projectRoot, envFile);
-  for (const [key, value] of Object.entries(entries)) {
-    if (targetEnv[key] === undefined) {
-      targetEnv[key] = value;
-    }
-  }
-  return {
-    envFilePath,
-    entries,
-  };
-}
-
-export function resolveDiscordRoleTokens(env, options = {}) {
-  const output = Object.fromEntries(
-    DISCORD_ROLE_NAMES.map((role) => {
-      const resolved = resolveRoleToken(env, role);
-      return [role, resolved.token];
-    }),
-  );
-
-  assert(output.owner, 'OWNER_BOT_TOKEN is required.');
-  if (options.requireReviewerAndArbiter) {
-    assert(output.reviewer, 'REVIEWER_BOT_TOKEN is required for tribunal channels.');
-    assert(output.arbiter, 'ARBITER_BOT_TOKEN is required for tribunal channels.');
-  }
-
-  return output;
 }
 
 export function resolveChannelRoleAgentNames(channel) {
@@ -150,58 +59,14 @@ export function inspectDiscordAgentConfigs(config, channels, runtimeStatus = nul
         return [
           name,
           {
-            configured: Boolean(agent?.discordToken || runtimeAgent.tokenConfigured),
+            configured: Boolean(agent?.discordToken),
             required: true,
             agent: agent?.agent || '',
-            source: agent?.discordToken ? 'config' : runtimeAgent.tokenConfigured ? 'discord serve' : '없음',
-            tokenConfigured: Boolean(agent?.discordToken || runtimeAgent.tokenConfigured),
+            source: agent?.discordToken ? 'config' : '없음',
+            tokenConfigured: Boolean(agent?.discordToken),
             connected: Boolean(runtimeAgent.connected),
             tag: runtimeAgent.tag || '',
             userId: runtimeAgent.userId || '',
-          },
-        ];
-      }),
-    ),
-  };
-}
-
-export function inspectDiscordRoleTokens(
-  projectRoot,
-  {
-    envFile = null,
-    baseEnv = process.env,
-    requireReviewerAndArbiter = false,
-    runtimeStatus = null,
-  } = {},
-) {
-  const { envFilePath, entries } = readProjectEnvEntries(projectRoot, envFile);
-  const mergedEnv = {
-    ...entries,
-    ...baseEnv,
-  };
-
-  return {
-    envFilePath,
-    roles: Object.fromEntries(
-      DISCORD_ROLE_NAMES.map((role) => {
-        const resolved = resolveRoleToken(mergedEnv, role);
-        const runtimeRole = runtimeStatus?.roles?.[role] || {};
-        const configured = Boolean(resolved.token || runtimeRole.tokenConfigured);
-        return [
-          role,
-          {
-            configured,
-            required: role === 'owner' || requireReviewerAndArbiter,
-            envKey: resolved.envKey || runtimeRole.envKey || null,
-            source: resolveTokenSource({
-              envKey: resolved.envKey,
-              envEntries: entries,
-              baseEnv,
-              runtimeConfigured: runtimeRole.tokenConfigured,
-            }),
-            tag: runtimeRole.tag || '',
-            userId: runtimeRole.userId || '',
-            connected: Boolean(runtimeRole.connected),
           },
         ];
       }),
@@ -294,7 +159,6 @@ export function buildDiscordServiceSnapshot(
       startedAt: null,
       stoppedAt: null,
       heartbeatAt: null,
-      envFilePath: null,
       lastError: null,
       agents,
       agentServices,
@@ -334,7 +198,6 @@ function buildSingleDiscordServiceSnapshot(rawStatus) {
       startedAt: null,
       stoppedAt: null,
       heartbeatAt: null,
-      envFilePath: null,
       lastError: null,
       agents: emptyAgents,
     };
@@ -371,7 +234,6 @@ function buildSingleDiscordServiceSnapshot(rawStatus) {
     startedAt: rawStatus.startedAt || null,
     stoppedAt: rawStatus.stoppedAt || null,
     heartbeatAt: rawStatus.heartbeatAt || null,
-    envFilePath: rawStatus.envFilePath || null,
     lastError: rawStatus.lastError || null,
     agents: buildServiceAgentSummary(rawStatus.agents || rawStatus.bots),
   };
@@ -390,7 +252,6 @@ export function createDiscordServiceStatus(projectRoot, options = {}) {
     startedAt: options.startedAt || timestamp(),
     stoppedAt: options.stoppedAt || null,
     heartbeatAt: options.heartbeatAt || timestamp(),
-    envFilePath: options.envFilePath || null,
     lastError: options.lastError || null,
     agents: buildServiceAgentSummary(options.agents || options.bots),
   };
@@ -456,29 +317,6 @@ export function deleteDiscordAgentServiceArtifacts(projectRoot, agentName) {
 
   fs.rmSync(statusPath, { force: true });
   fs.rmSync(commandQueuePath, { recursive: true, force: true });
-}
-
-function resolveRoleToken(env, role) {
-  const envKey = ROLE_TOKEN_ENV_KEYS[role].find((key) => String(env[key] || '').trim());
-  return {
-    envKey: envKey || null,
-    token: envKey ? String(env[envKey]).trim() : '',
-  };
-}
-
-function resolveTokenSource({ envKey, envEntries, baseEnv, runtimeConfigured }) {
-  if (envKey) {
-    if (baseEnv[envKey] !== undefined) {
-      return '환경 변수';
-    }
-    if (envEntries[envKey] !== undefined) {
-      return '.env';
-    }
-  }
-  if (runtimeConfigured) {
-    return 'discord serve';
-  }
-  return '없음';
 }
 
 function buildServiceAgentSummary(input = {}) {

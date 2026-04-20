@@ -13,7 +13,6 @@ import {
   deleteDashboardByName,
   readWatcherLog,
   replaceLocalLlmConnections,
-  replaceSharedEnv,
   resetChannelRuntimeSessionsByName,
   upsertAgent,
   upsertChannel,
@@ -485,15 +484,6 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     return;
   }
 
-  if (request.method === 'PUT' && pathname === '/api/shared-env') {
-    const payload = await readJsonBody(request);
-    writeJson(response, 200, {
-      ok: true,
-      state: await replaceSharedEnv(projectRoot, payload.sharedEnv || payload),
-    });
-    return;
-  }
-
   if (request.method === 'PUT' && pathname === '/api/local-llm-connections') {
     const payload = await readJsonBody(request);
     writeJson(response, 200, {
@@ -523,16 +513,9 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
   if (request.method === 'POST' && pathname === '/api/agent-models') {
     const payload = await readJsonBody(request);
-    const config = loadConfig(projectRoot);
     writeJson(response, 200, {
       ok: true,
-      result: await listAgentModels(
-        {
-          ...process.env,
-          ...(config.sharedEnv || {}),
-        },
-        payload,
-      ),
+      result: await listAgentModels(process.env, payload),
     });
     return;
   }
@@ -666,6 +649,10 @@ function getAgentMessagingPlatform(projectRoot, agentName) {
 async function restoreManagedServiceProcesses(projectRoot) {
   const config = loadConfig(projectRoot);
   const tasks = [];
+  const legacyDiscordStatus = readDiscordServiceStatus(projectRoot);
+  const legacyTelegramStatus = readTelegramServiceStatus(projectRoot);
+  const legacyDiscordSnapshot = buildDiscordServiceSnapshot(projectRoot, legacyDiscordStatus);
+  const legacyTelegramSnapshot = buildTelegramServiceSnapshot(projectRoot, legacyTelegramStatus);
 
   for (const [agentName, agent] of Object.entries(config.agents || {})) {
     const platform = String(agent?.platform || 'discord').trim();
@@ -673,7 +660,12 @@ async function restoreManagedServiceProcesses(projectRoot) {
       const rawStatus = readTelegramAgentServiceStatus(projectRoot, agentName);
       const snapshot = buildTelegramAgentServiceSnapshot(projectRoot, agentName, rawStatus);
       if (
-        (rawStatus?.desiredRunning ?? rawStatus?.running) &&
+        shouldRestoreTelegramAgentService(
+          agentName,
+          rawStatus,
+          legacyTelegramStatus,
+          legacyTelegramSnapshot,
+        ) &&
         !snapshot.pidAlive &&
         String(agent?.telegramBotToken || '').trim()
       ) {
@@ -685,7 +677,12 @@ async function restoreManagedServiceProcesses(projectRoot) {
     const rawStatus = readDiscordAgentServiceStatus(projectRoot, agentName);
     const snapshot = buildDiscordAgentServiceSnapshot(projectRoot, agentName, rawStatus);
     if (
-      (rawStatus?.desiredRunning ?? rawStatus?.running) &&
+      shouldRestoreDiscordAgentService(
+        agentName,
+        rawStatus,
+        legacyDiscordStatus,
+        legacyDiscordSnapshot,
+      ) &&
       !snapshot.pidAlive &&
       String(agent?.discordToken || '').trim()
     ) {
@@ -698,6 +695,40 @@ async function restoreManagedServiceProcesses(projectRoot) {
   }
 
   return await Promise.all(tasks);
+}
+
+function shouldRestoreDiscordAgentService(agentName, agentStatus, legacyStatus, legacySnapshot) {
+  if (agentStatus?.desiredRunning ?? agentStatus?.running) {
+    return true;
+  }
+  if (agentStatus) {
+    return false;
+  }
+  return shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapshot);
+}
+
+function shouldRestoreTelegramAgentService(agentName, agentStatus, legacyStatus, legacySnapshot) {
+  if (agentStatus?.desiredRunning ?? agentStatus?.running) {
+    return true;
+  }
+  if (agentStatus) {
+    return false;
+  }
+  return shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapshot);
+}
+
+function shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapshot) {
+  if (!(legacyStatus?.desiredRunning ?? legacyStatus?.running)) {
+    return false;
+  }
+  if (legacySnapshot?.pidAlive) {
+    return false;
+  }
+  const legacyAgents = legacyStatus?.agents || legacyStatus?.bots || {};
+  if (!agentName) {
+    return false;
+  }
+  return Boolean(legacyAgents[agentName]);
 }
 
 async function restoreManagedServiceProcess(projectRoot, agentName, platform) {
@@ -761,7 +792,6 @@ async function startDiscordServiceProcess(projectRoot, agentName) {
   }
 
   const args = buildDiscordServiceStartArgs(projectRoot, {
-    envFilePath: current.envFilePath,
     agentName,
   });
 
@@ -1182,7 +1212,6 @@ function setDiscordAgentDesiredRunning(projectRoot, agentName, desiredRunning) {
     startedAt: rawStatus?.startedAt || null,
     stoppedAt: rawStatus?.stoppedAt || null,
     heartbeatAt: rawStatus?.heartbeatAt || null,
-    envFilePath: rawStatus?.envFilePath || null,
     lastError: rawStatus?.lastError || null,
     agents: rawStatus?.agents || rawStatus?.bots || {},
   });
@@ -1205,16 +1234,13 @@ function setTelegramAgentDesiredRunning(projectRoot, agentName, desiredRunning) 
   });
 }
 
-function buildDiscordServiceStartArgs(projectRoot, { envFilePath = null, agentName = null } = {}) {
+function buildDiscordServiceStartArgs(projectRoot, { agentName = null } = {}) {
   const customEntry = String(process.env[DISCORD_SERVICE_ENTRY_ENV] || '').trim();
   if (customEntry) {
     return agentName ? [customEntry, projectRoot, agentName] : [customEntry, projectRoot];
   }
 
   const args = [CLI_ENTRY_PATH, '--root', projectRoot, 'discord', 'serve'];
-  if (envFilePath) {
-    args.push('--env-file', envFilePath);
-  }
   if (agentName) {
     args.push('--agent', agentName);
   }
@@ -2201,9 +2227,6 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
     };
   }
 
-  const config = loadConfig(projectRoot);
-  const sharedEnv = config.sharedEnv || {};
-
   if (agentType === 'claude-code') {
     const runtime = inspectAgentRuntime(projectRoot, { agent: 'claude-code' });
     const pendingFlow = getClaudeAuthFlow(projectRoot);
@@ -2441,14 +2464,12 @@ async function runAgentAuthTest(projectRoot, payload) {
     }),
   };
   const prompt = 'Return exactly OK.';
-  const config = loadConfig(projectRoot);
   const output = await runAgentTurn({
     projectRoot,
     agent: service,
     prompt,
     rawPrompt: prompt,
     workdir: String(payload?.workdir || '.').trim() || '.',
-    sharedEnv: config.sharedEnv || {},
     captureRuntimeMetadata: true,
   });
   const usage = output?.usage || null;
@@ -2622,11 +2643,7 @@ function parseCodexLoggedInStatus(output) {
 }
 
 function buildManagedAgentEnv(projectRoot, agentType = '') {
-  const config = loadConfig(projectRoot);
-  const env = {
-    ...process.env,
-    ...(config.sharedEnv || {}),
-  };
+  const env = { ...process.env };
   if (agentType === 'claude-code') {
     return stripClaudeAcpEnv(env);
   }
@@ -2634,83 +2651,6 @@ function buildManagedAgentEnv(projectRoot, agentType = '') {
     return stripGeminiCliEnv(env);
   }
   return env;
-}
-
-function buildCredentialStatusResult({
-  agentType,
-  runtime,
-  credential,
-  configuredSummary,
-  missingSummary,
-  note = '',
-}) {
-  const runtimeReady = Boolean(runtime?.ready);
-  const configured = Boolean(credential.key);
-  const ready = runtimeReady && configured;
-  const lines = [
-    runtimeReady ? `런타임: 준비됨` : `런타임: ${runtime?.detail || '미설치'}`,
-    configured
-      ? `자격정보: ${credential.key} (${localizeCredentialSource(credential.source)})`
-      : `자격정보: ${missingSummary}`,
-  ];
-  if (note) {
-    lines.push(note);
-  }
-
-  return {
-    agentType,
-    action: 'status',
-    command: 'config inspection',
-    output: lines.join('\n'),
-    details: {
-      summary: ready ? configuredSummary : (runtimeReady ? missingSummary : '런타임 준비 필요'),
-      configured,
-      runtimeReady,
-      ready,
-      credentialKey: credential.key || null,
-      credentialSource: credential.key ? localizeCredentialSource(credential.source) : null,
-    },
-    exitCode: 0,
-    signal: null,
-    timedOut: false,
-  };
-}
-
-function resolveCredentialSource(sharedEnv, processEnv, keys) {
-  for (const key of keys) {
-    const sharedValue = typeof sharedEnv?.[key] === 'string' ? sharedEnv[key] : '';
-    if (sharedValue) {
-      return {
-        key,
-        value: sharedValue,
-        source: 'shared',
-      };
-    }
-    const processValue = typeof processEnv?.[key] === 'string' ? processEnv[key] : '';
-    if (processValue) {
-      return {
-        key,
-        value: processValue,
-        source: 'process',
-      };
-    }
-  }
-
-  return {
-    key: '',
-    value: '',
-    source: '',
-  };
-}
-
-function localizeCredentialSource(source) {
-  if (source === 'shared') {
-    return '공유 환경';
-  }
-  if (source === 'process') {
-    return '프로세스 환경';
-  }
-  return source || '미설정';
 }
 
 function stripClaudeAcpEnv(env) {

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { main } from '../src/cli.js';
 import { loadCiWatcher } from '../src/ci-watch-store.js';
-import { createDefaultConfig, initProject, saveConfig } from '../src/store.js';
+import { initProject } from '../src/store.js';
 
 async function runCli(args, options = {}) {
   const stdout = [];
@@ -226,21 +226,16 @@ test('ci watch gitlab polls until pipeline completes', async () => {
   });
 });
 
-test('ci check uses shared env token from project config', async () => {
+test('ci check uses the explicit token flag', async () => {
   const cwd = createProject();
   initProject(cwd);
-  const config = createDefaultConfig();
-  config.sharedEnv = {
-    GITLAB_TOKEN: 'shared-gitlab-token',
-  };
-  saveConfig(cwd, config);
 
   await withJsonServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     response.setHeader('content-type', 'application/json');
 
     if (url.pathname === '/api/v4/projects/group%2Fproject/pipelines/66') {
-      assert.equal(request.headers['private-token'], 'shared-gitlab-token');
+      assert.equal(request.headers['private-token'], 'explicit-gitlab-token');
       response.end(
         JSON.stringify({
           status: 'success',
@@ -252,7 +247,7 @@ test('ci check uses shared env token from project config', async () => {
     }
 
     if (url.pathname === '/api/v4/projects/group%2Fproject/pipelines/66/jobs') {
-      assert.equal(request.headers['private-token'], 'shared-gitlab-token');
+      assert.equal(request.headers['private-token'], 'explicit-gitlab-token');
       response.end(JSON.stringify([]));
       return;
     }
@@ -270,6 +265,8 @@ test('ci check uses shared env token from project config', async () => {
       'group/project',
       '--pipeline-id',
       '66',
+      '--token',
+      'explicit-gitlab-token',
       '--base-url',
       baseUrl,
     ]);

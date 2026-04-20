@@ -399,7 +399,6 @@ async function executeAgentTurnWithFallback({
       prompt: fullPrompt,
       rawPrompt: userPrompt,
       workdir,
-      sharedEnv: config.sharedEnv,
       channel,
       role,
       runtimeSession,

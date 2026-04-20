@@ -45,7 +45,7 @@ import {
   removeDashboard,
   saveConfig,
 } from './store.js';
-import { assert, isPlainObject } from './utils.js';
+import { assert } from './utils.js';
 
 export async function buildAdminSnapshot(projectRoot) {
   const config = loadConfig(projectRoot);
@@ -70,7 +70,6 @@ export async function buildAdminSnapshot(projectRoot) {
       ...config.defaults,
       channelWorkspace: getDefaultChannelWorkspace(),
     },
-    sharedEnv: config.sharedEnv || {},
     localLlmConnections: listLocalLlmConnections(config),
     agents,
     channels: runtime.channels,
@@ -200,7 +199,6 @@ function buildDiscordStatus(projectRoot, config, channels) {
   const tokenStatus = inspectDiscordAgentConfigs(config, channels, service);
 
   return {
-    envFilePath: service.envFilePath,
     tribunalChannelCount,
     singleChannelCount: channels.length - tribunalChannelCount,
     agents: tokenStatus.agents,
@@ -368,14 +366,6 @@ export async function deleteDashboardByName(projectRoot, name) {
   const config = loadConfig(projectRoot);
   getDashboard(config, name);
   removeDashboard(config, name);
-  saveConfig(projectRoot, config);
-  return await buildAdminSnapshot(projectRoot);
-}
-
-export async function replaceSharedEnv(projectRoot, sharedEnv) {
-  validateSharedEnvInput(sharedEnv);
-  const config = loadConfig(projectRoot);
-  config.sharedEnv = sortEnvEntries(sharedEnv);
   saveConfig(projectRoot, config);
   return await buildAdminSnapshot(projectRoot);
 }
@@ -572,20 +562,6 @@ function renameAgentReferences(config, currentName, nextName) {
       agent.fallbackAgent = nextName;
     }
   }
-}
-
-function validateSharedEnvInput(sharedEnv) {
-  assert(isPlainObject(sharedEnv), 'sharedEnv must be an object.');
-  for (const [key, value] of Object.entries(sharedEnv)) {
-    assert(typeof key === 'string' && key.trim().length > 0, 'Env key cannot be empty.');
-    assert(typeof value === 'string', `Env value must be a string for "${key}".`);
-  }
-}
-
-function sortEnvEntries(sharedEnv) {
-  return Object.fromEntries(
-    Object.entries(sharedEnv).sort(([left], [right]) => left.localeCompare(right)),
-  );
 }
 
 function unique(values) {

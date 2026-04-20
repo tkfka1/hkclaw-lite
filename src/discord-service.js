@@ -4,12 +4,9 @@ import { executeChannelTurn, isTribunalChannel } from './channel-runtime.js';
 import {
   createDiscordServiceStatus,
   deleteDiscordServiceCommand,
-  DISCORD_ROLE_NAMES,
   listDiscordServiceCommands,
-  loadProjectEnvFile,
   writeDiscordAgentServiceStatus,
   resolveChannelRoleAgentNames,
-  resolveDiscordRoleTokens,
   writeDiscordServiceStatus,
 } from './discord-runtime-state.js';
 import {
@@ -26,14 +23,9 @@ const DISCORD_TYPING_REFRESH_MS = 8_000;
 const DISCORD_STREAM_FLUSH_INTERVAL_MS = 2_000;
 const DISCORD_STREAM_THINKING_FLUSH_CHARS = 800;
 
-export async function serveDiscord(projectRoot, { envFile = null, agentName = null } = {}) {
-  const { envFilePath } = loadProjectEnvFile(projectRoot, envFile);
+export async function serveDiscord(projectRoot, { agentName = null } = {}) {
   const config = loadConfig(projectRoot);
-  const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
-  let agentConfigs = resolveDiscordAgentConfigs(config, process.env, {
-    requireReviewerAndArbiter: needsTribunalBots,
-    agentName,
-  });
+  let agentConfigs = resolveDiscordAgentConfigs(config, { agentName });
   const persistServiceStatus = (value) =>
     agentName
       ? writeDiscordAgentServiceStatus(projectRoot, agentName, value)
@@ -42,7 +34,6 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
     agentName,
     running: false,
     desiredRunning: true,
-    envFilePath,
     heartbeatAt: timestamp(),
     agents: buildDiscordAgentStatus(agentConfigs),
   });
@@ -112,7 +103,6 @@ export async function serveDiscord(projectRoot, { envFile = null, agentName = nu
       void processDiscordServiceCommands({
         projectRoot,
         Discord,
-        env: process.env,
         agentName,
         clients,
         agentConfigs,
@@ -318,7 +308,6 @@ function attachDiscordClientMessageHandler({
 async function processDiscordServiceCommands({
   projectRoot,
   Discord,
-  env,
   agentName,
   clients,
   agentConfigs,
@@ -341,7 +330,6 @@ async function processDiscordServiceCommands({
         nextAgentConfigs = await reloadDiscordServiceConfig({
           projectRoot,
           Discord,
-          env,
           agentName,
           clients,
           agentConfigs: nextAgentConfigs,
@@ -357,7 +345,6 @@ async function processDiscordServiceCommands({
         nextAgentConfigs = await reconnectDiscordAgent({
           projectRoot,
           Discord,
-          env,
           agentName,
           clients,
           agentConfigs: nextAgentConfigs,
@@ -378,7 +365,6 @@ async function processDiscordServiceCommands({
 async function reloadDiscordServiceConfig({
   projectRoot,
   Discord,
-  env,
   agentName,
   clients,
   agentConfigs,
@@ -388,11 +374,7 @@ async function reloadDiscordServiceConfig({
   enqueueOutboxFlush,
 }) {
   const config = loadConfig(projectRoot);
-  const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
-  const nextAgentConfigs = resolveDiscordAgentConfigs(config, env, {
-    requireReviewerAndArbiter: needsTribunalBots,
-    agentName,
-  });
+  const nextAgentConfigs = resolveDiscordAgentConfigs(config, { agentName });
   if (buildDiscordAgentConfigSignature(nextAgentConfigs) === buildDiscordAgentConfigSignature(agentConfigs)) {
     return agentConfigs;
   }
@@ -444,7 +426,6 @@ async function reloadDiscordServiceConfig({
 async function reconnectDiscordAgent({
   projectRoot,
   Discord,
-  env,
   agentName,
   clients,
   agentConfigs,
@@ -456,11 +437,7 @@ async function reconnectDiscordAgent({
 }) {
   assert(targetAgentName, 'Agent name is required.');
   const config = loadConfig(projectRoot);
-  const needsTribunalBots = listChannels(config).some((channel) => isTribunalChannel(channel));
-  const nextAgentConfigs = resolveDiscordAgentConfigs(config, env, {
-    requireReviewerAndArbiter: needsTribunalBots,
-    agentName,
-  });
+  const nextAgentConfigs = resolveDiscordAgentConfigs(config, { agentName });
   const nextAgentConfig = nextAgentConfigs[targetAgentName] || null;
   const existingClient = clients[targetAgentName] || null;
   let nextClient = null;
@@ -800,8 +777,7 @@ async function waitForShutdown(onShutdown) {
 
 function resolveDiscordAgentConfigs(
   config,
-  env,
-  { requireReviewerAndArbiter = false, agentName = null } = {},
+  { agentName = null } = {},
 ) {
   if (agentName) {
     const agent = config?.agents?.[agentName];
@@ -834,19 +810,7 @@ function resolveDiscordAgentConfigs(
     );
   }
 
-  const roleTokens = resolveDiscordRoleTokens(env, {
-    requireReviewerAndArbiter,
-  });
-  return Object.fromEntries(
-    DISCORD_ROLE_NAMES.filter((role) => roleTokens[role]).map((role) => [
-      role,
-      {
-        name: role,
-        agent: role,
-        token: roleTokens[role],
-      },
-    ]),
-  );
+  assert(false, 'At least one Discord-enabled agent is required.');
 }
 
 function buildDiscordAgentConfigSignature(agentConfigs) {

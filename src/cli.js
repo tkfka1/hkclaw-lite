@@ -69,8 +69,6 @@ import {
   humanDate,
   parseCommaSeparatedList,
   parseInteger,
-  parseKeyValuePairs,
-  parseKeyValueText,
   parseArgs,
   parseOptionalInteger,
   readStdin,
@@ -143,8 +141,9 @@ export async function main(argv) {
         await handleStatusCommand(projectRoot, tail);
         return;
       case 'env':
-        await handleEnvCommand(projectRoot, tail);
-        return;
+        throw new Error(
+          'The env command was removed. Use explicit flags, stored agent fields, or your deployment environment instead.',
+        );
       case 'admin':
         await handleAdminCommand(projectRoot, tail);
         return;
@@ -757,43 +756,6 @@ async function handleStatusCommand(projectRoot, argv) {
   );
 }
 
-async function handleEnvCommand(projectRoot, argv) {
-  const [subcommand, ...tail] = argv;
-  const config = loadConfig(projectRoot);
-
-  if (!subcommand || subcommand === 'list') {
-    console.log(renderSharedEnv(config.sharedEnv));
-    return;
-  }
-
-  if (subcommand === 'set') {
-    const { positionals } = parseArgs(tail);
-    assert(positionals.length > 0, 'Usage: hkclaw-lite env set KEY=VALUE [KEY=VALUE ...]');
-    const updates = parseKeyValuePairs(positionals, 'shared env');
-    config.sharedEnv = {
-      ...config.sharedEnv,
-      ...updates,
-    };
-    saveConfig(projectRoot, config);
-    console.log(`Updated shared env: ${Object.keys(updates).join(', ')}`);
-    return;
-  }
-
-  if (subcommand === 'unset') {
-    const { positionals } = parseArgs(tail);
-    assert(positionals.length > 0, 'Usage: hkclaw-lite env unset KEY [KEY ...]');
-    for (const key of positionals) {
-      assert(key.trim().length > 0, 'Env key cannot be empty.');
-      delete config.sharedEnv[key];
-    }
-    saveConfig(projectRoot, config);
-    console.log(`Removed shared env: ${positionals.join(', ')}`);
-    return;
-  }
-
-  throw new Error('Usage: hkclaw-lite env <list|set|unset> ...');
-}
-
 async function handleAdminCommand(projectRoot, argv) {
   const { flags } = parseArgs(argv);
   const host = getFlagValue(flags, 'host', '127.0.0.1');
@@ -813,7 +775,6 @@ async function handleDiscordCommand(projectRoot, argv) {
   const { flags } = parseArgs(tail);
   const { serveDiscord } = await import('./discord-service.js');
   await serveDiscord(projectRoot, {
-    envFile: getFlagValue(flags, 'env-file'),
     agentName: getFlagValue(flags, 'agent'),
   });
 }
@@ -909,7 +870,6 @@ async function handleCiCommand(rootOverride, argv) {
   }
 
   const projectRoot = resolveCiProjectRoot(rootOverride);
-  const sharedEnv = loadSharedEnvIfConfigured(projectRoot);
   const provider = secondArg;
   assert(
     ['check', 'watch'].includes(subcommand),
@@ -940,7 +900,7 @@ async function handleCiCommand(rootOverride, argv) {
       : () => checkGitLabCiStatus(ci.request);
 
   if (subcommand === 'check') {
-    console.log(formatCiResult(await withEnvOverlay(sharedEnv, () => check())));
+    console.log(formatCiResult(await check()));
     return;
   }
 
@@ -961,26 +921,23 @@ async function handleCiCommand(rootOverride, argv) {
       intervalMs,
       timeoutMs,
       flags,
-      sharedEnv,
     });
     return;
   }
 
   let lastSummary = '';
-  const result = await withEnvOverlay(sharedEnv, () =>
-    watchCi({
-      label: ci.label,
-      intervalMs,
-      timeoutMs,
-      check,
-      onProgress: (currentResult, attempt) => {
-        if (currentResult.terminal || currentResult.resultSummary !== lastSummary) {
-          console.log(`[attempt ${attempt}] ${currentResult.resultSummary}`);
-          lastSummary = currentResult.resultSummary;
-        }
-      },
-    }),
-  );
+  const result = await watchCi({
+    label: ci.label,
+    intervalMs,
+    timeoutMs,
+    check,
+    onProgress: (currentResult, attempt) => {
+      if (currentResult.terminal || currentResult.resultSummary !== lastSummary) {
+        console.log(`[attempt ${attempt}] ${currentResult.resultSummary}`);
+        lastSummary = currentResult.resultSummary;
+      }
+    },
+  });
 
   if (!result.terminal || !result.completionMessage) {
     return;
@@ -1052,37 +1009,6 @@ function hasCiStateRoot(projectRoot) {
   return fs.existsSync(layout.configPath) || fs.existsSync(layout.watchersRoot);
 }
 
-function loadSharedEnvIfConfigured(projectRoot) {
-  const configPath = getProjectLayout(projectRoot).configPath;
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-  return loadConfig(projectRoot).sharedEnv || {};
-}
-
-async function withEnvOverlay(sharedEnv, callback) {
-  const entries = Object.entries(sharedEnv || {});
-  const originalValues = new Map();
-
-  for (const [key, value] of entries) {
-    originalValues.set(key, process.env[key]);
-    process.env[key] = value;
-  }
-
-  try {
-    return await callback();
-  } finally {
-    for (const [key] of entries) {
-      const originalValue = originalValues.get(key);
-      if (originalValue === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = originalValue;
-      }
-    }
-  }
-}
-
 async function startBackgroundCiWatch({
   projectRoot,
   provider,
@@ -1090,7 +1016,6 @@ async function startBackgroundCiWatch({
   intervalMs,
   timeoutMs,
   flags,
-  sharedEnv,
 }) {
   void flags;
   const watcherId = createCiWatcherId();
@@ -1121,7 +1046,7 @@ async function startBackgroundCiWatch({
         cwd: projectRoot,
         detached: true,
         stdio: ['ignore', logFd, logFd],
-        env: buildCiWorkerEnv(provider, sharedEnv, ci.request.token),
+        env: buildCiWorkerEnv(provider, ci.request.token),
       },
     );
     child.unref();
@@ -1145,10 +1070,9 @@ function omitTokenFromCiRequest(request) {
   return rest;
 }
 
-function buildCiWorkerEnv(provider, sharedEnv, explicitToken) {
+function buildCiWorkerEnv(provider, explicitToken) {
   const env = {
     ...process.env,
-    ...sharedEnv,
   };
 
   if (!explicitToken) {
@@ -1312,16 +1236,6 @@ function renderCiWatcher(watcher) {
     .join('\n');
 }
 
-function renderSharedEnv(sharedEnv) {
-  const entries = Object.entries(sharedEnv || {}).sort(([left], [right]) =>
-    left.localeCompare(right),
-  );
-  if (entries.length === 0) {
-    return 'No shared env configured.';
-  }
-  return ['Shared Env', ...entries.map(([key, value]) => `  ${key}=${value}`)].join('\n');
-}
-
 async function promptForAgentDefinition(prompter, projectRoot, config, options) {
   const initial = options.initial || {};
   const existingAgentNames = new Set(Object.keys(config.agents));
@@ -1424,13 +1338,6 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
       return config.agents[value] ? true : `Unknown agent "${value}".`;
     },
   });
-  const envText = await prompter.askText(
-    'Extra env as KEY=VALUE,KEY=VALUE (optional)',
-    {
-      defaultValue: formatEnvText(initial.env),
-      allowEmpty: true,
-    },
-  );
 
   const definition = {
     name,
@@ -1444,7 +1351,6 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
     skills: skillsText ? parseCommaSeparatedList(skillsText) : [],
     contextFiles: contextFilesText ? parseCommaSeparatedList(contextFilesText) : [],
     fallbackAgent,
-    env: envText ? parseKeyValueText(envText, 'env') : {},
   };
 
   if (platform === 'telegram') {
@@ -1946,15 +1852,6 @@ function formatDashboardMonitorText(monitors) {
   return monitors.includes(DASHBOARD_ALL_AGENTS) ? 'all' : monitors.join(', ');
 }
 
-function formatEnvText(env) {
-  if (!env || typeof env !== 'object') {
-    return '';
-  }
-  return Object.entries(env)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(', ');
-}
-
 function formatListText(values) {
   return parseCommaSeparatedList(values).join(', ');
 }
@@ -2013,9 +1910,6 @@ function buildAgentPreset(name, flags) {
     telegramBotToken: getFlagValue(flags, 'telegram-bot-token'),
     baseUrl: getFlagValue(flags, 'base-url'),
     command: getFlagValue(flags, 'command'),
-    env: getFlagValue(flags, 'env')
-      ? parseKeyValueText(getFlagValue(flags, 'env'), 'env')
-      : undefined,
   };
 }
 
@@ -2069,7 +1963,7 @@ Execution model:
 Usage:
   hkclaw-lite init [--root DIR] [--force]
   hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
-  hkclaw-lite discord serve [--root DIR] [--env-file .env]
+  hkclaw-lite discord serve [--root DIR]
   hkclaw-lite telegram serve [--root DIR]
   hkclaw-lite backup export <file> [--root DIR] [--no-watchers] [--no-logs]
   hkclaw-lite backup import <file> [--root DIR] [--force]
@@ -2090,9 +1984,6 @@ Usage:
   hkclaw-lite run <agent> [--workdir DIR] [--message TEXT]
   hkclaw-lite run --channel <name> [--message TEXT]
   hkclaw-lite dashboard [name] [--once]
-  hkclaw-lite env list
-  hkclaw-lite env set GITHUB_TOKEN=... GITLAB_TOKEN=...
-  hkclaw-lite env unset GITLAB_TOKEN
   hkclaw-lite ci check github --repo owner/repo --run-id 123
   hkclaw-lite ci check gitlab --project group/project --pipeline-id 456
   hkclaw-lite ci watch github --repo owner/repo --run-id 123
@@ -2109,7 +2000,7 @@ Usage:
 Examples:
   hkclaw-lite admin
   hkclaw-lite admin --host 0.0.0.0 --port ${DEFAULT_ADMIN_PORT}
-  hkclaw-lite discord serve --env-file .env
+  hkclaw-lite discord serve
   hkclaw-lite telegram serve
   hkclaw-lite backup export ./backups/project.json
   hkclaw-lite backup import ./backups/project.json --root ./restored
@@ -2121,7 +2012,6 @@ Examples:
   hkclaw-lite run dev-codex --workdir ./workspaces/dev --message "review the latest diff"
   hkclaw-lite show agent dev-codex
   hkclaw-lite status channel discord-main
-  hkclaw-lite env set GITHUB_TOKEN=ghp_xxx GITLAB_TOKEN=glpat-xxx
   hkclaw-lite ci watch gitlab --project group/project --pipeline-id 456
   hkclaw-lite ci watch gitlab --project group/project --pipeline-id 456 --background
   hkclaw-lite dashboard ops

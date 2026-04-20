@@ -48,7 +48,6 @@ function buildCommandAgentAnswers({
   skills = '',
   contextFiles = '',
   fallbackAgent = '',
-  env = '',
   command = `node ${fixturePath}`,
 } = {}) {
   return [
@@ -63,7 +62,6 @@ function buildCommandAgentAnswers({
     skills,
     contextFiles,
     fallbackAgent,
-    env,
     platformToken,
     command,
     '',
@@ -165,7 +163,6 @@ test('add agent and channel use question flow and store mapping', () => {
   const addAgent = runCli(cwd, ['add', 'agent'], {
     input: buildCommandAgentAnswers({
       name: 'worker',
-      env: 'FOO=bar',
     }),
   });
   assert.equal(addAgent.status, 0, addAgent.stderr);
@@ -175,7 +172,6 @@ test('add agent and channel use question flow and store mapping', () => {
   assert.equal(showAgent.status, 0, showAgent.stderr);
   const agent = JSON.parse(showAgent.stdout);
   assert.equal(agent.agent, 'command');
-  assert.equal(agent.env.FOO, 'bar');
   assert.equal('workdir' in agent, false);
 
   const addChannel = runCli(cwd, ['add', 'channel'], {
@@ -311,7 +307,7 @@ test('help omits chat and session commands and documents the admin port', () => 
   assert.match(help.stdout, /hkclaw-lite admin\s+Start the web admin server/u);
   assert.match(help.stdout, /hkclaw-lite run \.\.\.\s+Execute one one-shot turn/u);
   assert.match(help.stdout, /hkclaw-lite admin \[--root DIR\] \[--host 127\.0\.0\.1\] \[--port 5687\]/u);
-  assert.match(help.stdout, /hkclaw-lite discord serve \[--root DIR\] \[--env-file \.env\]/u);
+  assert.match(help.stdout, /hkclaw-lite discord serve \[--root DIR\]/u);
 });
 
 test('run command injects prompt envelope, raw prompt, and channel workspace', () => {
@@ -368,7 +364,6 @@ test('run command injects recent owner session history on repeated channel turns
     runCli(cwd, ['add', 'agent'], {
       input: buildCommandAgentAnswers({
         name: 'worker',
-        env: 'HKCLAW_LITE_EXPECT_HISTORY_NEEDLE=first request for memory',
         command: `node ${inspectFixturePath}`,
       }),
     }).status,
@@ -392,7 +387,7 @@ test('run command injects recent owner session history on repeated channel turns
   const second = runCli(cwd, ['run', '--channel', 'discord-main', '--message', 'second request now']);
   assert.equal(second.status, 0, second.stderr);
   assert.match(second.stdout, /hasSession=true/u);
-  assert.match(second.stdout, /hasHistoryNeedle=true/u);
+  assert.match(second.stdout, /hasHistoryNeedle=n\/a/u);
   assert.match(second.stdout, /raw=second request now/u);
 });
 
@@ -558,24 +553,12 @@ test('legacy agent workdir migrates to channel workspace on load', () => {
   assert.equal(JSON.parse(showChannel.stdout).workspace, 'legacy-space');
 });
 
-test('shared env can be managed from CLI', () => {
+test('env command is rejected', () => {
   const cwd = createProject();
   assert.equal(runCli(cwd, ['init']).status, 0);
-  assert.equal(
-    runCli(cwd, ['env', 'set', 'GITHUB_TOKEN=global-gh', 'GITLAB_TOKEN=global-gl']).status,
-    0,
-  );
-
-  const envList = runCli(cwd, ['env', 'list']);
-  assert.equal(envList.status, 0, envList.stderr);
-  assert.match(envList.stdout, /GITHUB_TOKEN=global-gh/u);
-  assert.match(envList.stdout, /GITLAB_TOKEN=global-gl/u);
-
-  const unset = runCli(cwd, ['env', 'unset', 'GITLAB_TOKEN']);
-  assert.equal(unset.status, 0, unset.stderr);
-  const envListAfterUnset = runCli(cwd, ['env', 'list']);
-  assert.equal(envListAfterUnset.status, 0, envListAfterUnset.stderr);
-  assert.doesNotMatch(envListAfterUnset.stdout, /GITLAB_TOKEN=/u);
+  const result = runCli(cwd, ['env', 'list']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /env command was removed/u);
 });
 
 test('agent fallback is stored and shown in status', () => {
@@ -777,10 +760,6 @@ test('backup export and import restore config, project assets, and watcher state
 
   assert.equal(runCli(source, ['init']).status, 0);
   assert.equal(
-    runCli(source, ['env', 'set', 'GITHUB_TOKEN=backup-gh']).status,
-    0,
-  );
-  assert.equal(
     runCli(source, ['add', 'agent'], {
       input: buildCommandAgentAnswers({
         name: 'worker',
@@ -832,10 +811,6 @@ test('backup export and import restore config, project assets, and watcher state
   assert.deepEqual(importedAgent.skills, ['skills/reviewer']);
   assert.deepEqual(importedAgent.contextFiles, ['context/workspace.md']);
 
-  const envList = runCli(destination, ['env', 'list']);
-  assert.equal(envList.status, 0, envList.stderr);
-  assert.match(envList.stdout, /GITHUB_TOKEN=backup-gh/u);
-
   assert.equal(
     fs.readFileSync(path.join(destination, 'skills', 'reviewer', 'SKILL.md'), 'utf8'),
     '# Reviewer Skill\n',
@@ -863,10 +838,6 @@ test('migrate copies hkclaw-lite state from another project root', () => {
 
   assert.equal(runCli(source, ['init']).status, 0);
   assert.equal(
-    runCli(source, ['env', 'set', 'GITLAB_TOKEN=migrate-gl']).status,
-    0,
-  );
-  assert.equal(
     runCli(source, ['add', 'agent'], {
       input: buildCommandAgentAnswers({
         name: 'worker',
@@ -892,9 +863,5 @@ test('migrate copies hkclaw-lite state from another project root', () => {
   assert.equal(showChannel.status, 0, showChannel.stderr);
   assert.equal(JSON.parse(showChannel.stdout).mode, 'single');
   assert.equal(JSON.parse(showChannel.stdout).workspace, 'workspace');
-
-  const envList = runCli(destination, ['env', 'list']);
-  assert.equal(envList.status, 0, envList.stderr);
-  assert.match(envList.stdout, /GITLAB_TOKEN=migrate-gl/u);
   assert.equal(fs.statSync(path.join(destination, 'workspace')).isDirectory(), true);
 });

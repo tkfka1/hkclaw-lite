@@ -381,7 +381,6 @@ test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () 
         prompt: 'Return exactly OK.',
         rawPrompt: 'Return exactly OK.',
         workdir: 'workspace',
-        sharedEnv: {},
       });
 
       assert.deepEqual(JSON.parse(output), {
@@ -394,7 +393,7 @@ test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () 
   );
 });
 
-test('runAgentTurn strips Gemini env-based auth overrides and forces managed Google login mode', async () => {
+test('runAgentTurn strips Gemini process-env auth overrides and forces managed Google login mode', async () => {
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
@@ -419,10 +418,6 @@ test('runAgentTurn strips Gemini env-based auth overrides and forces managed Goo
         prompt: 'Return exactly OK.',
         rawPrompt: 'Return exactly OK.',
         workdir: 'workspace',
-        sharedEnv: {
-          GEMINI_API_KEY: 'shared-gemini-key',
-          GOOGLE_API_KEY: 'shared-google-key',
-        },
       });
 
       const parsed = JSON.parse(output);
@@ -466,7 +461,6 @@ test('runAgentTurn returns Claude usage metadata when captureRuntimeMetadata is 
         prompt: 'Return exactly OK.',
         rawPrompt: 'Return exactly OK.',
         workdir: 'workspace',
-        sharedEnv: {},
         captureRuntimeMetadata: true,
       });
 
@@ -505,7 +499,6 @@ test('runAgentTurn forwards Claude stream events while preserving the final resu
         prompt: 'Return exactly OK.',
         rawPrompt: 'Return exactly OK.',
         workdir: 'workspace',
-        sharedEnv: {},
         onStreamEvent: async (event) => {
           events.push(event);
         },

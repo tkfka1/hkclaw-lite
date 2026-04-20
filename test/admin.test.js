@@ -605,9 +605,6 @@ test('admin server exposes project snapshot and watcher logs', async () => {
   initProject(projectRoot);
 
   const config = createDefaultConfig();
-  config.sharedEnv = {
-    GITHUB_TOKEN: 'admin-gh',
-  };
   config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
     name: 'worker',
     agent: 'command',
@@ -782,16 +779,6 @@ test('admin server saves config changes and can run a mapped channel', async () 
       JSON.stringify(dashboardResponse.payload),
     );
 
-    const envResponse = await requestJson(`${url}/api/shared-env`, {
-      method: 'PUT',
-      body: {
-        sharedEnv: {
-          GITLAB_TOKEN: 'admin-gl',
-        },
-      },
-    });
-    assert.equal(envResponse.response.status, 200, JSON.stringify(envResponse.payload));
-
     const blockedDelete = await requestJson(
       `${url}/api/agents/${encodeURIComponent('worker')}`,
       {
@@ -837,7 +824,6 @@ test('admin server saves config changes and can run a mapped channel', async () 
   });
 
   const config = loadConfig(projectRoot);
-  assert.deepEqual(config.sharedEnv, { GITLAB_TOKEN: 'admin-gl' });
   assert.equal(config.channels['discord-main'], undefined);
   assert.equal(config.agents.worker, undefined);
   assert.equal(config.dashboards.ops, undefined);
@@ -1162,6 +1148,84 @@ test('admin server restores desired Discord service on startup', async () => {
         method: 'POST',
       });
       assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
+test('admin server restores legacy global Discord service state for existing agents', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeDiscordServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.legacy = buildAgentDefinition(projectRoot, 'legacy', {
+    name: 'legacy',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'legacy-token',
+  });
+  config.agents.fresh = buildAgentDefinition(projectRoot, 'fresh', {
+    name: 'fresh',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'fresh-token',
+  });
+  saveConfig(projectRoot, config);
+
+  writeDiscordServiceStatus(projectRoot, {
+    version: 1,
+    projectRoot,
+    pid: 999999,
+    running: false,
+    desiredRunning: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: '2026-04-15T00:00:00.000Z',
+    agents: {
+      legacy: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        tag: 'legacy#0001',
+        userId: '11',
+      },
+    },
+  });
+  writeDiscordAgentServiceStatus(projectRoot, 'fresh', {
+    version: 1,
+    projectRoot,
+    agentName: 'fresh',
+    pid: 999999,
+    running: false,
+    desiredRunning: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: '2026-04-15T00:00:00.000Z',
+    agents: {
+      fresh: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        tag: 'fresh#0001',
+        userId: '22',
+      },
+    },
+  });
+
+  try {
+    await withAdminServer(projectRoot, async () => {
+      const restored = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        const legacy = snapshot.agentServices?.legacy;
+        const fresh = snapshot.agentServices?.fresh;
+        return legacy?.running && fresh?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(restored?.agentServices?.legacy?.running), true);
+      assert.equal(Boolean(restored?.agentServices?.fresh?.running), true);
     });
   } finally {
     if (previousEntry === undefined) {

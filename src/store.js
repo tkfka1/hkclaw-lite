@@ -38,9 +38,9 @@ export function getProjectLayout(projectRoot) {
 }
 
 export function getDefaultChannelWorkspace() {
-  const overridden = String(process.env.HKCLAW_LITE_DEFAULT_CHANNEL_WORKSPACE || '').trim();
-  if (overridden) {
-    return overridden;
+  const homeWorkspace = path.join(os.homedir(), 'workspace');
+  if (fs.existsSync(homeWorkspace)) {
+    return homeWorkspace;
   }
   return fs.existsSync(CONTAINER_CHANNEL_WORKSPACE)
     ? CONTAINER_CHANNEL_WORKSPACE
@@ -109,7 +109,6 @@ export function createDefaultConfig() {
     defaults: {
       dashboardRefreshMs: DEFAULT_DASHBOARD_REFRESH_MS,
     },
-    sharedEnv: {},
     localLlmConnections: createDefaultLocalLlmConnections(),
     agents: {},
     channels: {},
@@ -131,7 +130,6 @@ export function loadConfig(projectRoot) {
     `Unsupported config version "${config.version}".`,
   );
   assert(isPlainObject(config.defaults), 'Config defaults must be an object.');
-  assert(isPlainObject(config.sharedEnv), 'Config sharedEnv must be an object.');
   assert(isPlainObject(config.localLlmConnections), 'Config localLlmConnections must be an object.');
   assert(isPlainObject(config.agents), 'Config agents must be an object.');
   assert(isPlainObject(config.channels), 'Config channels must be an object.');
@@ -149,16 +147,12 @@ function normalizeConfig(rawConfig) {
   if (rawConfig.version === CURRENT_CONFIG_VERSION) {
     const rawAgents = rawConfig.agents ?? {};
     return {
-      ...rawConfig,
+      version: CURRENT_CONFIG_VERSION,
       defaults: {
         dashboardRefreshMs:
           rawConfig.defaults?.dashboardRefreshMs ?? DEFAULT_DASHBOARD_REFRESH_MS,
       },
-      sharedEnv: rawConfig.sharedEnv ?? {},
-      localLlmConnections: normalizeLocalLlmConnectionRecords(
-        rawConfig.localLlmConnections,
-        rawConfig.sharedEnv ?? {},
-      ),
+      localLlmConnections: normalizeLocalLlmConnectionRecords(rawConfig.localLlmConnections),
       agents: mergeLegacyBotTokensIntoAgents(
         normalizeLegacyAgentRecords(rawAgents),
         normalizeLegacyBotRecords(rawConfig.bots ?? {}),
@@ -180,11 +174,7 @@ function normalizeConfig(rawConfig) {
         dashboardRefreshMs:
           rawConfig.defaults?.dashboardRefreshMs ?? DEFAULT_DASHBOARD_REFRESH_MS,
       },
-      sharedEnv: rawConfig.sharedEnv ?? {},
-      localLlmConnections: normalizeLocalLlmConnectionRecords(
-        rawConfig.localLlmConnections,
-        rawConfig.sharedEnv ?? {},
-      ),
+      localLlmConnections: normalizeLocalLlmConnectionRecords(rawConfig.localLlmConnections),
       agents: mergeLegacyBotTokensIntoAgents(
         normalizeLegacyAgentRecords(rawAgents),
         normalizeLegacyBotRecords(rawConfig.bots ?? {}),
@@ -205,11 +195,7 @@ function normalizeConfig(rawConfig) {
       defaults: {
         dashboardRefreshMs: DEFAULT_DASHBOARD_REFRESH_MS,
       },
-      sharedEnv: rawConfig.sharedEnv ?? {},
-      localLlmConnections: normalizeLocalLlmConnectionRecords(
-        rawConfig.localLlmConnections,
-        rawConfig.sharedEnv ?? {},
-      ),
+      localLlmConnections: normalizeLocalLlmConnectionRecords(rawConfig.localLlmConnections),
       agents: normalizeLegacyAgentRecords(rawAgents),
       channels: {},
       dashboards: {},
@@ -220,7 +206,6 @@ function normalizeConfig(rawConfig) {
 }
 
 function validateConfigReferences(projectRoot, config) {
-  validateEnvObject(config.sharedEnv, 'sharedEnv');
   validateLocalLlmConnections(config.localLlmConnections);
 
   for (const [name, agent] of Object.entries(config.agents)) {
@@ -363,7 +348,6 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
     contextFiles: normalizePathEntries(
       input.contextFiles ?? input['context-file'] ?? existing.contextFiles,
     ),
-    env: input.env ?? existing.env ?? {},
   };
 
   if (merged.timeoutMs !== undefined) {
@@ -558,10 +542,6 @@ export function buildLocalLlmConnectionDefinition(name, input = {}, existing = {
 export function resolveLocalLlmConnectionConfig(
   config,
   agent = {},
-  {
-    sharedEnv = {},
-    processEnv = process.env,
-  } = {},
 ) {
   const connectionName = normalizeOptionalString(agent.localLlmConnection);
   const configuredConnection =
@@ -572,11 +552,7 @@ export function resolveLocalLlmConnectionConfig(
     return {
       connectionName,
       baseUrl: configuredConnection.baseUrl || DEFAULT_LOCAL_LLM_BASE_URL,
-      apiKey:
-        normalizeOptionalString(configuredConnection.apiKey) ||
-        normalizeOptionalString(agent?.env?.LOCAL_LLM_API_KEY) ||
-        normalizeOptionalString(sharedEnv.LOCAL_LLM_API_KEY) ||
-        normalizeOptionalString(processEnv.LOCAL_LLM_API_KEY),
+      apiKey: normalizeOptionalString(configuredConnection.apiKey),
     };
   }
 
@@ -584,13 +560,8 @@ export function resolveLocalLlmConnectionConfig(
     connectionName: null,
     baseUrl:
       normalizeOptionalString(agent.baseUrl) ||
-      normalizeOptionalString(sharedEnv.LOCAL_LLM_BASE_URL) ||
-      normalizeOptionalString(processEnv.LOCAL_LLM_BASE_URL) ||
       DEFAULT_LOCAL_LLM_BASE_URL,
-    apiKey:
-      normalizeOptionalString(agent?.env?.LOCAL_LLM_API_KEY) ||
-      normalizeOptionalString(sharedEnv.LOCAL_LLM_API_KEY) ||
-      normalizeOptionalString(processEnv.LOCAL_LLM_API_KEY),
+    apiKey: '',
   };
 }
 
@@ -683,7 +654,6 @@ function validateAgentDefinition(projectRoot, agent) {
     );
   }
 
-  validateEnvObject(agent.env ?? {}, `Agent "${agent.name}" env`);
 }
 
 function validateChannelDefinition(projectRoot, config, channel) {
@@ -853,6 +823,7 @@ function normalizeLegacyAgentRecords(agents) {
       const next = { ...agent };
       delete next.historyWindow;
       delete next.workdir;
+      delete next.env;
       if (typeof next.token === 'string' && next.discordToken === undefined) {
         next.discordToken = next.token;
       }
@@ -1000,9 +971,9 @@ function normalizeLegacyDashboardRecords(dashboards) {
   );
 }
 
-function normalizeLocalLlmConnectionRecords(connections, sharedEnv = {}) {
+function normalizeLocalLlmConnectionRecords(connections) {
   if (!isPlainObject(connections) || Object.keys(connections).length === 0) {
-    return createDefaultLocalLlmConnections(sharedEnv);
+    return createDefaultLocalLlmConnections();
   }
 
   return Object.fromEntries(
@@ -1013,13 +984,11 @@ function normalizeLocalLlmConnectionRecords(connections, sharedEnv = {}) {
   );
 }
 
-function createDefaultLocalLlmConnections(sharedEnv = {}) {
+function createDefaultLocalLlmConnections() {
   return {
     LLM1: buildLocalLlmConnectionDefinition('LLM1', {
-      baseUrl:
-        normalizeOptionalString(sharedEnv.LOCAL_LLM_BASE_URL) ||
-        DEFAULT_LOCAL_LLM_BASE_URL,
-      apiKey: normalizeOptionalString(sharedEnv.LOCAL_LLM_API_KEY),
+      baseUrl: DEFAULT_LOCAL_LLM_BASE_URL,
+      apiKey: '',
     }),
   };
 }
@@ -1030,17 +999,6 @@ function normalizePathEntries(value) {
     : parseCommaSeparatedList(value);
   const unique = [...new Set(entries)];
   return unique.length > 0 ? unique : undefined;
-}
-
-function validateEnvObject(value, fieldName) {
-  assert(isPlainObject(value), `${fieldName} must be an object.`);
-  for (const [key, entryValue] of Object.entries(value)) {
-    assert(key.trim().length > 0, `${fieldName} keys cannot be empty.`);
-    assert(
-      typeof entryValue === 'string',
-      `${fieldName} values must be strings.`,
-    );
-  }
 }
 
 function validateLocalLlmConnections(value) {
@@ -1092,6 +1050,7 @@ function stripManagedFields(value) {
   }
   const next = { ...value };
   delete next.name;
+  delete next.env;
   return next;
 }
 
