@@ -2,7 +2,7 @@ import {
   renderDetailList,
   renderMetricCard,
   renderShortcutCard,
-} from './ui-shell.js?v=20260421-18';
+} from './ui-shell.js?v=20260421-21';
 
 export function renderHomeView(ctx) {
   const { state, getDashboardStats, escapeHtml } = ctx;

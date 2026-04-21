@@ -254,7 +254,6 @@ export function renderFrame({
   getActiveViewMeta,
   getDashboardStats,
 }) {
-  const viewMeta = getActiveViewMeta();
   const stats = state.data ? getDashboardStats() : null;
   return `
     <div class="app-shell ${escapeAttr(className)}">
@@ -263,29 +262,7 @@ export function renderFrame({
         ${state.data && stats ? renderSidebar({ state, stats, escapeHtml, escapeAttr }) : ''}
         <div class="workspace-main">
           ${state.data ? renderTopBar({ state, escapeHtml, getActiveViewMeta, stats }) : ''}
-          <div class="shell ${state.data ? 'shell--embedded' : ''}">
-            ${
-              state.data
-                ? `
-                    <section class="panel hero-panel">
-                      <div class="hero-copy">
-                        <span class="hero-eyebrow">Current Workspace</span>
-                        <h1>${escapeHtml(viewMeta.title)}</h1>
-                      </div>
-                      <div class="hero-meta">
-                        <div class="hero-chip-row">
-                          <span class="hero-chip">에이전트 ${escapeHtml(String(stats.agents.length))}</span>
-                          <span class="hero-chip">채널 ${escapeHtml(String(stats.channels.length))}</span>
-                          <span class="hero-chip">AI ${escapeHtml(`${stats.readyAiCount}/${stats.availableAiCount}`)}</span>
-                          <span class="hero-chip ${state.busy ? 'is-busy' : ''}">${escapeHtml(state.busy ? '처리 중' : '대기 중')}</span>
-                        </div>
-                      </div>
-                    </section>
-                  `
-                : ''
-            }
-            ${content}
-          </div>
+          <div class="shell ${state.data ? 'shell--embedded' : ''}">${content}</div>
         </div>
       </div>
       ${renderNotice()}
@@ -298,10 +275,7 @@ export function renderTopBar({ state, escapeHtml, getActiveViewMeta, stats }) {
   return `
     <section class="panel workspace-header">
       <div class="workspace-header-copy">
-        <span class="section-eyebrow">${escapeHtml(viewMeta.eyebrow)}</span>
-        <div>
-          <h2>${escapeHtml(viewMeta.title)}</h2>
-        </div>
+        <strong class="workspace-title">${escapeHtml(viewMeta.title)}</strong>
       </div>
       <div class="workspace-status">
         <span class="status-pill ${stats.discordService.running ? 'is-ok' : stats.discordService.stale ? 'is-warning' : ''}">

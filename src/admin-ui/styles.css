@@ -199,9 +199,14 @@ h2 {
   flex-wrap: wrap;
 }
 
+.workspace-title {
+  font-size: 1.32rem;
+  letter-spacing: -0.03em;
+}
+
 .shell {
   display: grid;
-  gap: 20px;
+  gap: 16px;
 }
 
 .shell--embedded {
