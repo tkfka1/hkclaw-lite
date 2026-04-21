@@ -2,7 +2,7 @@ import {
   renderDetailList,
   renderMetricCard,
   renderShortcutCard,
-} from './ui-shell.js?v=20260421-16';
+} from './ui-shell.js?v=20260421-18';
 
 export function renderHomeView(ctx) {
   const { state, getDashboardStats, escapeHtml } = ctx;
@@ -22,9 +22,8 @@ export function renderHomeView(ctx) {
         <div class="section-head section-head--stack">
           <div>
             <span class="section-eyebrow">Runtime</span>
-            <h2>현재 운영 상태</h2>
+            <h2>상태</h2>
           </div>
-          <span class="field-hint">지금 열려 있는 콘솔의 핵심 신호만 모았습니다.</span>
         </div>
         ${renderDetailList([
           { label: 'Discord 워커', value: discordStatus },
@@ -37,15 +36,14 @@ export function renderHomeView(ctx) {
         <div class="section-head section-head--stack">
           <div>
             <span class="section-eyebrow">Navigate</span>
-            <h2>빠른 이동</h2>
+            <h2>바로가기</h2>
           </div>
-          <span class="field-hint">관리 빈도가 높은 영역부터 바로 들어갑니다.</span>
         </div>
         <div class="shortcut-grid">
-          ${renderShortcutCard({ view: 'agents', title: '에이전트', description: '워커 실행, 재연결, 모델 구성을 바로 조정합니다.', meta: `${stats.activeWorkerCount}개 실행 중`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-          ${renderShortcutCard({ view: 'channels', title: '채널', description: '운영 채널, 역할, 세션 재사용 구성을 정리합니다.', meta: `${stats.channels.length}개 채널`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-          ${renderShortcutCard({ view: 'ai', title: 'AI', description: '로그인, API 키, 로컬 LLM 연결을 관리합니다.', meta: `${stats.readyAiCount}개 준비됨`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-          ${renderShortcutCard({ view: 'tokens', title: '토큰', description: '최근 사용량과 추이를 확인합니다.', meta: `${stats.claudeSessionCount}개 세션`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
+          ${renderShortcutCard({ view: 'agents', title: '에이전트', description: '실행 · 재시작', meta: `${stats.activeWorkerCount}개 실행`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
+          ${renderShortcutCard({ view: 'channels', title: '채널', description: '구성 · 역할', meta: `${stats.channels.length}개`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
+          ${renderShortcutCard({ view: 'ai', title: 'AI', description: '로그인 · 연결', meta: `${stats.readyAiCount}개 준비`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
+          ${renderShortcutCard({ view: 'tokens', title: '토큰', description: '사용 기록', meta: `${stats.claudeSessionCount}개 세션`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
         </div>
       </section>
     </section>
@@ -54,7 +52,7 @@ export function renderHomeView(ctx) {
         <div class="section-head section-head--stack">
           <div>
             <span class="section-eyebrow">Agents</span>
-            <h2>AI 구성 분포</h2>
+            <h2>구성</h2>
           </div>
         </div>
         ${renderDetailList(
@@ -70,7 +68,7 @@ export function renderHomeView(ctx) {
         <div class="section-head section-head--stack">
           <div>
             <span class="section-eyebrow">Channels</span>
-            <h2>채널 구성 분포</h2>
+            <h2>분포</h2>
           </div>
         </div>
         ${renderDetailList(
@@ -133,7 +131,6 @@ export function renderAgentsView(ctx) {
             </div>
             <span class="status-pill ${discordService.running ? 'is-ok' : discordService.stale ? 'is-warning' : ''}">${escapeHtml(serviceLabel)}</span>
           </div>
-          <div class="field-hint">에이전트별 워커 상태를 다시 읽거나 전체 제어합니다.</div>
           <div class="inline-actions">
             <button type="button" class="btn-secondary" data-action="start-discord-service" ${canStartDiscord ? '' : 'disabled'}>전체 실행</button>
             <button type="button" class="btn-secondary" data-action="restart-discord-service" ${canRestartDiscord ? '' : 'disabled'}>전체 재시작</button>
@@ -149,7 +146,6 @@ export function renderAgentsView(ctx) {
             </div>
             <span class="status-pill ${telegramService.running ? 'is-ok' : telegramService.stale ? 'is-warning' : ''}">${escapeHtml(telegramLabel)}</span>
           </div>
-          <div class="field-hint">Telegram 봇 연결과 프로세스 상태를 전체 단위로 제어합니다.</div>
           <div class="inline-actions">
             <button type="button" class="btn-secondary" data-action="start-telegram-service" ${canStartTelegram ? '' : 'disabled'}>전체 실행</button>
             <button type="button" class="btn-secondary" data-action="restart-telegram-service" ${canRestartTelegram ? '' : 'disabled'}>전체 재시작</button>
@@ -207,7 +203,6 @@ export function renderAllView(ctx) {
           <div class="card-main">
             <strong class="card-title">관리자 비밀번호</strong>
             <span class="card-meta">${escapeHtml(state.auth.enabled ? '설정됨' : '미설정')}</span>
-            <div class="field-hint">현재 콘솔 접근 보호를 변경합니다.</div>
           </div>
         </article>
         <article
@@ -220,7 +215,6 @@ export function renderAllView(ctx) {
           <div class="card-main">
             <strong class="card-title">로그아웃</strong>
             <span class="card-meta">${escapeHtml(state.auth.enabled ? '현재 세션 종료' : '비활성화됨')}</span>
-            <div class="field-hint">현재 브라우저 세션을 즉시 종료합니다.</div>
           </div>
         </article>
       </div>
@@ -259,7 +253,6 @@ export function renderAiView(ctx) {
         ${renderMetricCard('로컬 LLM', getLocalLlmConnectionEntries().length, escapeHtml, '', '연결별 관리')}
         ${renderMetricCard('토큰 기록', stats.claudeSessionCount, escapeHtml, '', 'Claude 세션 수')}
       </section>
-      <div class="field-hint">AI 카드를 누르면 해당 AI의 관리 화면이 열립니다.</div>
       ${renderAiList()}
     </section>
   `;
