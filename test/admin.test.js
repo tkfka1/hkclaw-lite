@@ -692,6 +692,12 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     assert.match(appJsResponse.headers.get('content-type') || '', /text\/javascript/u);
     assert.match(appJs, /ui-shell\.js/u);
 
+    const appCssResponse = await fetch(`${url}/app.css`);
+    const appCss = await appCssResponse.text();
+    assert.equal(appCssResponse.status, 200);
+    assert.match(appCssResponse.headers.get('content-type') || '', /text\/css/u);
+    assert.match(appCss, /styles\.css/u);
+
     const shellJsResponse = await fetch(`${url}/ui-shell.js`);
     const shellJs = await shellJsResponse.text();
     assert.equal(shellJsResponse.status, 200);
