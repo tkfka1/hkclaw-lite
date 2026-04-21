@@ -66,7 +66,6 @@ docker run --rm \
 
 - `/home/hkclaw`는 로그인 상태와 런타임 상태를 유지하는 용도다.
 - `/workspace`는 Docker 실행 예시에서 실제 작업 디렉터리를 붙이는 용도다.
-- 프로젝트 루트의 `.env` 와 `.hkclaw-lite/.env` 는 admin, 워커 복구, command agent 실행 시 공통으로 로드된다.
 - 기본 Helm 배포는 단일 웹 어드민 Pod다. 웹 어드민에서 워커를 시작하면 같은 컨테이너 안에서 child process로 실행된다.
 - 컨테이너 이미지 기준 기본 채널 워크스페이스는 `/workspace` 다. `~` 는 명시적으로 썼을 때만 `HOME` 으로 해석된다.
 - 컨테이너는 자동으로 역할을 추측하지 않는다. `admin`, `run`, `discord serve` 중 어떤 명령을 띄울지 직접 넘겨야 한다.
@@ -99,7 +98,7 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 운영 주의:
 
 - 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord/Telegram 워커를 같은 컨테이너 안에서 띄운다.
-- worker가 재기동 뒤에도 같은 환경으로 복구돼야 하면 필요한 값은 Pod env에만 두지 말고 프로젝트 `.env` 또는 `.hkclaw-lite/.env` 에도 둔다.
+- worker 재기동 복구는 runtime SQLite DB에 저장된 서비스 런타임 스냅샷을 우선 사용한다. 새 배포 환경을 반영하려면 웹 어드민에서 해당 워커를 한 번 다시 실행하거나 재시작하면 된다.
 - Helm 기본 배포는 단일 state PVC 안의 `/home/hkclaw/workspace` 를 채널 기본 workdir 로 사용한다.
 - 별도 작업용 볼륨을 쓰고 싶을 때만 `workspace.enabled=true` 로 켜고 원하는 마운트 경로를 준다.
 - `~` 를 명시적으로 쓰면 `HOME` 으로 해석되고 Helm 기본값에서는 `/home/hkclaw` 를 뜻한다.

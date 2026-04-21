@@ -25,7 +25,10 @@ import {
   readTelegramAgentServiceStatus,
   writeTelegramAgentServiceStatus,
 } from '../src/telegram-runtime-state.js';
-import { recordRuntimeUsageEvent } from '../src/runtime-db.js';
+import {
+  recordRuntimeUsageEvent,
+  setManagedServiceEnvSnapshot,
+} from '../src/runtime-db.js';
 import {
   buildAgentDefinition,
   buildChannelDefinition,
@@ -1158,6 +1161,11 @@ test('admin server restores desired Discord service on startup', async () => {
   });
 
   try {
+    await setManagedServiceEnvSnapshot(projectRoot, {
+      platform: 'discord',
+      agentName: 'worker',
+      env: process.env,
+    });
     await withAdminServer(projectRoot, async ({ url }) => {
       const restored = await waitFor(() => {
         const snapshot = buildDiscordServiceSnapshot(projectRoot);
@@ -1182,12 +1190,12 @@ test('admin server restores desired Discord service on startup', async () => {
   }
 });
 
-test('admin server restores desired Discord service on startup using project .env', async () => {
+test('admin server restores desired Discord service on startup using runtime db env snapshot', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
-  fs.writeFileSync(path.join(projectRoot, '.env'), 'HKCLAW_RESTORE_TOKEN=from-project-env\n');
   const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
   const previousRequiredEnvName = process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME;
+  const previousRestoreToken = process.env.HKCLAW_RESTORE_TOKEN;
   process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeDiscordServicePath;
   process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME = 'HKCLAW_RESTORE_TOKEN';
   const config = loadConfig(projectRoot);
@@ -1219,6 +1227,15 @@ test('admin server restores desired Discord service on startup using project .en
   });
 
   try {
+    await setManagedServiceEnvSnapshot(projectRoot, {
+      platform: 'discord',
+      agentName: 'worker',
+      env: {
+        ...process.env,
+        HKCLAW_RESTORE_TOKEN: 'from-runtime-db',
+      },
+    });
+    delete process.env.HKCLAW_RESTORE_TOKEN;
     await withAdminServer(projectRoot, async () => {
       const restored = await waitFor(() => {
         const snapshot = buildDiscordServiceSnapshot(projectRoot);
@@ -1237,6 +1254,11 @@ test('admin server restores desired Discord service on startup using project .en
       delete process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME;
     } else {
       process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME = previousRequiredEnvName;
+    }
+    if (previousRestoreToken === undefined) {
+      delete process.env.HKCLAW_RESTORE_TOKEN;
+    } else {
+      process.env.HKCLAW_RESTORE_TOKEN = previousRestoreToken;
     }
   }
 });
@@ -1300,6 +1322,16 @@ test('admin server restores legacy global Discord service state for existing age
   });
 
   try {
+    await setManagedServiceEnvSnapshot(projectRoot, {
+      platform: 'discord',
+      agentName: 'legacy',
+      env: process.env,
+    });
+    await setManagedServiceEnvSnapshot(projectRoot, {
+      platform: 'discord',
+      agentName: 'fresh',
+      env: process.env,
+    });
     await withAdminServer(projectRoot, async () => {
       const restored = await waitFor(() => {
         const snapshot = buildDiscordServiceSnapshot(projectRoot);
@@ -1426,6 +1458,11 @@ test('admin server restores desired Telegram service on startup', async () => {
   });
 
   try {
+    await setManagedServiceEnvSnapshot(projectRoot, {
+      platform: 'telegram',
+      agentName: 'worker',
+      env: process.env,
+    });
     await withAdminServer(projectRoot, async ({ url }) => {
       const restored = await waitFor(() => {
         const snapshot = buildTelegramServiceSnapshot(projectRoot);

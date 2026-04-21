@@ -21,10 +21,13 @@ import {
 import {
   bootstrapAdminAuth,
   createAdminSession,
+  deleteManagedServiceEnvSnapshot,
   deleteAdminSession,
+  getManagedServiceEnvSnapshot,
   getAdminAuthStatus,
   isAdminSessionValid,
   recordRuntimeUsageEvent,
+  setManagedServiceEnvSnapshot,
   setAdminPassword,
   summarizeRuntimeUsage,
   verifyAdminPassword,
@@ -62,7 +65,6 @@ import {
   writeTelegramServiceStatus,
 } from './telegram-runtime-state.js';
 import { listAgentModels } from './model-catalog.js';
-import { buildProjectEnv } from './project-env.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import { assert, parseInteger, toErrorMessage } from './utils.js';
 
@@ -106,9 +108,8 @@ export async function startAdminServer(
 ) {
   const normalizedPort =
     typeof port === 'number' ? port : parseInteger(port, 'port');
-  const runtimeEnv = buildProjectEnv(projectRoot, process.env);
   const auth = await createAdminAuthController(projectRoot, {
-    password: password ?? runtimeEnv[ADMIN_PASSWORD_ENV],
+    password: password ?? process.env[ADMIN_PASSWORD_ENV],
     passwordFile,
   });
 
@@ -758,9 +759,13 @@ function shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapsh
 async function restoreManagedServiceProcess(projectRoot, agentName, platform) {
   try {
     if (platform === 'telegram') {
-      return await startTelegramServiceProcess(projectRoot, agentName);
+      return await startTelegramServiceProcess(projectRoot, agentName, {
+        envSource: 'runtime-db',
+      });
     }
-    return await startDiscordServiceProcess(projectRoot, agentName);
+    return await startDiscordServiceProcess(projectRoot, agentName, {
+      envSource: 'runtime-db',
+    });
   } catch (error) {
     console.error(
       `Failed to restore ${platform} service for agent "${agentName}": ${toErrorMessage(error)}`,
@@ -794,11 +799,19 @@ async function deleteAgentAndRuntimeByName(projectRoot, name) {
 
   deleteDiscordAgentServiceArtifacts(projectRoot, name);
   deleteTelegramAgentServiceArtifacts(projectRoot, name);
+  await deleteManagedServiceEnvSnapshot(projectRoot, {
+    platform: 'discord',
+    agentName: name,
+  });
+  await deleteManagedServiceEnvSnapshot(projectRoot, {
+    platform: 'telegram',
+    agentName: name,
+  });
 
   return await deleteAgentByName(projectRoot, name);
 }
 
-async function startDiscordServiceProcess(projectRoot, agentName) {
+async function startDiscordServiceProcess(projectRoot, agentName, options = {}) {
   const config = loadConfig(projectRoot);
   assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
   assert(
@@ -818,10 +831,15 @@ async function startDiscordServiceProcess(projectRoot, agentName) {
   const args = buildDiscordServiceStartArgs(projectRoot, {
     agentName,
   });
+  const childEnv = await resolveManagedServiceRuntimeEnv(projectRoot, {
+    platform: 'discord',
+    agentName,
+    envSource: options.envSource,
+  });
 
   const child = spawn(process.execPath, args, {
     cwd: projectRoot,
-    env: buildProjectEnv(projectRoot, process.env),
+    env: childEnv,
     detached: true,
     stdio: 'ignore',
   });
@@ -980,7 +998,7 @@ async function reloadAllDiscordServiceProcesses(projectRoot) {
   };
 }
 
-async function startTelegramServiceProcess(projectRoot, agentName) {
+async function startTelegramServiceProcess(projectRoot, agentName, options = {}) {
   const config = loadConfig(projectRoot);
   assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
   assert(
@@ -998,9 +1016,14 @@ async function startTelegramServiceProcess(projectRoot, agentName) {
   }
 
   const args = buildTelegramServiceStartArgs(projectRoot, { agentName });
+  const childEnv = await resolveManagedServiceRuntimeEnv(projectRoot, {
+    platform: 'telegram',
+    agentName,
+    envSource: options.envSource,
+  });
   const child = spawn(process.execPath, args, {
     cwd: projectRoot,
-    env: buildProjectEnv(projectRoot, process.env),
+    env: childEnv,
     detached: true,
     stdio: 'ignore',
   });
@@ -2667,7 +2690,8 @@ function parseCodexLoggedInStatus(output) {
 }
 
 function buildManagedAgentEnv(projectRoot, agentType = '') {
-  const env = buildProjectEnv(projectRoot, process.env);
+  void projectRoot;
+  const env = { ...process.env };
   if (agentType === 'claude-code') {
     return stripClaudeAcpEnv(env);
   }
@@ -2675,6 +2699,38 @@ function buildManagedAgentEnv(projectRoot, agentType = '') {
     return stripGeminiCliEnv(env);
   }
   return env;
+}
+
+async function resolveManagedServiceRuntimeEnv(
+  projectRoot,
+  {
+    platform,
+    agentName,
+    envSource = 'process',
+  },
+) {
+  if (envSource === 'runtime-db') {
+    const snapshot = await getManagedServiceEnvSnapshot(projectRoot, { platform, agentName });
+    assert(
+      snapshot,
+      `${platform === 'telegram' ? 'Telegram' : 'Discord'} 서비스 런타임 스냅샷이 없습니다. 현재 배포 환경으로 한 번 수동 실행해 DB 스냅샷을 저장하세요.`,
+    );
+    return snapshot;
+  }
+
+  return await setManagedServiceEnvSnapshot(projectRoot, {
+    platform,
+    agentName,
+    env: captureManagedServiceRuntimeEnv(process.env),
+  });
+}
+
+function captureManagedServiceRuntimeEnv(sourceEnv = process.env) {
+  return Object.fromEntries(
+    Object.entries(sourceEnv || {})
+      .filter(([key, value]) => typeof key === 'string' && key && value !== undefined && value !== null)
+      .map(([key, value]) => [key, String(value)]),
+  );
 }
 
 function stripClaudeAcpEnv(env) {

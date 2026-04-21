@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { getProjectLayout } from './store.js';
-import { ensureDir, timestamp, toErrorMessage } from './utils.js';
+import { assert, ensureDir, timestamp, toErrorMessage } from './utils.js';
 
 const SQLITE_PROMISE = {
   current: null,
@@ -987,6 +987,68 @@ export async function listRecentRoleSessionContext(
   }));
 }
 
+export async function getManagedServiceEnvSnapshot(projectRoot, { platform, agentName }) {
+  const db = await getRuntimeDb(projectRoot);
+  const row = db
+    .prepare(
+      `
+        SELECT env_json
+        FROM managed_service_env_snapshots
+        WHERE platform = ?
+          AND agent_name = ?
+      `,
+    )
+    .get(normalizeManagedServicePlatform(platform), normalizeManagedServiceAgentName(agentName));
+
+  if (!row?.env_json) {
+    return null;
+  }
+
+  try {
+    return normalizeManagedServiceEnvSnapshot(JSON.parse(row.env_json));
+  } catch {
+    return null;
+  }
+}
+
+export async function setManagedServiceEnvSnapshot(projectRoot, { platform, agentName, env }) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedPlatform = normalizeManagedServicePlatform(platform);
+  const normalizedAgentName = normalizeManagedServiceAgentName(agentName);
+  const normalizedEnv = normalizeManagedServiceEnvSnapshot(env);
+  db.prepare(
+    `
+      INSERT INTO managed_service_env_snapshots (
+        platform,
+        agent_name,
+        env_json,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(platform, agent_name) DO UPDATE SET
+        env_json = excluded.env_json,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    normalizedPlatform,
+    normalizedAgentName,
+    JSON.stringify(normalizedEnv),
+    timestamp(),
+  );
+  return normalizedEnv;
+}
+
+export async function deleteManagedServiceEnvSnapshot(projectRoot, { platform, agentName }) {
+  const db = await getRuntimeDb(projectRoot);
+  db.prepare(
+    `
+      DELETE FROM managed_service_env_snapshots
+      WHERE platform = ?
+        AND agent_name = ?
+    `,
+  ).run(normalizeManagedServicePlatform(platform), normalizeManagedServiceAgentName(agentName));
+}
+
 export async function bootstrapAdminAuth(projectRoot, { password, passwordFile } = {}) {
   const db = await getRuntimeDb(projectRoot);
   const existing = db
@@ -1253,6 +1315,13 @@ async function getRuntimeDb(projectRoot) {
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS managed_service_env_snapshots (
+      platform TEXT NOT NULL,
+      agent_name TEXT NOT NULL,
+      env_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (platform, agent_name)
+    );
     CREATE TABLE IF NOT EXISTS runtime_usage_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       agent_type TEXT NOT NULL,
@@ -1281,6 +1350,8 @@ async function getRuntimeDb(projectRoot) {
       ON runtime_outbox_events(dispatched_at, id);
     CREATE INDEX IF NOT EXISTS admin_auth_sessions_expires_at_idx
       ON admin_auth_sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS managed_service_env_snapshots_updated_at_idx
+      ON managed_service_env_snapshots(updated_at DESC);
     CREATE INDEX IF NOT EXISTS runtime_usage_events_agent_type_idx
       ON runtime_usage_events(agent_type, recorded_at DESC);
   `);
@@ -1311,6 +1382,34 @@ function ensureRoleSessionColumn(db, columnName, columnSql) {
     return;
   }
   db.exec(`ALTER TABLE runtime_role_sessions ADD COLUMN ${columnName} ${columnSql}`);
+}
+
+function normalizeManagedServicePlatform(platform) {
+  const normalized = String(platform || '').trim().toLowerCase();
+  assert(normalized === 'discord' || normalized === 'telegram', 'platform must be discord or telegram.');
+  return normalized;
+}
+
+function normalizeManagedServiceAgentName(agentName) {
+  const normalized = String(agentName || '').trim();
+  assert(normalized, 'agentName is required.');
+  return normalized;
+}
+
+function normalizeManagedServiceEnvSnapshot(env) {
+  const snapshot = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    if (typeof key !== 'string' || !key) {
+      continue;
+    }
+    if (value === undefined || value === null) {
+      continue;
+    }
+    snapshot[key] = String(value);
+  }
+  return Object.fromEntries(
+    Object.entries(snapshot).sort(([left], [right]) => left.localeCompare(right)),
+  );
 }
 
 function insertRunEvent(db, runId, entry) {

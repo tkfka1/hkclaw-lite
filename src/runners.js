@@ -16,7 +16,6 @@ import {
   resolveLocalLlmConnectionConfig,
   resolveProjectPath,
 } from './store.js';
-import { buildProjectEnv } from './project-env.js';
 import {
   assert,
   resolveExecutable,
@@ -530,7 +529,7 @@ function buildChildEnv({
   fullPrompt,
 }) {
   return {
-    ...buildProjectEnv(projectRoot, process.env),
+    ...process.env,
     HKCLAW_LITE_PROJECT_ROOT: projectRoot,
     HKCLAW_LITE_AGENT_NAME: service.name,
     HKCLAW_LITE_SERVICE_NAME: service.name,
