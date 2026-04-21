@@ -4,18 +4,18 @@ import {
   renderDetailList as buildDetailList,
   renderFrame as buildFrame,
   renderTopBar as buildTopBar,
-} from './ui-shell.js';
+} from './ui-shell.js?v=20260421-16';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
-} from './ui-views.js';
+} from './ui-views.js?v=20260421-16';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js';
+} from './polling.js?v=20260421-16';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
