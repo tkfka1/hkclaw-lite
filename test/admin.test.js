@@ -1182,6 +1182,65 @@ test('admin server restores desired Discord service on startup', async () => {
   }
 });
 
+test('admin server restores desired Discord service on startup using project .env', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  fs.writeFileSync(path.join(projectRoot, '.env'), 'HKCLAW_RESTORE_TOKEN=from-project-env\n');
+  const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+  const previousRequiredEnvName = process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME;
+  process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeDiscordServicePath;
+  process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME = 'HKCLAW_RESTORE_TOKEN';
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'owner-token',
+  });
+  saveConfig(projectRoot, config);
+  writeDiscordAgentServiceStatus(projectRoot, 'worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'worker',
+    pid: 999999,
+    running: false,
+    desiredRunning: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: '2026-04-15T00:00:00.000Z',
+    agents: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        tag: 'worker#0001',
+        userId: '1',
+      },
+    },
+  });
+
+  try {
+    await withAdminServer(projectRoot, async () => {
+      const restored = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(restored?.agentServices?.worker?.running), true);
+      assert.equal(restored?.agentServices?.worker?.desiredRunning, true);
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousEntry;
+    }
+    if (previousRequiredEnvName === undefined) {
+      delete process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME;
+    } else {
+      process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME = previousRequiredEnvName;
+    }
+  }
+});
+
 test('admin server restores legacy global Discord service state for existing agents', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);

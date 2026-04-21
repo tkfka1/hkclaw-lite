@@ -535,6 +535,40 @@ test('tribunal channel can use role-specific workspaces', async () => {
   assert.match(events.find((entry) => entry.role === 'arbiter')?.content || '', new RegExp(`workdir=${arbiterWorkspacePath.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'));
 });
 
+test('command agents inherit project .env variables during channel turns', async () => {
+  const projectRoot = createProject();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, '.env'), 'HKCLAW_LITE_TEST_CUSTOM_ENV=from-project-env\n');
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: `node ${inspectFixturePath}`,
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    mode: 'single',
+    discordChannelId: '123',
+    workspace: 'workspace',
+    agent: 'owner',
+  });
+  saveConfig(projectRoot, config);
+
+  const loaded = loadConfig(projectRoot);
+  const result = await executeChannelTurn({
+    projectRoot,
+    config: loaded,
+    channel: getChannel(loaded, 'main'),
+    prompt: 'inspect env',
+    workdir: workspacePath,
+  });
+
+  assert.match(result.content, /customEnv=from-project-env/u);
+});
+
 test('single channel reuses Claude CLI sessions per channel role', async () => {
   const projectRoot = createProject();
   const workspacePath = path.join(projectRoot, 'workspace');

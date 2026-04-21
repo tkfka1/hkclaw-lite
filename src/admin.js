@@ -62,6 +62,7 @@ import {
   writeTelegramServiceStatus,
 } from './telegram-runtime-state.js';
 import { listAgentModels } from './model-catalog.js';
+import { buildProjectEnv } from './project-env.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import { assert, parseInteger, toErrorMessage } from './utils.js';
 
@@ -99,14 +100,15 @@ export async function startAdminServer(
   {
     host = '127.0.0.1',
     port = DEFAULT_ADMIN_PORT,
-    password = process.env[ADMIN_PASSWORD_ENV],
+    password = undefined,
     passwordFile = null,
   } = {},
 ) {
   const normalizedPort =
     typeof port === 'number' ? port : parseInteger(port, 'port');
+  const runtimeEnv = buildProjectEnv(projectRoot, process.env);
   const auth = await createAdminAuthController(projectRoot, {
-    password,
+    password: password ?? runtimeEnv[ADMIN_PASSWORD_ENV],
     passwordFile,
   });
 
@@ -164,7 +166,7 @@ export async function serveAdmin(
   {
     host = '127.0.0.1',
     port = DEFAULT_ADMIN_PORT,
-    password = process.env[ADMIN_PASSWORD_ENV],
+    password = undefined,
     passwordFile = null,
   } = {},
 ) {
@@ -819,7 +821,7 @@ async function startDiscordServiceProcess(projectRoot, agentName) {
 
   const child = spawn(process.execPath, args, {
     cwd: projectRoot,
-    env: process.env,
+    env: buildProjectEnv(projectRoot, process.env),
     detached: true,
     stdio: 'ignore',
   });
@@ -998,7 +1000,7 @@ async function startTelegramServiceProcess(projectRoot, agentName) {
   const args = buildTelegramServiceStartArgs(projectRoot, { agentName });
   const child = spawn(process.execPath, args, {
     cwd: projectRoot,
-    env: process.env,
+    env: buildProjectEnv(projectRoot, process.env),
     detached: true,
     stdio: 'ignore',
   });
@@ -2665,7 +2667,7 @@ function parseCodexLoggedInStatus(output) {
 }
 
 function buildManagedAgentEnv(projectRoot, agentType = '') {
-  const env = { ...process.env };
+  const env = buildProjectEnv(projectRoot, process.env);
   if (agentType === 'claude-code') {
     return stripClaudeAcpEnv(env);
   }

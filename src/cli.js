@@ -142,7 +142,7 @@ export async function main(argv) {
         return;
       case 'env':
         throw new Error(
-          'The env command was removed. Use explicit flags, stored agent fields, or your deployment environment instead.',
+          'The env command was removed. Use explicit flags, stored agent fields, project .env files, or your deployment environment instead.',
         );
       case 'admin':
         await handleAdminCommand(projectRoot, tail);
@@ -1951,6 +1951,7 @@ Use the web admin for most setup and day-to-day control; keep the CLI for automa
 Agents intentionally run with the full permissions of the host account that launched them.
 Most commands auto-create .hkclaw-lite in the current directory when missing.
 Installing the package never starts a process by itself.
+Project-level environment variables can be loaded from .env and .hkclaw-lite/.env.
 
 Execution model:
   hkclaw-lite / --help      Show help only

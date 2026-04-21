@@ -3,9 +3,15 @@ import path from 'node:path';
 
 const projectRoot = process.argv[2];
 const agentName = process.argv[3] || null;
+const requiredEnvName = process.env.HKCLAW_LITE_TEST_REQUIRED_ENV_NAME || '';
 
 if (!projectRoot) {
   console.error('project root is required');
+  process.exit(1);
+}
+
+if (requiredEnvName && !process.env[requiredEnvName]) {
+  console.error(`required env missing: ${requiredEnvName}`);
   process.exit(1);
 }
 
