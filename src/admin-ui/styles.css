@@ -191,7 +191,6 @@ h2 {
   padding-bottom: 16px;
 }
 
-.workspace-header-copy,
 .workspace-status {
   display: flex;
   align-items: center;
@@ -199,21 +198,9 @@ h2 {
   flex-wrap: wrap;
 }
 
-.workspace-header-copy {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
 .workspace-status {
-  flex: 0 0 auto;
+  width: 100%;
   justify-content: flex-end;
-}
-
-.workspace-title {
-  font-size: 1.32rem;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-  white-space: nowrap;
 }
 
 .shell {
@@ -1343,7 +1330,7 @@ button:focus-visible {
     display: none;
   }
 
-  .workspace-title {
-    white-space: normal;
+  .workspace-status {
+    justify-content: flex-start;
   }
 }

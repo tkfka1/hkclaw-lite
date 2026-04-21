@@ -271,12 +271,10 @@ export function renderFrame({
 }
 
 export function renderTopBar({ state, escapeHtml, getActiveViewMeta, stats }) {
-  const viewMeta = getActiveViewMeta();
+  void state;
+  void getActiveViewMeta;
   return `
     <section class="panel workspace-header">
-      <div class="workspace-header-copy">
-        <strong class="workspace-title">${escapeHtml(viewMeta.title)}</strong>
-      </div>
       <div class="workspace-status">
         <span class="status-pill ${stats.discordService.running ? 'is-ok' : stats.discordService.stale ? 'is-warning' : ''}">
           ${escapeHtml(`Discord ${stats.discordService.label || '중지'}`)}
