@@ -11,13 +11,25 @@
 
 - Node.js 24+
 - 기본 설치 시 내부 번들만 사용한다.
-- 시스템 `PATH`에 있는 `codex` / `claude` / `gemini`로 fallback하지 않는다.
+- 시스템 `PATH`에 있는 `codex` / `gemini`로 자동 fallback하지 않는다.
+- Claude는 기본적으로 내부 번들을 쓰지만, 필요하면 `HKCLAW_LITE_CLAUDE_CLI=claude` 같은 환경 변수로 외부 CLI를 명시적으로 지정할 수 있다.
 
 기본 번들 버전:
 
 - `@openai/codex@0.120.0`
 - `@anthropic-ai/claude-agent-sdk@0.2.105`
 - `@google/gemini-cli@0.37.1`
+
+Claude 외부 CLI를 쓰고 싶다면:
+
+```bash
+export HKCLAW_LITE_CLAUDE_CLI=claude
+hkclaw-lite admin
+```
+
+- 이 경우 Claude 실행/상태 확인/로그아웃은 외부 `claude` CLI를 사용한다.
+- 로그인 상태는 같은 머신/같은 환경의 로컬 Claude CLI 로그인 상태를 그대로 공유한다.
+- 웹 어드민의 Claude 브라우저 로그인은 번들 런타임용 흐름이고, 외부 CLI 모드에서는 터미널에서 `claude auth login` 후 상태 확인을 누르면 된다.
 
 ## 1. npm 설치
 
@@ -124,3 +136,55 @@ hkclaw-lite telegram serve --agent <agent-name>
 ```
 
 `admin`은 웹 어드민, `run`은 one-shot 실행, `discord serve`/`telegram serve`는 특정 에이전트의 플랫폼 워커를 직접 띄우는 명령이다.
+
+## GitHub 릴리즈 / 배포 자동화
+
+이 저장소는 GitHub Actions 기준으로 릴리즈-배포 흐름을 자동화한다.
+
+### 포함된 워크플로우
+
+- `CI` (`.github/workflows/ci.yml`)
+  - PR / `main` push / 수동 실행에서 `npm ci` + `npm test`
+- `Prepare Release` (`.github/workflows/release-prepare.yml`)
+  - GitHub Actions 수동 실행용
+  - `patch` / `minor` / `major` / `custom` 중 하나를 선택하면
+    `package.json`, `package-lock.json`, `charts/hkclaw-lite/Chart.yaml` 버전을 함께 올린다.
+  - 테스트 통과 후 릴리즈 커밋과 `vX.Y.Z` 태그를 자동으로 push 한다.
+- `Publish Release` (`.github/workflows/release.yml`)
+  - `v*` 태그 push 시 실행
+  - 버전 동기화 검증
+  - `npm publish --provenance`
+  - GitHub Release 생성/업데이트
+  - npm 패키지 tarball, chart tarball, SHA256SUMS 업로드
+- `Publish Container` (`.github/workflows/container-publish.yml`)
+  - `main` push 때 `latest`/`sha-*` 이미지 publish
+  - `v*` 태그 push 때 `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X` 태그까지 함께 publish
+
+### 필요한 GitHub Secrets
+
+- `NPM_TOKEN`: npm 배포용 토큰
+
+### 운영 방법
+
+1. GitHub Actions에서 `Prepare Release` 실행
+2. `bump` 를 `patch`, `minor`, `major`, `custom` 중에서 선택
+3. `custom` 이면 `version` 에 정확한 semver 입력 (`1.2.3`)
+4. 워크플로우가 버전 파일 동기화 + 테스트 + 커밋 + `vX.Y.Z` 태그 push 수행
+5. 태그가 올라가면 `Publish Release` 와 `Publish Container` 가 자동 실행
+
+### 버전 정책
+
+다음 값은 항상 같이 움직이도록 맞춰뒀다.
+
+- `package.json#version`
+- `package-lock.json#version`
+- `package-lock.json#packages[""].version`
+- `charts/hkclaw-lite/Chart.yaml#version`
+- `charts/hkclaw-lite/Chart.yaml#appVersion`
+
+로컬에서 수동으로 맞추고 싶으면:
+
+```bash
+npm run release:sync-version -- 1.2.3
+npm run release:verify-version -- v1.2.3
+```

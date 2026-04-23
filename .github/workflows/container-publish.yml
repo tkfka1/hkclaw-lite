@@ -12,6 +12,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: container-publish-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   PACKAGE_NAME: ${{ github.event.repository.name }}
@@ -22,7 +26,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -45,7 +49,10 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
-            type=sha,format=short
+            type=semver,pattern={{version}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}},value=${{ github.ref_name }}
+            type=sha,format=short,prefix=sha-
 
       - name: Build and push container image
         uses: docker/build-push-action@v6
@@ -62,12 +69,23 @@ jobs:
       - name: Make GHCR package public
         env:
           GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
+        shell: bash
         run: |
-          visibility="$(gh api "/user/packages/container/${PACKAGE_NAME}" --jq '.visibility')"
-          if [ "${visibility}" != "public" ]; then
+          set -euo pipefail
+
+          if [ "$OWNER_TYPE" = "Organization" ]; then
+            package_endpoint="/orgs/${OWNER}/packages/container/${PACKAGE_NAME}"
+          else
+            package_endpoint="/user/packages/container/${PACKAGE_NAME}"
+          fi
+
+          visibility="$(gh api "${package_endpoint}" --jq '.visibility')"
+          if [ "$visibility" != "public" ]; then
             gh api \
               --method PUT \
               -H "Accept: application/vnd.github+json" \
-              "/user/packages/container/${PACKAGE_NAME}/visibility" \
+              "${package_endpoint}/visibility" \
               -f visibility='public'
           fi

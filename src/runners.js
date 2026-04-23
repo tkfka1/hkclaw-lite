@@ -73,6 +73,7 @@ const CODEX_PLATFORM_BUNDLES = {
     targetTriple: 'aarch64-pc-windows-msvc',
   },
 };
+const CLAUDE_EXTERNAL_CLI_ENV = 'HKCLAW_LITE_CLAUDE_CLI';
 export const CLAUDE_ACP_DISABLED_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_BASE_URL',
@@ -1099,7 +1100,12 @@ function requireManagedAgentCli(agentType, env = process.env) {
   return cli;
 }
 
-function resolveClaudeCli(env = process.env) {
+export function resolveClaudeCli(env = process.env) {
+  const externalCli = resolveExplicitClaudeCli(env);
+  if (externalCli) {
+    return externalCli;
+  }
+
   const spec = MANAGED_AGENT_RUNTIMES['claude-code'];
   const packageJsonOverride = String(env[spec.packageJsonEnv] || '').trim();
   let packageJsonPath = packageJsonOverride;
@@ -1139,9 +1145,33 @@ function requireClaudeCli(env = process.env) {
   const cli = resolveClaudeCli(env);
   assert(
     cli,
-    `${spec.binaryName} is unavailable. Bundled dependency ${spec.packageName} is required; reinstall hkclaw-lite without omitting optional dependencies.`,
+    `${spec.binaryName} is unavailable. Install bundled dependency ${spec.packageName} or set ${CLAUDE_EXTERNAL_CLI_ENV} to an external Claude CLI command.`,
   );
   return cli;
+}
+
+function resolveExplicitClaudeCli(env = process.env) {
+  const configuredCommand = String(env[CLAUDE_EXTERNAL_CLI_ENV] || '').trim();
+  if (!configuredCommand) {
+    return null;
+  }
+
+  const resolvedCommand =
+    resolveExecutable(configuredCommand, {
+      pathValue: env.PATH || process.env.PATH || '',
+      pathext: env.PATHEXT || process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
+    }) || '';
+  if (!resolvedCommand) {
+    return null;
+  }
+
+  return {
+    source: 'external',
+    command: resolvedCommand,
+    argsPrefix: [],
+    detail: `external Claude CLI (${resolvedCommand})`,
+    envPatch: {},
+  };
 }
 
 function buildManagedAgentRuntimeStatus(agentType, workdir) {
@@ -1149,6 +1179,7 @@ function buildManagedAgentRuntimeStatus(agentType, workdir) {
   const spec = MANAGED_AGENT_RUNTIMES[agentType];
   return {
     ready: Boolean(runtime),
+    source: runtime?.source || null,
     detail:
       runtime?.detail ||
       `bundled dependency ${spec.packageName} is not installed`,
@@ -1158,7 +1189,7 @@ function buildManagedAgentRuntimeStatus(agentType, workdir) {
 
 function resolveManagedAgentRuntime(agentType, env = process.env) {
   if (agentType === 'claude-code') {
-    return resolveClaudeAgentSdk(env);
+    return resolveClaudeCli(env);
   }
   return resolveManagedAgentCli(agentType, env);
 }

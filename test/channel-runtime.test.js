@@ -152,6 +152,10 @@ if (args[0] === 'auth' && args[1] === 'status' && args[2] === '--json') {
   return path.join(packageDir, 'package.json');
 }
 
+function resolveFakeClaudeCliPath(packageJsonPath) {
+  return path.join(path.dirname(packageJsonPath), 'cli.js');
+}
+
 async function withEnv(entries, callback) {
   const keys = Object.keys(entries);
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
@@ -560,6 +564,74 @@ test('single channel reuses Claude CLI sessions per channel role', async () => {
   await withEnv(
     {
       HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      const loaded = loadConfig(projectRoot);
+      const channel = getChannel(loaded, 'main');
+
+      const first = await executeChannelTurn({
+        projectRoot,
+        config: loaded,
+        channel,
+        prompt: 'first',
+        workdir: workspacePath,
+      });
+      assert.match(first.content, /^new:[0-9a-f-]{36}:bootstrap:dangerous$/u);
+
+      const sessionsAfterFirst = await listRuntimeRoleSessions(projectRoot, {
+        channelName: 'main',
+      });
+      assert.equal(sessionsAfterFirst.length, 1);
+      assert.equal(sessionsAfterFirst[0].runtimeBackend, 'claude-cli');
+      assert.match(sessionsAfterFirst[0].runtimeSessionId || '', /^[0-9a-f-]{36}$/u);
+
+      const second = await executeChannelTurn({
+        projectRoot,
+        config: loaded,
+        channel,
+        prompt: 'second',
+        workdir: workspacePath,
+      });
+      assert.equal(
+        second.content,
+        `resume:${sessionsAfterFirst[0].runtimeSessionId}:raw:dangerous`,
+      );
+
+      const sessionsAfterSecond = await listRuntimeRoleSessions(projectRoot, {
+        channelName: 'main',
+      });
+      assert.equal(sessionsAfterSecond[0].runtimeSessionId, sessionsAfterFirst[0].runtimeSessionId);
+      assert.equal(sessionsAfterSecond[0].runCount, 2);
+    },
+  );
+});
+
+test('single channel reuses external Claude CLI sessions per channel role', async () => {
+  const projectRoot = createProject();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'claude-code',
+    model: 'claude-sonnet-4-6',
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    mode: 'single',
+    discordChannelId: '123',
+    workspace: 'workspace',
+    agent: 'owner',
+  });
+  saveConfig(projectRoot, config);
+
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const fakeCliPath = resolveFakeClaudeCliPath(fakePackageJson);
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_CLI: fakeCliPath,
     },
     async () => {
       const loaded = loadConfig(projectRoot);

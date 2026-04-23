@@ -211,3 +211,114 @@ test('telegram service flushes pending outbox events after restart', async () =>
   });
   assert.equal(pending.length, 0);
 });
+
+test('telegram outbox flush skips bad events and continues with valid ones', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    platform: 'telegram',
+    command: 'cat',
+    telegramBotToken: 'owner-token',
+  });
+  config.agents.reviewer = buildAgentDefinition(projectRoot, 'reviewer', {
+    name: 'reviewer',
+    agent: 'command',
+    platform: 'telegram',
+    command: 'cat',
+    telegramBotToken: 'reviewer-token',
+  });
+  config.agents.arbiter = buildAgentDefinition(projectRoot, 'arbiter', {
+    name: 'arbiter',
+    agent: 'command',
+    platform: 'telegram',
+    command: 'cat',
+    telegramBotToken: 'arbiter-token',
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    platform: 'telegram',
+    mode: 'tribunal',
+    telegramChatId: '-100123',
+    workspace: '~',
+    agent: 'owner',
+    reviewer: 'reviewer',
+    arbiter: 'arbiter',
+  });
+  saveConfig(projectRoot, config);
+
+  const run = await startRuntimeRun(projectRoot, {
+    channel: {
+      name: 'main',
+      platform: 'telegram',
+      telegramChatId: '-100123',
+      mode: 'tribunal',
+      agent: 'owner',
+      reviewer: 'reviewer',
+      arbiter: 'arbiter',
+    },
+    prompt: 'recover partial outbox',
+    workdir: '/tmp/workspace',
+  });
+
+  await enqueueRuntimeOutboxEvent(projectRoot, {
+    runId: run.runId,
+    channel: {
+      name: 'main',
+      platform: 'telegram',
+      telegramChatId: '-100123',
+      mode: 'tribunal',
+    },
+    entry: {
+      role: 'reviewer',
+      agent: { name: 'reviewer' },
+      content: 'review result',
+      final: false,
+      round: 1,
+      maxRounds: 2,
+      mode: 'tribunal',
+    },
+  });
+  await enqueueRuntimeOutboxEvent(projectRoot, {
+    runId: run.runId,
+    channel: {
+      name: 'main',
+      platform: 'telegram',
+      telegramChatId: '-100123',
+      mode: 'tribunal',
+    },
+    entry: {
+      role: 'owner',
+      agent: { name: 'owner' },
+      content: 'owner result',
+      final: true,
+      round: 1,
+      maxRounds: 2,
+      mode: 'tribunal',
+    },
+  });
+
+  const sent = [];
+  const clients = {
+    owner: {
+      token: 'telegram-token',
+      async __send(method, payload) {
+        sent.push({ method, payload });
+        return { ok: true };
+      },
+    },
+  };
+
+  const flushed = await flushPendingTelegramOutbox(projectRoot, clients, { limit: 10 });
+  assert.equal(flushed, 1);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].payload.text, /owner result/u);
+  assert.match(sent[0].payload.text, /owner 초안/u);
+
+  const pending = await listPendingRuntimeOutboxEvents(projectRoot, { limit: 10 });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].role, 'reviewer');
+});

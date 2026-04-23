@@ -319,6 +319,10 @@ process.exit(1);
   return path.join(packageDir, 'package.json');
 }
 
+function resolveFakeClaudeCliPath(packageJsonPath) {
+  return path.join(path.dirname(packageJsonPath), 'cli.js');
+}
+
 function createFakeGeminiBundle() {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-gemini-cli-'));
   const packageDir = path.join(rootDir, '@google', 'gemini-cli');
@@ -1809,6 +1813,11 @@ test('admin server reports codex, Claude ACP, Gemini, and local LLM status detai
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.ready, true);
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.loggedIn, true);
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.authMethod, 'claudeai');
+        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.runtimeSource, 'bundled');
+        assert.match(
+          snapshot.payload.statuses['claude-code'].authResult.details.runtimeDetail,
+          /@anthropic-ai\/claude-agent-sdk/u,
+        );
         assert.equal('credentialKey' in snapshot.payload.statuses['claude-code'].authResult.details, false);
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.ready, true);
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.loggedIn, true);
@@ -2137,6 +2146,67 @@ test('admin server accepts a Claude callback URL pasted into the callbackUrl fie
         assert.equal(complete.payload.result.details.account.organization, 'Claude Org');
         assert.equal(complete.payload.result.details.account.code, 'callback-code-123');
         assert.equal(complete.payload.result.details.account.state, 'claudeai-flow');
+      });
+    },
+  );
+});
+
+test('admin server reports external Claude CLI status and terminal-login guidance when configured', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const fakeCliPath = resolveFakeClaudeCliPath(fakePackageJson);
+
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_CLI: fakeCliPath,
+    },
+    async () => {
+      await withAdminServer(projectRoot, async ({ url }) => {
+        const status = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'claude-code',
+            action: 'status',
+          },
+        });
+        assert.equal(status.response.status, 200, JSON.stringify(status.payload));
+        assert.equal(status.payload.result.details.runtimeReady, true);
+        assert.equal(status.payload.result.details.loggedIn, true);
+        assert.equal(status.payload.result.details.ready, true);
+        assert.equal(status.payload.result.details.sharedLogin, true);
+        assert.equal(status.payload.result.details.externalCli, true);
+        assert.equal(status.payload.result.details.runtimeSource, 'external');
+        assert.match(status.payload.result.details.runtimeDetail, /external Claude CLI/u);
+
+        const login = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'claude-code',
+            action: 'login',
+            options: {
+              loginMode: 'claudeai',
+            },
+          },
+        });
+        assert.equal(login.response.status, 200, JSON.stringify(login.payload));
+        assert.equal(login.payload.result.details.summary, '외부 Claude CLI 로그인은 터미널에서 진행하세요.');
+        assert.equal(login.payload.result.details.externalCli, true);
+        assert.equal(login.payload.result.details.requiresCode, false);
+        assert.equal(login.payload.result.details.runtimeSource, 'external');
+        assert.match(login.payload.result.command, /auth login --claudeai/u);
+
+        const complete = await requestJson(`${url}/api/agent-auth`, {
+          method: 'POST',
+          body: {
+            agentType: 'claude-code',
+            action: 'complete-login',
+          },
+        });
+        assert.equal(complete.response.status, 200, JSON.stringify(complete.payload));
+        assert.equal(complete.payload.result.details.summary, '외부 Claude CLI는 상태 확인만 하면 됩니다.');
+        assert.equal(complete.payload.result.details.externalCli, true);
+        assert.equal(complete.payload.result.details.runtimeSource, 'external');
       });
     },
   );

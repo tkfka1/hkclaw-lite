@@ -23,8 +23,8 @@ export const AGENT_TYPE_CHOICES = [
   },
   {
     value: 'claude-code',
-    label: 'Claude Code ACP',
-    description: 'Anthropic Claude Code ACP runtime based coding agent',
+    label: 'Claude Code CLI',
+    description: 'Anthropic Claude Code CLI based coding agent',
   },
   {
     value: 'gemini-cli',
@@ -87,7 +87,7 @@ export const CLAUDE_PERMISSION_MODE_CHOICES = [
   {
     value: 'default',
     label: 'Default',
-    description: 'Use Claude Code ACP default permission behavior',
+    description: 'Use Claude Code CLI default permission behavior',
   },
   {
     value: 'acceptEdits',

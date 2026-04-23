@@ -1,6 +1,6 @@
 {
   "name": "hkclaw-lite",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Discord-only AI agent runtime with a local web admin and full host-account privileges",
   "license": "MIT",
   "author": "hankyo",
@@ -32,7 +32,9 @@
     "src"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "release:sync-version": "node scripts/sync-release-version.mjs",
+    "release:verify-version": "node scripts/verify-release-version.mjs"
   },
   "engines": {
     "node": ">=24"

@@ -46,6 +46,7 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
   let shuttingDown = false;
   let outboxFlushTask = Promise.resolve();
   let pollingTask = Promise.resolve();
+  let commandTask = Promise.resolve();
 
   try {
     clients = await createTelegramClients(agentConfigs);
@@ -61,6 +62,12 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
     const enqueueOutboxFlush = (task) => {
       const next = outboxFlushTask.catch(() => {}).then(task);
       outboxFlushTask = next.catch(() => {});
+      return next;
+    };
+
+    const enqueueCommandProcessing = (task) => {
+      const next = commandTask.catch(() => {}).then(task);
+      commandTask = next.catch(() => {});
       return next;
     };
 
@@ -83,14 +90,16 @@ export async function serveTelegram(projectRoot, { agentName = null } = {}) {
     outboxTimer.unref?.();
 
     commandTimer = setInterval(() => {
-      void processTelegramServiceCommands({
-        projectRoot,
-        agentName,
-        clients,
-        agentConfigs,
-        serviceStatus,
-        persistServiceStatus,
-      })
+      void enqueueCommandProcessing(() =>
+        processTelegramServiceCommands({
+          projectRoot,
+          agentName,
+          clients,
+          agentConfigs,
+          serviceStatus,
+          persistServiceStatus,
+        }),
+      )
         .then((nextAgentConfigs) => {
           agentConfigs = nextAgentConfigs;
         })
@@ -519,19 +528,23 @@ export async function flushTelegramOutboxForRun(
   const selectedAgentName = agentName || botName;
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { runId, limit: 100 });
   for (const event of events) {
-    const targetAgentName = resolveEventAgentName(channel, event.role);
-    if (selectedAgentName && targetAgentName !== selectedAgentName) {
-      continue;
+    try {
+      const targetAgentName = resolveEventAgentName(channel, event.role);
+      if (selectedAgentName && targetAgentName !== selectedAgentName) {
+        continue;
+      }
+      const client = clients[targetAgentName];
+      assert(client, `${targetAgentName || event.role} telegram client is not configured.`);
+      const chatId = channel?.telegramChatId || fallbackChatId;
+      assert(chatId, `Telegram chat id is missing for run ${runId}.`);
+      const threadId = channel?.telegramThreadId || fallbackThreadId || null;
+      await sendTelegramText(client, String(chatId), formatTelegramRoleMessage(channel, event), {
+        threadId: threadId ? String(threadId) : null,
+      });
+      await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
+    } catch (error) {
+      console.error(`Telegram outbox delivery error for event ${event.eventId}: ${toErrorMessage(error)}`);
     }
-    const client = clients[targetAgentName];
-    assert(client, `${targetAgentName || event.role} telegram client is not configured.`);
-    const chatId = channel?.telegramChatId || fallbackChatId;
-    assert(chatId, `Telegram chat id is missing for run ${runId}.`);
-    const threadId = channel?.telegramThreadId || fallbackThreadId || null;
-    await sendTelegramText(client, String(chatId), formatTelegramRoleMessage(channel, event), {
-      threadId: threadId ? String(threadId) : null,
-    });
-    await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
   }
 }
 
@@ -551,24 +564,28 @@ export async function flushPendingTelegramOutbox(
   let flushed = 0;
 
   for (const event of events) {
-    const channel = channelsByName.get(event.channelName);
-    if (!channel || (channel.platform || 'discord') !== 'telegram') {
-      continue;
+    try {
+      const channel = channelsByName.get(event.channelName);
+      if (!channel || (channel.platform || 'discord') !== 'telegram') {
+        continue;
+      }
+      const targetAgentName = resolveEventAgentName(channel, event.role);
+      if (selectedAgentName && targetAgentName !== selectedAgentName) {
+        continue;
+      }
+      const client = clients[targetAgentName];
+      assert(client, `${targetAgentName || event.role} telegram client is not configured.`);
+      const chatId = String(channel.telegramChatId || '').trim();
+      assert(chatId, `Telegram chat id is missing for queued event ${event.eventId}.`);
+      const threadId = String(channel.telegramThreadId || '').trim() || null;
+      await sendTelegramText(client, chatId, formatTelegramRoleMessage(channel, event), {
+        threadId,
+      });
+      await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
+      flushed += 1;
+    } catch (error) {
+      console.error(`Telegram pending outbox delivery error for event ${event.eventId}: ${toErrorMessage(error)}`);
     }
-    const targetAgentName = resolveEventAgentName(channel, event.role);
-    if (selectedAgentName && targetAgentName !== selectedAgentName) {
-      continue;
-    }
-    const client = clients[targetAgentName];
-    assert(client, `${targetAgentName || event.role} telegram client is not configured.`);
-    const chatId = String(channel.telegramChatId || '').trim();
-    assert(chatId, `Telegram chat id is missing for queued event ${event.eventId}.`);
-    const threadId = String(channel.telegramThreadId || '').trim() || null;
-    await sendTelegramText(client, chatId, formatTelegramRoleMessage(channel, event), {
-      threadId,
-    });
-    await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
-    flushed += 1;
   }
 
   return flushed;

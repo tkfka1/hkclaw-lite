@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -36,6 +35,7 @@ import {
   CLAUDE_ACP_DISABLED_ENV_KEYS,
   GEMINI_CLI_DISABLED_ENV_KEYS,
   inspectAgentRuntime,
+  resolveClaudeCli,
   resolveManagedAgentCli,
   runAgentTurn,
 } from './runners.js';
@@ -82,7 +82,6 @@ const ADMIN_PASSWORD_ENV = 'HKCLAW_LITE_ADMIN_PASSWORD';
 const ADMIN_SESSION_COOKIE = 'hkclaw_lite_admin_session';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AI_STATUS_AGENT_TYPES = ['codex', 'claude-code', 'gemini-cli', 'local-llm'];
-const moduleRequire = createRequire(import.meta.url);
 const codexAuthFlows = new Map();
 const claudeAuthFlows = new Map();
 const geminiAuthFlows = new Map();
@@ -1599,7 +1598,7 @@ function spawnResolvedCommand(command, args, options) {
 
 function resolveManagedAgentRunner(agentType, env = process.env) {
   if (agentType === 'claude-code') {
-    return resolveClaudeAuthCli(env);
+    return resolveClaudeCli(env);
   }
   return resolveManagedAgentCli(agentType, env);
 }
@@ -1629,40 +1628,6 @@ async function cleanupClaudeAuthFlow(projectRoot) {
   } catch {
     // Ignore cleanup failures; the auth flow is best-effort.
   }
-}
-
-function resolveClaudeAuthCli(env = process.env) {
-  const packageJsonOverride = String(env.HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON || '').trim();
-  let packageJsonPath = packageJsonOverride;
-  if (!packageJsonPath) {
-    try {
-      packageJsonPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk/package.json');
-    } catch {
-      try {
-        const entryPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk');
-        const candidate = path.join(path.dirname(entryPath), 'package.json');
-        if (!fs.existsSync(candidate)) {
-          return null;
-        }
-        packageJsonPath = candidate;
-      } catch {
-        return null;
-      }
-    }
-  }
-
-  const cliPath = path.resolve(path.dirname(packageJsonPath), 'cli.js');
-  if (!fs.existsSync(cliPath)) {
-    return null;
-  }
-
-  return {
-    source: 'bundled',
-    command: process.execPath,
-    argsPrefix: [cliPath],
-    detail: `@anthropic-ai/claude-agent-sdk (${cliPath})`,
-    envPatch: {},
-  };
 }
 
 async function readAiStatuses(projectRoot) {
@@ -1711,6 +1676,42 @@ async function startClaudeAuthFlow(projectRoot, payload = {}) {
 
   const loginMode = normalizeClaudeLoginMode(payload?.options?.loginMode);
   const env = buildManagedAgentEnv(projectRoot, 'claude-code');
+  const runtime = resolveClaudeCli(env);
+  assert(runtime, 'Claude CLI runtime is unavailable.');
+  if (runtime.source === 'external') {
+    const commandHint = buildClaudeExternalLoginCommand(runtime.command, loginMode);
+    return {
+      agentType: 'claude-code',
+      action: 'login',
+      command: commandHint,
+      output: [
+        '외부 Claude CLI를 사용 중입니다.',
+        `같은 환경의 터미널에서 ${commandHint} 를 먼저 실행하세요.`,
+        '로그인 완료 뒤 상태 확인을 눌러 현재 머신의 Claude 로그인 상태를 다시 읽으세요.',
+      ].join('\n'),
+      details: {
+        summary: '외부 Claude CLI 로그인은 터미널에서 진행하세요.',
+        loginStarted: false,
+        pendingLogin: false,
+        requiresCode: false,
+        completionHint:
+          '같은 환경의 터미널에서 Claude CLI 로그인을 완료한 뒤 상태 확인을 누르세요.',
+        loginMode,
+        runtimeSource: runtime.source,
+        runtimeDetail: runtime.detail,
+        sharedLogin: true,
+        authScope: 'local-user',
+        externalCli: true,
+        commandHint,
+        url: '',
+        manualUrl: '',
+        automaticUrl: '',
+      },
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+    };
+  }
   const bridge = createClaudeWorkerBridge({
     cwd: projectRoot,
     env,
@@ -1764,7 +1765,35 @@ async function startClaudeAuthFlow(projectRoot, payload = {}) {
 
 async function completeClaudeAuthFlow(projectRoot, payload = {}) {
   const flow = getClaudeAuthFlow(projectRoot);
-  assert(flow, 'Claude Code ACP 로그인 세션이 없습니다. 먼저 로그인 버튼을 누르세요.');
+  if (!flow) {
+    const runtime = resolveClaudeCli(buildManagedAgentEnv(projectRoot, 'claude-code'));
+    if (runtime?.source === 'external') {
+      return {
+        agentType: 'claude-code',
+        action: 'complete-login',
+        command: buildClaudeExternalLoginCommand(runtime.command, normalizeClaudeLoginMode()),
+        output: [
+          '외부 Claude CLI는 웹에서 로그인 완료 단계를 따로 처리하지 않습니다.',
+          '터미널에서 Claude CLI 로그인을 끝낸 뒤 상태 확인을 누르세요.',
+        ].join('\n'),
+        details: {
+          summary: '외부 Claude CLI는 상태 확인만 하면 됩니다.',
+          loggedIn: false,
+          pendingLogin: false,
+          requiresCode: false,
+          runtimeSource: runtime.source,
+          runtimeDetail: runtime.detail,
+          sharedLogin: true,
+          authScope: 'local-user',
+          externalCli: true,
+        },
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+      };
+    }
+  }
+  assert(flow, 'Claude Code CLI 로그인 세션이 없습니다. 먼저 로그인 버튼을 누르세요.');
   const callback = parseClaudeOAuthCallbackPayload(payload);
   const resolvedState = callback.state || resolveClaudeOAuthState(flow);
   assert(
@@ -1773,7 +1802,7 @@ async function completeClaudeAuthFlow(projectRoot, payload = {}) {
   );
   assert(
     resolvedState,
-    'Claude Code ACP 로그인 상태를 찾지 못했습니다. 다시 로그인 버튼을 누르세요.',
+    'Claude Code CLI 로그인 상태를 찾지 못했습니다. 다시 로그인 버튼을 누르세요.',
   );
 
   try {
@@ -1788,12 +1817,12 @@ async function completeClaudeAuthFlow(projectRoot, payload = {}) {
       action: 'complete-login',
       command: 'claude oauth callback',
       output: [
-        'Claude Code ACP 로그인 완료',
+        'Claude Code CLI 로그인 완료',
         account?.email ? `email: ${account.email}` : '',
         account?.organization ? `organization: ${account.organization}` : '',
       ].filter(Boolean).join('\n'),
       details: {
-        summary: 'Claude Code ACP 로그인 완료',
+        summary: 'Claude Code CLI 로그인 완료',
         loggedIn: true,
         authMethod: 'oauth',
         account,
@@ -2306,6 +2335,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
       loggedIn
         ? `로그인: 완료 (${authResult.details.authMethod || 'account'})`
         : '로그인: 미완료',
+      '인증 저장소: 이 머신의 로컬 Claude 로그인 상태를 그대로 사용합니다.',
       activeFlow
         ? `브라우저 로그인: 진행 중 (${activeFlow.loginMode === 'console' ? 'console' : 'claude.ai'})`
         : '',
@@ -2320,11 +2350,13 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
       details: {
         ...authResult.details,
         summary: ready
-          ? 'Claude Code ACP 로그인됨'
+          ? 'Claude Code CLI 로그인됨'
           : activeFlow
-            ? 'Claude Code ACP 브라우저 로그인 진행 중'
-            : 'Claude Code ACP 로그인이 필요합니다.',
+            ? 'Claude Code CLI 브라우저 로그인 진행 중'
+            : 'Claude Code CLI 로그인이 필요합니다.',
         runtimeReady: runtime.ready,
+        runtimeSource: runtime.source || '',
+        runtimeDetail: runtime.detail || '',
         ready,
         pendingLogin: Boolean(activeFlow),
         requiresCode: Boolean(activeFlow),
@@ -2334,6 +2366,9 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
         loginMode: activeFlow?.loginMode || null,
         manualUrl: activeFlow?.manualUrl || '',
         automaticUrl: activeFlow?.automaticUrl || '',
+        sharedLogin: true,
+        authScope: 'local-user',
+        externalCli: runtime.source === 'external',
       },
     };
   }
@@ -2731,6 +2766,10 @@ function captureManagedServiceRuntimeEnv(sourceEnv = process.env) {
       .filter(([key, value]) => typeof key === 'string' && key && value !== undefined && value !== null)
       .map(([key, value]) => [key, String(value)]),
   );
+}
+
+function buildClaudeExternalLoginCommand(command, loginMode) {
+  return `${command} auth login ${loginMode === 'console' ? '--console' : '--claudeai'}`;
 }
 
 function stripClaudeAcpEnv(env) {

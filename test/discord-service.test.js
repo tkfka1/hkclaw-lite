@@ -227,3 +227,110 @@ test('discord service flushes pending outbox events after restart', async () => 
   });
   assert.equal(pending.length, 0);
 });
+
+test('discord outbox flush skips bad events and continues with valid ones', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: 'cat',
+  });
+  config.agents.reviewer = buildAgentDefinition(projectRoot, 'reviewer', {
+    name: 'reviewer',
+    agent: 'command',
+    command: 'cat',
+  });
+  config.agents.arbiter = buildAgentDefinition(projectRoot, 'arbiter', {
+    name: 'arbiter',
+    agent: 'command',
+    command: 'cat',
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    mode: 'tribunal',
+    discordChannelId: '123',
+    workspace: '~',
+    agent: 'owner',
+    reviewer: 'reviewer',
+    arbiter: 'arbiter',
+  });
+  saveConfig(projectRoot, config);
+
+  const run = await startRuntimeRun(projectRoot, {
+    channel: {
+      name: 'main',
+      discordChannelId: '123',
+      mode: 'tribunal',
+      agent: 'owner',
+      reviewer: 'reviewer',
+      arbiter: 'arbiter',
+    },
+    prompt: 'recover partial outbox',
+    workdir: '/tmp/workspace',
+  });
+
+  await enqueueRuntimeOutboxEvent(projectRoot, {
+    runId: run.runId,
+    channel: {
+      name: 'main',
+      discordChannelId: '123',
+      mode: 'tribunal',
+    },
+    entry: {
+      role: 'reviewer',
+      agent: { name: 'reviewer' },
+      content: 'review result',
+      final: false,
+      round: 1,
+      maxRounds: 2,
+      mode: 'tribunal',
+    },
+  });
+  await enqueueRuntimeOutboxEvent(projectRoot, {
+    runId: run.runId,
+    channel: {
+      name: 'main',
+      discordChannelId: '123',
+      mode: 'tribunal',
+    },
+    entry: {
+      role: 'owner',
+      agent: { name: 'owner' },
+      content: 'owner result',
+      final: true,
+      round: 1,
+      maxRounds: 2,
+      mode: 'tribunal',
+    },
+  });
+
+  const sent = [];
+  const clients = {
+    owner: {
+      channels: {
+        async fetch(channelId) {
+          return {
+            isTextBased() {
+              return channelId === '123';
+            },
+            async send(text) {
+              sent.push(text);
+            },
+          };
+        },
+      },
+    },
+  };
+
+  const flushed = await flushPendingDiscordOutbox(projectRoot, clients, { limit: 10 });
+  assert.equal(flushed, 1);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /owner result/u);
+
+  const pending = await listPendingRuntimeOutboxEvents(projectRoot, { limit: 10 });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].role, 'reviewer');
+});

@@ -186,6 +186,10 @@ process.exit(1);
   return path.join(packageDir, 'package.json');
 }
 
+function resolveFakeClaudeCliPath(packageJsonPath) {
+  return path.join(path.dirname(packageJsonPath), 'cli.js');
+}
+
 function createFakeCodexNativeBundle() {
   const rootDir = createTempDir();
   const packageDir = path.join(rootDir, '@openai', 'codex');
@@ -368,6 +372,41 @@ test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () 
   await withEnv(
     {
       HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      const output = await runAgentTurn({
+        projectRoot,
+        agent: {
+          name: 'claude-agent',
+          agent: 'claude-code',
+          model: 'claude-sonnet-4-6',
+          permissionMode: 'acceptEdits',
+        },
+        prompt: 'Return exactly OK.',
+        rawPrompt: 'Return exactly OK.',
+        workdir: 'workspace',
+      });
+
+      assert.deepEqual(JSON.parse(output), {
+        model: 'claude-sonnet-4-6',
+        permissionMode: 'acceptEdits',
+        dangerous: false,
+        effort: null,
+      });
+    },
+  );
+});
+
+test('runAgentTurn uses the explicit external Claude CLI override', async () => {
+  const projectRoot = createTempDir();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const fakeCliPath = resolveFakeClaudeCliPath(fakePackageJson);
+
+  await withEnv(
+    {
+      HKCLAW_LITE_CLAUDE_CLI: fakeCliPath,
     },
     async () => {
       const output = await runAgentTurn({

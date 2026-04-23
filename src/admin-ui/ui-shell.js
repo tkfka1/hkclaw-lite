@@ -1,3 +1,5 @@
+import { renderIcon } from './icons.js?v=20260422-02';
+
 export function getViewMeta(view = 'home') {
   const views = {
     home: {
@@ -163,7 +165,10 @@ export function renderDetailList(rows, escapeHtml, emptyText = '표시할 정보
 export function renderMetricCard(label, value, escapeHtml, tone = '', meta = '') {
   return `
     <article class="metric ${tone ? `metric--${tone}` : ''}">
-      <span class="metric-label">${escapeHtml(label)}</span>
+      <div class="metric-head">
+        <span class="metric-icon">${renderIcon(resolveMetricIcon(label), 'ui-icon')}</span>
+        <span class="metric-label">${escapeHtml(label)}</span>
+      </div>
       <strong class="metric-value">${escapeHtml(String(value))}</strong>
       ${meta ? `<span class="metric-meta">${escapeHtml(meta)}</span>` : ''}
     </article>
@@ -180,11 +185,13 @@ export function renderShortcutCard({ view, title, description, meta, state, esca
       role="button"
       tabindex="${state.busy ? '-1' : '0'}"
       aria-disabled="${state.busy ? 'true' : 'false'}"
+      aria-current="${state.activeView === view ? 'page' : 'false'}"
     >
+      <div class="shortcut-icon">${renderIcon(resolveViewIcon(view), 'ui-icon')}</div>
       <span class="shortcut-eyebrow">${escapeHtml(getViewMeta(view).eyebrow)}</span>
       <strong>${escapeHtml(title)}</strong>
       ${description ? `<span class="shortcut-copy">${escapeHtml(description)}</span>` : ''}
-      <span class="shortcut-meta">${escapeHtml(meta)}</span>
+      ${meta ? `<span class="shortcut-meta">${escapeHtml(meta)}</span>` : ''}
     </article>
   `;
 }
@@ -199,10 +206,13 @@ function renderSidebar({ state, stats, escapeHtml, escapeAttr }) {
     { view: 'all', label: '설정' },
   ];
   return `
-    <aside class="panel sidebar-panel">
+    <aside class="panel sidebar-panel ${state.navOpen ? 'is-open' : ''}" aria-hidden="${state.navOpen ? 'false' : 'true'}">
       <div class="sidebar-brand">
-        <span class="hero-eyebrow">hkclaw-lite</span>
-        <strong>Operations Console</strong>
+        <div class="sidebar-brand-mark">${renderIcon('sparkles', 'ui-icon')}</div>
+        <div class="sidebar-brand-copy">
+          <strong>hkclaw-lite</strong>
+        </div>
+        <button type="button" class="icon-button sidebar-close" data-action="close-nav" aria-label="메뉴 닫기">${renderIcon('close', 'ui-icon')}</button>
       </div>
       <nav class="side-nav" aria-label="관리 메뉴">
         ${tabs
@@ -213,9 +223,16 @@ function renderSidebar({ state, stats, escapeHtml, escapeAttr }) {
                 class="side-nav-link ${state.activeView === tab.view ? 'is-active' : ''}"
                 data-action="switch-view"
                 data-view="${escapeAttr(tab.view)}"
+                aria-current="${state.activeView === tab.view ? 'page' : 'false'}"
                 ${state.busy ? 'disabled' : ''}
               >
-                <span class="side-nav-label">${escapeHtml(tab.label)}</span>
+                <span class="side-nav-main">
+                  <span class="side-nav-icon">${renderIcon(resolveViewIcon(tab.view), 'ui-icon')}</span>
+                  <span class="side-nav-copy">
+                    <span class="side-nav-label">${escapeHtml(tab.label)}</span>
+                    <span class="side-nav-subtitle">${escapeHtml(getViewMeta(tab.view).description)}</span>
+                  </span>
+                </span>
                 ${tab.meta ? `<span class="side-nav-meta">${escapeHtml(tab.meta)}</span>` : ''}
               </button>
             `,
@@ -223,22 +240,9 @@ function renderSidebar({ state, stats, escapeHtml, escapeAttr }) {
           .join('')}
       </nav>
       <div class="sidebar-summary">
-        <div class="sidebar-summary-row">
-          <span>에이전트</span>
-          <strong>${escapeHtml(String(stats.agents.length))}</strong>
-        </div>
-        <div class="sidebar-summary-row">
-          <span>활성 워커</span>
-          <strong>${escapeHtml(String(stats.activeWorkerCount))}</strong>
-        </div>
-        <div class="sidebar-summary-row">
-          <span>채널</span>
-          <strong>${escapeHtml(String(stats.channels.length))}</strong>
-        </div>
-        <div class="sidebar-summary-row">
-          <span>준비된 AI</span>
-          <strong>${escapeHtml(`${stats.readyAiCount}/${stats.availableAiCount}`)}</strong>
-        </div>
+        <span class="mini-chip">${renderIcon('agents', 'ui-icon')}${escapeHtml(String(stats.agents.length))}</span>
+        <span class="mini-chip">${renderIcon('channels', 'ui-icon')}${escapeHtml(String(stats.channels.length))}</span>
+        <span class="mini-chip">${renderIcon('ai', 'ui-icon')}${escapeHtml(`${stats.readyAiCount}/${stats.availableAiCount}`)}</span>
       </div>
     </aside>
   `;
@@ -256,8 +260,9 @@ export function renderFrame({
 }) {
   const stats = state.data ? getDashboardStats() : null;
   return `
-    <div class="app-shell ${escapeAttr(className)}">
+    <div class="app-shell ${escapeAttr(className)} ${state.navOpen ? 'is-nav-open' : ''}">
       <div class="app-backdrop" aria-hidden="true"></div>
+      ${state.data ? `<button type="button" class="nav-scrim ${state.navOpen ? 'is-visible' : ''}" data-action="close-nav" aria-label="메뉴 닫기"></button>` : ''}
       <div class="workspace-shell ${state.data ? '' : 'workspace-shell--simple'}">
         ${state.data && stats ? renderSidebar({ state, stats, escapeHtml, escapeAttr }) : ''}
         <div class="workspace-main">
@@ -272,18 +277,52 @@ export function renderFrame({
 
 export function renderTopBar({ state, escapeHtml, getActiveViewMeta, stats }) {
   void state;
-  void getActiveViewMeta;
+  const activeView = getActiveViewMeta();
   return `
     <section class="panel workspace-header">
+      <div class="workspace-header-main">
+        <button type="button" class="icon-button" data-action="toggle-nav" aria-label="메뉴 열기">${renderIcon('menu', 'ui-icon')}</button>
+        <div class="workspace-header-copy">
+          <span class="hero-eyebrow">${escapeHtml(activeView.eyebrow)}</span>
+          <h1>${escapeHtml(activeView.title)}</h1>
+        </div>
+      </div>
       <div class="workspace-status">
-        <span class="status-pill ${stats.discordService.running ? 'is-ok' : stats.discordService.stale ? 'is-warning' : ''}">
-          ${escapeHtml(`Discord ${stats.discordService.label || '중지'}`)}
-        </span>
-        <span class="status-pill ${stats.telegramService.running ? 'is-ok' : stats.telegramService.stale ? 'is-warning' : ''}">
-          ${escapeHtml(`Telegram ${stats.telegramService.label || '중지'}`)}
-        </span>
-        <span class="status-pill">${escapeHtml(`연결 ${stats.connectedAgentCount}/${stats.agents.length}`)}</span>
+        <span class="status-pill">${renderIcon('link', 'ui-icon')} ${escapeHtml(`연결 ${stats.connectedAgentCount}/${stats.agents.length}`)}</span>
       </div>
     </section>
   `;
+}
+
+function resolveViewIcon(view) {
+  switch (view) {
+    case 'agents':
+      return 'agents';
+    case 'channels':
+      return 'channels';
+    case 'ai':
+      return 'ai';
+    case 'tokens':
+      return 'tokens';
+    case 'all':
+      return 'settings';
+    default:
+      return 'home';
+  }
+}
+
+function resolveMetricIcon(label) {
+  if (/채널/u.test(label)) {
+    return 'channels';
+  }
+  if (/AI/u.test(label)) {
+    return 'ai';
+  }
+  if (/토큰/u.test(label)) {
+    return 'tokens';
+  }
+  if (/워커/u.test(label)) {
+    return 'server';
+  }
+  return 'chart';
 }

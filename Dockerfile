@@ -42,7 +42,7 @@ COPY docker/entrypoint.sh /usr/local/bin/hkclaw-lite-entrypoint
 RUN chmod +x /usr/local/bin/hkclaw-lite-entrypoint \
   && useradd --create-home --shell /bin/bash --uid 10001 hkclaw \
   && mkdir -p /workspace \
-  && chown -R 10001:10001 /app /home/hkclaw /workspace
+  && chown 10001:10001 /home/hkclaw /workspace
 
 USER 10001:10001
 WORKDIR /home/hkclaw

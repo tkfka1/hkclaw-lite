@@ -44,6 +44,7 @@ export async function serveDiscord(projectRoot, { agentName = null } = {}) {
   let commandTimer = null;
   let clients = {};
   let outboxFlushTask = Promise.resolve();
+  let commandTask = Promise.resolve();
 
   try {
     const Discord = await import('discord.js');
@@ -61,6 +62,14 @@ export async function serveDiscord(projectRoot, { agentName = null } = {}) {
         .catch(() => {})
         .then(task);
       outboxFlushTask = next.catch(() => {});
+      return next;
+    };
+
+    const enqueueCommandProcessing = (task) => {
+      const next = commandTask
+        .catch(() => {})
+        .then(task);
+      commandTask = next.catch(() => {});
       return next;
     };
 
@@ -100,17 +109,19 @@ export async function serveDiscord(projectRoot, { agentName = null } = {}) {
     }
 
     commandTimer = setInterval(() => {
-      void processDiscordServiceCommands({
-        projectRoot,
-        Discord,
-        agentName,
-        clients,
-        agentConfigs,
-        serviceStatus,
-        persistServiceStatus,
-        channelQueues,
-        enqueueOutboxFlush,
-      })
+      void enqueueCommandProcessing(() =>
+        processDiscordServiceCommands({
+          projectRoot,
+          Discord,
+          agentName,
+          clients,
+          agentConfigs,
+          serviceStatus,
+          persistServiceStatus,
+          channelQueues,
+          enqueueOutboxFlush,
+        }),
+      )
         .then((nextAgentConfigs) => {
           agentConfigs = nextAgentConfigs;
         })
@@ -677,16 +688,20 @@ export async function flushDiscordOutboxForRun(
   const selectedAgentName = agentName || botName;
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { runId, limit: 100 });
   for (const event of events) {
-    const targetAgentName = resolveEventAgentName(channel, event.role);
-    if (selectedAgentName && targetAgentName !== selectedAgentName) {
-      continue;
+    try {
+      const targetAgentName = resolveEventAgentName(channel, event.role);
+      if (selectedAgentName && targetAgentName !== selectedAgentName) {
+        continue;
+      }
+      const client = clients[targetAgentName];
+      assert(client, `${targetAgentName || event.role} agent client is not configured.`);
+      const channelId = event.discordChannelId || fallbackChannelId;
+      assert(channelId, `Discord channel id is missing for run ${runId}.`);
+      await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
+      await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
+    } catch (error) {
+      console.error(`Discord outbox delivery error for event ${event.eventId}: ${toErrorMessage(error)}`);
     }
-    const client = clients[targetAgentName];
-    assert(client, `${targetAgentName || event.role} agent client is not configured.`);
-    const channelId = event.discordChannelId || fallbackChannelId;
-    assert(channelId, `Discord channel id is missing for run ${runId}.`);
-    await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
-    await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
   }
 }
 
@@ -707,25 +722,29 @@ export async function flushPendingDiscordOutbox(
   let flushed = 0;
 
   for (const event of events) {
-    const channel =
-      channelsByName.get(event.channelName) ||
-      channels.find((entry) => entry.discordChannelId === event.discordChannelId) ||
-      {
-        name: event.channelName || 'unknown',
-        mode: 'single',
-        discordChannelId: event.discordChannelId,
-      };
-    const targetAgentName = resolveEventAgentName(channel, event.role);
-    if (selectedAgentName && targetAgentName !== selectedAgentName) {
-      continue;
+    try {
+      const channel =
+        channelsByName.get(event.channelName) ||
+        channels.find((entry) => entry.discordChannelId === event.discordChannelId) ||
+        {
+          name: event.channelName || 'unknown',
+          mode: 'single',
+          discordChannelId: event.discordChannelId,
+        };
+      const targetAgentName = resolveEventAgentName(channel, event.role);
+      if (selectedAgentName && targetAgentName !== selectedAgentName) {
+        continue;
+      }
+      const client = clients[targetAgentName];
+      assert(client, `${targetAgentName || event.role} agent client is not configured.`);
+      const channelId = event.discordChannelId || channel.discordChannelId;
+      assert(channelId, `Discord channel id is missing for queued event ${event.eventId}.`);
+      await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
+      await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
+      flushed += 1;
+    } catch (error) {
+      console.error(`Discord pending outbox delivery error for event ${event.eventId}: ${toErrorMessage(error)}`);
     }
-    const client = clients[targetAgentName];
-    assert(client, `${targetAgentName || event.role} agent client is not configured.`);
-    const channelId = event.discordChannelId || channel.discordChannelId;
-    assert(channelId, `Discord channel id is missing for queued event ${event.eventId}.`);
-    await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
-    await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
-    flushed += 1;
   }
 
   return flushed;
