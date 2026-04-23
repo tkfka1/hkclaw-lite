@@ -37,7 +37,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -64,7 +64,7 @@ jobs:
             npm version "$bump" --no-git-tag-version
           fi
 
-          next_version="$(node -p \"require('./package.json').version\")"
+          next_version="$(node -p "require('./package.json').version")"
           node scripts/sync-release-version.mjs "$next_version"
           node scripts/verify-release-version.mjs "v$next_version"
           echo "version=$next_version" >> "$GITHUB_OUTPUT"
