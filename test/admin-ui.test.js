@@ -10,6 +10,10 @@ import {
   AI_MANAGER_STATUS_POLL_SCHEDULE_MS,
   getAiManagerStatusPollDelay,
 } from '../src/admin-ui/polling.js';
+import {
+  DESKTOP_NAV_MIN_WIDTH,
+  shouldUseDesktopSidebar,
+} from '../src/admin-ui/ui-shell.js';
 
 test('ai manager status polling backs off after the first fast retry', () => {
   assert.deepEqual(AI_MANAGER_STATUS_POLL_SCHEDULE_MS, [
@@ -61,4 +65,12 @@ test('Claude runtime UI helpers distinguish bundled and external CLI labels', ()
       '세부: external Claude CLI (/usr/bin/claude)',
     ],
   );
+});
+
+test('desktop nav helper keeps the sidebar pinned on wide screens only', () => {
+  assert.equal(DESKTOP_NAV_MIN_WIDTH, 1081);
+  assert.equal(shouldUseDesktopSidebar(900), false);
+  assert.equal(shouldUseDesktopSidebar(1080), false);
+  assert.equal(shouldUseDesktopSidebar(1081), true);
+  assert.equal(shouldUseDesktopSidebar(1440), true);
 });

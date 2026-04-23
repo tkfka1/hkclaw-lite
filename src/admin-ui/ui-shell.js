@@ -1,4 +1,10 @@
-import { renderIcon } from './icons.js?v=20260422-02';
+import { renderIcon } from './icons.js?v=20260424-01';
+
+export const DESKTOP_NAV_MIN_WIDTH = 1081;
+
+export function shouldUseDesktopSidebar(viewportWidth) {
+  return Number(viewportWidth) >= DESKTOP_NAV_MIN_WIDTH;
+}
 
 export function getViewMeta(view = 'home') {
   const views = {
@@ -196,7 +202,7 @@ export function renderShortcutCard({ view, title, description, meta, state, esca
   `;
 }
 
-function renderSidebar({ state, stats, escapeHtml, escapeAttr }) {
+function renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible = false }) {
   const tabs = [
     { view: 'home', label: '개요' },
     { view: 'agents', label: '에이전트' },
@@ -206,13 +212,17 @@ function renderSidebar({ state, stats, escapeHtml, escapeAttr }) {
     { view: 'all', label: '설정' },
   ];
   return `
-    <aside class="panel sidebar-panel ${state.navOpen ? 'is-open' : ''}" aria-hidden="${state.navOpen ? 'false' : 'true'}">
+    <aside class="panel sidebar-panel ${state.navOpen || desktopNavVisible ? 'is-open' : ''} ${desktopNavVisible ? 'sidebar-panel--desktop' : ''}" aria-hidden="${desktopNavVisible || state.navOpen ? 'false' : 'true'}">
       <div class="sidebar-brand">
         <div class="sidebar-brand-mark">${renderIcon('sparkles', 'ui-icon')}</div>
         <div class="sidebar-brand-copy">
           <strong>hkclaw-lite</strong>
         </div>
-        <button type="button" class="icon-button sidebar-close" data-action="close-nav" aria-label="메뉴 닫기">${renderIcon('close', 'ui-icon')}</button>
+        ${
+          desktopNavVisible
+            ? ''
+            : `<button type="button" class="icon-button sidebar-close" data-action="close-nav" aria-label="메뉴 닫기">${renderIcon('close', 'ui-icon')}</button>`
+        }
       </div>
       <nav class="side-nav" aria-label="관리 메뉴">
         ${tabs
@@ -259,14 +269,15 @@ export function renderFrame({
   getDashboardStats,
 }) {
   const stats = state.data ? getDashboardStats() : null;
+  const desktopNavVisible = Boolean(state.data && state.desktopNav);
   return `
     <div class="app-shell ${escapeAttr(className)} ${state.navOpen ? 'is-nav-open' : ''}">
       <div class="app-backdrop" aria-hidden="true"></div>
-      ${state.data ? `<button type="button" class="nav-scrim ${state.navOpen ? 'is-visible' : ''}" data-action="close-nav" aria-label="메뉴 닫기"></button>` : ''}
-      <div class="workspace-shell ${state.data ? '' : 'workspace-shell--simple'}">
-        ${state.data && stats ? renderSidebar({ state, stats, escapeHtml, escapeAttr }) : ''}
+      ${state.data && !desktopNavVisible ? `<button type="button" class="nav-scrim ${state.navOpen ? 'is-visible' : ''}" data-action="close-nav" aria-label="메뉴 닫기"></button>` : ''}
+      <div class="workspace-shell ${state.data ? '' : 'workspace-shell--simple'} ${desktopNavVisible ? 'workspace-shell--desktop-nav' : ''}">
+        ${state.data && stats ? renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible }) : ''}
         <div class="workspace-main">
-          ${state.data ? renderTopBar({ state, escapeHtml, getActiveViewMeta, stats }) : ''}
+          ${state.data ? renderTopBar({ state, escapeHtml, getActiveViewMeta, stats, showNavToggle: !desktopNavVisible }) : ''}
           <div class="shell ${state.data ? 'shell--embedded' : ''}">${content}</div>
         </div>
       </div>
@@ -275,13 +286,17 @@ export function renderFrame({
   `;
 }
 
-export function renderTopBar({ state, escapeHtml, getActiveViewMeta, stats }) {
+export function renderTopBar({ state, escapeHtml, getActiveViewMeta, stats, showNavToggle = true }) {
   void state;
   const activeView = getActiveViewMeta();
   return `
     <section class="panel workspace-header">
       <div class="workspace-header-main">
-        <button type="button" class="icon-button" data-action="toggle-nav" aria-label="메뉴 열기">${renderIcon('menu', 'ui-icon')}</button>
+        ${
+          showNavToggle
+            ? `<button type="button" class="icon-button nav-toggle-button" data-action="toggle-nav" aria-label="메뉴 열기">${renderIcon('menu', 'ui-icon')}</button>`
+            : ''
+        }
         <div class="workspace-header-copy">
           <span class="hero-eyebrow">${escapeHtml(activeView.eyebrow)}</span>
           <h1>${escapeHtml(activeView.title)}</h1>

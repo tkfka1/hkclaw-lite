@@ -125,12 +125,16 @@ strong,
 }
 
 .workspace-shell {
-  max-width: 980px;
+  max-width: 1360px;
   margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr;
   gap: 16px;
   align-items: start;
+}
+
+.workspace-shell--desktop-nav {
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
 }
 
 .workspace-shell--simple {
@@ -200,6 +204,19 @@ strong,
 
 .sidebar-panel.is-open {
   transform: translateX(0);
+}
+
+.sidebar-panel--desktop {
+  position: sticky;
+  top: 18px;
+  left: auto;
+  bottom: auto;
+  width: auto;
+  z-index: 0;
+  transform: none;
+  min-height: calc(100vh - 36px);
+  max-height: calc(100vh - 36px);
+  box-shadow: var(--shadow-soft);
 }
 
 .sidebar-brand {

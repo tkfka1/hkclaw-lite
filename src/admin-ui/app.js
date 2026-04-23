@@ -4,23 +4,24 @@ import {
   renderDetailList as buildDetailList,
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
-} from './ui-shell.js?v=20260422-02';
+  shouldUseDesktopSidebar,
+} from './ui-shell.js?v=20260424-01';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
-} from './ui-views.js?v=20260422-02';
+} from './ui-views.js?v=20260424-01';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js?v=20260422-02';
+} from './polling.js?v=20260424-01';
 import {
   getClaudeRuntimeSourceBadge,
   getClaudeRuntimeSourceHintLines,
-} from './claude-runtime-ui.js?v=20260422-02';
-import { renderIcon } from './icons.js?v=20260422-02';
+} from './claude-runtime-ui.js?v=20260424-01';
+import { renderIcon } from './icons.js?v=20260424-01';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
@@ -40,6 +41,7 @@ const state = {
     passwordEnv: 'HKCLAW_LITE_ADMIN_PASSWORD',
   },
   activeView: 'home',
+  desktopNav: shouldUseDesktopSidebar(window.innerWidth),
   navOpen: false,
   agentModalOpen: false,
   channelModalOpen: false,
@@ -63,6 +65,7 @@ app.addEventListener('keydown', handleKeydown);
 app.addEventListener('submit', handleSubmit);
 app.addEventListener('input', handleInput);
 app.addEventListener('change', handleInput);
+window.addEventListener('resize', handleWindowResize);
 
 boot().catch((error) => {
   setNotice('error', localizeErrorMessage(error.message));
@@ -131,6 +134,9 @@ function handleClick(event) {
   }
 
   if (action === 'toggle-nav') {
+    if (state.desktopNav) {
+      return;
+    }
     state.navOpen = !state.navOpen;
     render();
     return;
@@ -492,6 +498,18 @@ function handleClick(event) {
   if (action === 'logout') {
     void logout();
   }
+}
+
+function handleWindowResize() {
+  const nextDesktopNav = shouldUseDesktopSidebar(window.innerWidth);
+  if (nextDesktopNav === state.desktopNav) {
+    return;
+  }
+  state.desktopNav = nextDesktopNav;
+  if (nextDesktopNav) {
+    state.navOpen = false;
+  }
+  render();
 }
 
 function handleKeydown(event) {

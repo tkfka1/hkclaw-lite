@@ -20,3 +20,11 @@ test('admin shell owns the top header so it does not render twice', () => {
   assert.doesNotMatch(appSource, /\$\{renderTopBar\(\)\}/u);
   assert.doesNotMatch(appSource, /function\s+renderTopBar\s*\(/u);
 });
+
+test('desktop layout can show the sidebar without always rendering the hamburger button', () => {
+  const shellSource = readRepoFile('src/admin-ui/ui-shell.js');
+
+  assert.match(shellSource, /showNavToggle/u);
+  assert.match(shellSource, /desktopNavVisible/u);
+  assert.match(shellSource, /nav-toggle-button/u);
+});
