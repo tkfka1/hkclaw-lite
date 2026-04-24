@@ -1,7 +1,7 @@
 {
   "name": "hkclaw-lite",
   "version": "1.0.2",
-  "description": "Discord-only AI agent runtime with a local web admin and full host-account privileges",
+  "description": "Discord/Telegram AI agent runtime with a local web admin and full host-account privileges",
   "license": "MIT",
   "author": "hankyo",
   "repository": {
