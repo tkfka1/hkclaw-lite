@@ -68,10 +68,25 @@ test('channels page exposes reusable connector management', () => {
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
 
   assert.match(viewsSource, /renderConnectorList/u);
+  assert.match(viewsSource, /renderChannelWorkerPanel/u);
+  assert.match(viewsSource, /start-kakao-service/u);
   assert.match(appSource, /data-form="connector"/u);
   assert.match(appSource, /open-connector-modal/u);
   assert.match(appSource, /\/api\/connectors/u);
   assert.match(appSource, /findKakaoChannelRouteConflict/u);
+});
+
+test('agent cards distinguish connector-managed channels from legacy agent tokens', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const adminStateSource = readRepoFile('src/admin-state.js');
+
+  assert.match(adminStateSource, /platform:\s*channel\.platform/u);
+  assert.match(adminStateSource, /connector:\s*channel\.connector/u);
+  assert.match(appSource, /connectorOnly/u);
+  assert.match(appSource, /커넥터 사용/u);
+  assert.match(appSource, /채널 워커 사용/u);
+  assert.match(appSource, /채널 탭에서 관리/u);
+  assert.match(appSource, /function\s+unique\s*\(/u);
 });
 
 test('form fields stay top-aligned when validation messages expand a row', () => {
@@ -79,6 +94,13 @@ test('form fields stay top-aligned when validation messages expand a row', () =>
 
   assert.match(styles, /\.form-grid\s*\{[^}]*align-items:\s*start;/su);
   assert.match(styles, /\.field\s*\{[^}]*align-content:\s*start;/su);
+});
+
+test('mobile cards stack actions below content instead of squeezing labels', () => {
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.card\s*\{[\s\S]*?flex-direction:\s*column;/u);
+  assert.match(styles, /\.card\s*>\s*\.inline-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fit, minmax\(128px, 1fr\)\);/u);
 });
 
 test('channel modal does not show empty-field errors before submit', () => {

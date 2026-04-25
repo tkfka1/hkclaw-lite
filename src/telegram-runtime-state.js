@@ -38,26 +38,38 @@ export function getTelegramCommandQueuePath(projectRoot, agentName = null) {
 export function inspectTelegramAgentConfigs(config, channels, runtimeStatus = null) {
   const telegramChannels = channels.filter((channel) => (channel?.platform || 'discord') === 'telegram');
   const agents = config?.agents || {};
+  const connectors = Object.fromEntries(
+    Object.entries(config?.connectors || {}).filter(([, connector]) => connector?.type === 'telegram'),
+  );
   const runtimeAgents = runtimeStatus?.agents || runtimeStatus?.bots || {};
 
   return {
     telegramChannelCount: telegramChannels.length,
     agents: Object.fromEntries(
-      Object.entries(agents).map(([name, agent]) => {
+      Object.entries({ ...agents, ...connectors }).map(([name]) => {
+        const connectorEntry = connectors[name];
+        const agent = agents[name];
+        const connector = connectorEntry && !agent ? connectorEntry : null;
+        const sourceConfig = agent || connectorEntry || {};
         const runtimeAgent = runtimeAgents[name] || {};
+        const configured = Boolean(sourceConfig?.telegramBotToken || runtimeAgent.tokenConfigured);
         return [
           name,
           {
-            configured: Boolean(agent?.telegramBotToken || runtimeAgent.tokenConfigured),
+            configured,
             required: telegramChannels.some(
               (channel) =>
-                channel.agent === name ||
-                channel.reviewer === name ||
-                channel.arbiter === name,
+                channel.connector
+                  ? channel.connector === name
+                  : agent &&
+                    (channel.agent === name ||
+                      channel.reviewer === name ||
+                      channel.arbiter === name),
             ),
             agent: agent?.agent || '',
-            source: agent?.telegramBotToken ? 'config' : runtimeAgent.tokenConfigured ? 'telegram serve' : '없음',
-            tokenConfigured: Boolean(agent?.telegramBotToken || runtimeAgent.tokenConfigured),
+            connector: Boolean(connector),
+            source: sourceConfig?.telegramBotToken ? 'config' : runtimeAgent.tokenConfigured ? 'telegram serve' : '없음',
+            tokenConfigured: configured,
             connected: Boolean(runtimeAgent.connected),
             username: runtimeAgent.username || '',
             userId: runtimeAgent.userId || '',

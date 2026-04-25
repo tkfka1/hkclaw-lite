@@ -1210,6 +1210,115 @@ test('admin server queues manual Discord service commands instead of auto reload
   });
 });
 
+test('admin snapshot scopes channel worker requirements to connector platform routes', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const agentResponse = await requestJson(`${url}/api/agents`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'worker',
+          agent: 'command',
+          command: `node ${fixturePath}`,
+        },
+      },
+    });
+    assert.equal(agentResponse.response.status, 200, JSON.stringify(agentResponse.payload));
+
+    for (const definition of [
+      {
+        name: 'discord-main',
+        type: 'discord',
+        discordToken: 'discord-token',
+      },
+      {
+        name: 'telegram-main',
+        type: 'telegram',
+        telegramBotToken: 'telegram-token',
+      },
+      {
+        name: 'kakao-main',
+        type: 'kakao',
+        kakaoRelayUrl: 'https://relay.example/',
+      },
+    ]) {
+      const response = await requestJson(`${url}/api/connectors`, {
+        method: 'POST',
+        body: { definition },
+      });
+      assert.equal(response.response.status, 200, JSON.stringify(response.payload));
+    }
+
+    for (const definition of [
+      {
+        name: 'discord-ops',
+        platform: 'discord',
+        connector: 'discord-main',
+        discordChannelId: '123456789012345678',
+        workspace: 'workspace',
+        agent: 'worker',
+      },
+      {
+        name: 'telegram-alerts',
+        platform: 'telegram',
+        connector: 'telegram-main',
+        telegramChatId: '-100111222333',
+        workspace: 'workspace',
+        agent: 'worker',
+      },
+      {
+        name: 'kakao-support',
+        platform: 'kakao',
+        connector: 'kakao-main',
+        kakaoChannelId: 'support',
+        workspace: 'workspace',
+        agent: 'worker',
+      },
+    ]) {
+      const response = await requestJson(`${url}/api/channels`, {
+        method: 'POST',
+        body: { definition },
+      });
+      assert.equal(response.response.status, 200, JSON.stringify(response.payload));
+    }
+
+    const { payload } = await requestJson(`${url}/api/state`);
+
+    assert.equal(payload.discord.singleChannelCount, 1);
+    assert.equal(payload.discord.tribunalChannelCount, 0);
+    assert.equal(payload.telegram.telegramChannelCount, 1);
+    assert.equal(payload.kakao.kakaoChannelCount, 1);
+
+    assert.equal(payload.discord.agents.worker.required, false);
+    assert.equal(payload.telegram.agents.worker.required, false);
+    assert.equal(payload.kakao.agents.worker.required, false);
+
+    assert.equal(payload.discord.agents['discord-main'].connector, true);
+    assert.equal(payload.discord.agents['discord-main'].required, true);
+    assert.equal(payload.telegram.agents['telegram-main'].connector, true);
+    assert.equal(payload.telegram.agents['telegram-main'].required, true);
+    assert.equal(payload.kakao.agents['kakao-main'].connector, true);
+    assert.equal(payload.kakao.agents['kakao-main'].required, true);
+
+    const worker = payload.agents.find((agent) => agent.name === 'worker');
+    assert.deepEqual(
+      worker.mappedChannels.map((channel) => ({
+        name: channel.name,
+        platform: channel.platform,
+        connector: channel.connector,
+      })),
+      [
+        { name: 'discord-ops', platform: 'discord', connector: 'discord-main' },
+        { name: 'kakao-support', platform: 'kakao', connector: 'kakao-main' },
+        { name: 'telegram-alerts', platform: 'telegram', connector: 'telegram-main' },
+      ],
+    );
+  });
+});
+
 test('admin server can start, restart, and stop Discord service', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);

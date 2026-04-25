@@ -89,6 +89,7 @@ export function renderChannelsView(ctx) {
   const { state, getDashboardStats, escapeHtml, renderConnectorList, renderChannelList } = ctx;
   const stats = getDashboardStats();
   return `
+    ${renderChannelWorkerPanel({ state, stats, escapeHtml })}
     <section class="panel section-panel">
       <div class="section-head">
         <div class="section-title-group">
@@ -110,6 +111,94 @@ export function renderChannelsView(ctx) {
       </div>
       ${renderChannelList(state.data.channels, state.data.agents)}
     </section>
+  `;
+}
+
+function renderChannelWorkerPanel({ state, stats, escapeHtml }) {
+  const services = [
+    {
+      key: 'discord',
+      label: 'Discord',
+      count: stats.discordChannelCount,
+      service: state.data?.discord?.service || {},
+      startAction: 'start-discord-service',
+      restartAction: 'restart-discord-service',
+      stopAction: 'stop-discord-service',
+    },
+    {
+      key: 'telegram',
+      label: 'Telegram',
+      count: stats.telegramChannelCount,
+      service: state.data?.telegram?.service || {},
+      startAction: 'start-telegram-service',
+      restartAction: 'restart-telegram-service',
+      stopAction: 'stop-telegram-service',
+    },
+    {
+      key: 'kakao',
+      label: 'KakaoTalk',
+      count: stats.kakaoChannelCount,
+      service: state.data?.kakao?.service || {},
+      startAction: 'start-kakao-service',
+      restartAction: 'restart-kakao-service',
+      stopAction: 'stop-kakao-service',
+    },
+  ];
+
+  return `
+    <section class="panel section-panel">
+      <div class="section-head">
+        <div class="section-title-group">
+          <span class="section-title-icon">${renderIcon('server', 'ui-icon')}</span>
+          <h2>채널 워커</h2>
+        </div>
+      </div>
+      <p class="field-hint">커넥터 기반 채널은 에이전트별 토큰이 아니라 플랫폼 워커가 수신을 담당합니다.</p>
+      <div class="card-list card-list--compact service-worker-list">
+        ${services.map((entry) => renderChannelWorkerCard(entry, state, escapeHtml)).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderChannelWorkerCard(entry, state, escapeHtml) {
+  const service = entry.service || {};
+  const running = Boolean(service.running);
+  const starting = Boolean(service.starting);
+  const stale = Boolean(service.stale);
+  const label = service.label || '중지';
+  const statusClass = stale ? 'mini-chip--danger' : running ? 'mini-chip--ok' : '';
+  const disabled = state.busy || starting || entry.count === 0;
+  const lastError = service.lastError
+    ? `<p class="field-hint field-hint--danger">${escapeHtml(service.lastError)}</p>`
+    : '';
+
+  return `
+    <article class="card card--stack service-worker-card">
+      <div class="card-main">
+        <div class="card-title-row">
+          ${renderIcon('server', 'ui-icon')}
+          <strong>${escapeHtml(entry.label)}</strong>
+        </div>
+        <div class="card-tags">
+          <span class="mini-chip ${statusClass}">${escapeHtml(label)}</span>
+          <span class="mini-chip">${escapeHtml(`채널 ${entry.count}개`)}</span>
+        </div>
+        ${lastError}
+      </div>
+      <div class="inline-actions">
+        ${
+          running || stale
+            ? `<button type="button" class="btn-secondary" data-action="${entry.restartAction}" ${state.busy || (!running && !stale) ? 'disabled' : ''}>${renderIcon('refresh', 'ui-icon')}재시작</button>`
+            : `<button type="button" class="btn-secondary" data-action="${entry.startAction}" ${disabled ? 'disabled' : ''}>${renderIcon('play', 'ui-icon')}시작</button>`
+        }
+        ${
+          running || stale || starting
+            ? `<button type="button" class="btn-secondary" data-action="${entry.stopAction}" ${state.busy || (!running && !stale && !starting) ? 'disabled' : ''}>${renderIcon('stop', 'ui-icon')}중지</button>`
+            : ''
+        }
+      </div>
+    </article>
   `;
 }
 

@@ -44,26 +44,46 @@ export function resolveChannelRoleAgentNames(channel) {
 }
 
 export function inspectDiscordAgentConfigs(config, channels, runtimeStatus = null) {
-  const tribunalChannelCount = channels.filter(
+  const discordChannels = channels.filter(isDiscordChannel);
+  const tribunalChannelCount = discordChannels.filter(
     (channel) => channel?.mode === 'tribunal' || Boolean(channel?.reviewer && channel?.arbiter),
   ).length;
   const agents = config?.agents || {};
+  const connectors = Object.fromEntries(
+    Object.entries(config?.connectors || {}).filter(([, connector]) => connector?.type === 'discord'),
+  );
   const runtimeAgents = runtimeStatus?.agents || runtimeStatus?.bots || {};
 
   return {
     tribunalChannelCount,
-    singleChannelCount: channels.length - tribunalChannelCount,
+    singleChannelCount: discordChannels.length - tribunalChannelCount,
     agents: Object.fromEntries(
-      Object.entries(agents).map(([name, agent]) => {
+      Object.entries({ ...agents, ...connectors }).map(([name]) => {
+        const connectorEntry = connectors[name];
+        const agent = agents[name];
+        const connector = connectorEntry && !agent ? connectorEntry : null;
+        const sourceConfig = agent || connectorEntry || {};
         const runtimeAgent = runtimeAgents[name] || {};
+        const configured = Boolean(sourceConfig?.discordToken || runtimeAgent.tokenConfigured);
         return [
           name,
           {
-            configured: Boolean(agent?.discordToken),
-            required: true,
+            configured,
+            required: discordChannels.some((channel) =>
+              channel.connector
+                ? channel.connector === name
+                : agent
+                  ? channelReferencesAgent(channel, name)
+                  : false,
+            ),
             agent: agent?.agent || '',
-            source: agent?.discordToken ? 'config' : '없음',
-            tokenConfigured: Boolean(agent?.discordToken),
+            connector: Boolean(connector),
+            source: sourceConfig?.discordToken
+              ? 'config'
+              : runtimeAgent.tokenConfigured
+                ? 'discord serve'
+                : '없음',
+            tokenConfigured: configured,
             connected: Boolean(runtimeAgent.connected),
             tag: runtimeAgent.tag || '',
             userId: runtimeAgent.userId || '',
@@ -72,6 +92,15 @@ export function inspectDiscordAgentConfigs(config, channels, runtimeStatus = nul
       }),
     ),
   };
+}
+
+function isDiscordChannel(channel) {
+  return (channel?.platform || 'discord') === 'discord';
+}
+
+function channelReferencesAgent(channel, agentName) {
+  const roleAgents = resolveChannelRoleAgentNames(channel);
+  return Object.values(roleAgents).includes(agentName);
 }
 
 export function readDiscordServiceStatus(projectRoot) {

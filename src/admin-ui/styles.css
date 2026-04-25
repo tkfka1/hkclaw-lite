@@ -909,6 +909,11 @@ strong,
   color: var(--amber);
 }
 
+.field-hint--danger {
+  color: var(--amber);
+  font-weight: 700;
+}
+
 .status-pill {
   background: rgba(47, 91, 216, 0.10);
   color: var(--accent-strong);
@@ -935,6 +940,10 @@ strong,
 .card-list {
   display: grid;
   gap: 10px;
+}
+
+.service-worker-list {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .agent-list {
@@ -1957,6 +1966,22 @@ button:focus-visible {
     width: 100%;
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .card {
+    flex-direction: column;
+  }
+
+  .card > .inline-actions {
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    align-items: stretch;
+  }
+
+  .card > .inline-actions .btn-primary,
+  .card > .inline-actions .btn-secondary,
+  .card > .inline-actions .btn-danger {
+    width: 100%;
+    min-width: 0;
   }
 
   .runtime-session-head,

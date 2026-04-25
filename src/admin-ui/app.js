@@ -2153,8 +2153,12 @@ function renderAgentCard(agent, context) {
     connectionSummary,
     connected,
     channelCount,
+    credentialLabel,
+    connectorOnly,
   } = context;
-  const primaryAction = !tokenConfigured
+  const primaryAction = connectorOnly
+    ? ''
+    : !tokenConfigured
     ? `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" disabled>${renderButtonLabel('play', '실행')}</button>`
     : agentServiceRunning || agentServiceStale
       ? `<button type="button" class="btn-secondary" data-action="restart-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>${renderButtonLabel('refresh', '재시작')}</button>`
@@ -2172,7 +2176,7 @@ function renderAgentCard(agent, context) {
         </div>
         <div class="agent-status-grid">
           <span class="mini-chip agent-chip agent-chip--platform">${renderIcon(resolvePlatformIcon(platform), 'ui-icon')} ${escapeHtml(platformLabel)}</span>
-          <span class="mini-chip agent-chip ${tokenConfigured ? 'mini-chip--ok' : 'mini-chip--danger'}">${renderIcon('shield', 'ui-icon')} ${escapeHtml(tokenConfigured ? '토큰 설정됨' : '토큰 미설정')}</span>
+          <span class="mini-chip agent-chip ${tokenConfigured ? 'mini-chip--ok' : 'mini-chip--danger'}">${renderIcon('shield', 'ui-icon')} ${escapeHtml(credentialLabel)}</span>
           <span class="mini-chip agent-chip ${agentServiceStale ? 'mini-chip--danger' : connected ? 'mini-chip--ok' : ''}">${renderIcon('server', 'ui-icon')}${escapeHtml(connectionSummary)}</span>
           <span class="mini-chip agent-chip">${renderIcon('channels', 'ui-icon')}${escapeHtml(`채널 ${channelCount}개`)}</span>
         </div>
@@ -2185,7 +2189,7 @@ function renderAgentCard(agent, context) {
           title: '더보기',
           body: renderAgentDetailPanel(agent, context),
           actions: [
-            isDiscordPlatform || platform === 'kakao'
+            !connectorOnly && (isDiscordPlatform || platform === 'kakao')
               ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentService?.running ? 'disabled' : ''}>${renderButtonLabel('refresh', '재연결')}</button>`
               : '',
             `<button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>`,
@@ -2197,9 +2201,31 @@ function renderAgentCard(agent, context) {
 }
 
 function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}, kakaoAgents = {}) {
-  const platform = agent.platform || 'discord';
+  const mappedChannels = Array.isArray(agent.mappedChannels) ? agent.mappedChannels : [];
+  const channelPlatforms = unique(
+    mappedChannels
+      .map((channel) => channel.platform || 'discord')
+      .filter(Boolean),
+  );
+  const connectorPlatforms = unique(
+    mappedChannels
+      .filter((channel) => channel.connector)
+      .map((channel) => channel.platform || 'discord')
+      .filter(Boolean),
+  );
+  const legacyCredentialPlatforms = unique(
+    mappedChannels
+      .filter((channel) => !channel.connector)
+      .map((channel) => channel.platform || 'discord')
+      .filter(Boolean),
+  );
+  const connectorOnly = mappedChannels.length > 0 && connectorPlatforms.length > 0 && legacyCredentialPlatforms.length === 0;
+  const platform = legacyCredentialPlatforms[0] || channelPlatforms[0] || agent.platform || 'discord';
   const isDiscordPlatform = platform === 'discord';
-  const platformLabel = localizeMessagingPlatform(platform);
+  const platformLabels = (channelPlatforms.length ? channelPlatforms : [platform]).map((value) =>
+    localizeMessagingPlatform(value),
+  );
+  const platformLabel = platformLabels.join(' / ');
   const runtimeAgent = serviceAgents[agent.name] || {};
   const telegramRuntime = telegramAgents[agent.name] || {};
   const kakaoRuntime = kakaoAgents[agent.name] || {};
@@ -2212,18 +2238,32 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
   const agentServiceRunning = Boolean(agentService?.running);
   const agentServiceStarting = Boolean(agentService?.starting);
   const agentServiceStale = Boolean(agentService?.stale);
-  const tokenConfigured = isDiscordPlatform
-    ? agent.discordTokenConfigured
-    : platform === 'kakao'
-      ? agent.kakaoRelayConfigured
-      : agent.telegramBotTokenConfigured;
-  const connected = isDiscordPlatform
-    ? Boolean(runtimeAgent.connected)
-    : platform === 'kakao'
-      ? Boolean(kakaoRuntime.connected)
-      : Boolean(telegramRuntime.connected);
-  const connectionSummary = isDiscordPlatform
-    ? runtimeAgent.connected
+  const tokenConfiguredByPlatform = {
+    discord: Boolean(agent.discordTokenConfigured),
+    telegram: Boolean(agent.telegramBotTokenConfigured),
+    kakao: Boolean(agent.kakaoRelayConfigured),
+  };
+  const tokenConfigured = connectorOnly
+    ? true
+    : legacyCredentialPlatforms.length > 0
+      ? legacyCredentialPlatforms.every((value) => tokenConfiguredByPlatform[value])
+      : Boolean(tokenConfiguredByPlatform[platform]);
+  const credentialLabel = connectorOnly
+    ? '커넥터 사용'
+    : tokenConfigured
+      ? '토큰 설정됨'
+      : '토큰 미설정';
+  const connected = connectorOnly
+    ? false
+    : isDiscordPlatform
+      ? Boolean(runtimeAgent.connected)
+      : platform === 'kakao'
+        ? Boolean(kakaoRuntime.connected)
+        : Boolean(telegramRuntime.connected);
+  const connectionSummary = connectorOnly
+    ? '채널 워커 사용'
+    : isDiscordPlatform
+      ? runtimeAgent.connected
       ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
       : agentServiceRunning
         ? '연결 안 됨'
@@ -2256,6 +2296,7 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
 
   return {
     platform,
+    platforms: channelPlatforms.length ? channelPlatforms : [platform],
     isDiscordPlatform,
     platformLabel,
     runtimeAgent,
@@ -2267,10 +2308,12 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
     agentServiceStarting,
     agentServiceStale,
     tokenConfigured,
+    credentialLabel,
+    connectorOnly,
     connected,
     connectionSummary,
     channelCount: (agent.mappedChannelNames || []).length,
-    needsAttention: !tokenConfigured || agentServiceStale || Boolean(agentService?.lastError),
+    needsAttention: !tokenConfigured || (!connectorOnly && agentServiceStale) || Boolean(agentService?.lastError),
   };
 }
 
@@ -2291,11 +2334,11 @@ function matchesAgentFilter(context, filter) {
     case 'missing-token':
       return !context.tokenConfigured;
     case 'discord':
-      return context.platform === 'discord';
+      return (context.platforms || [context.platform]).includes('discord');
     case 'telegram':
-      return context.platform === 'telegram';
+      return (context.platforms || [context.platform]).includes('telegram');
     case 'kakao':
-      return context.platform === 'kakao';
+      return (context.platforms || [context.platform]).includes('kakao');
     default:
       return true;
   }
@@ -2327,6 +2370,10 @@ function normalizeSearchText(value) {
   return String(value || '').trim().toLocaleLowerCase('ko-KR');
 }
 
+function unique(values = []) {
+  return Array.from(new Set(values));
+}
+
 function renderAgentDetailPanel(agent, context) {
   const channels = (agent.mappedChannels || []).map((channel) => {
     const role = channel.role ? ` · ${localizeAgentRole(channel.role)}` : '';
@@ -2336,16 +2383,22 @@ function renderAgentDetailPanel(agent, context) {
   const runtimeStatus = agent.runtime
     ? `${agent.runtime.ready ? '준비됨' : '확인 필요'} · ${agent.runtime.source || 'unknown'}`
     : '미확인';
-  const rows = [
-    { label: '서비스', value: context.agentServiceLabel },
-    { label: 'Heartbeat', value: context.agentService?.heartbeatAt ? formatRelativeDateTime(context.agentService.heartbeatAt) : '없음' },
-    { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
-    { label: 'Sandbox', value: agent.sandbox || '기본값' },
-  ];
+  const rows = context.connectorOnly
+    ? [
+        { label: '채널 워커', value: '채널 탭에서 관리' },
+        { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
+        { label: 'Sandbox', value: agent.sandbox || '기본값' },
+      ]
+    : [
+        { label: '서비스', value: context.agentServiceLabel },
+        { label: 'Heartbeat', value: context.agentService?.heartbeatAt ? formatRelativeDateTime(context.agentService.heartbeatAt) : '없음' },
+        { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
+        { label: 'Sandbox', value: agent.sandbox || '기본값' },
+      ];
   if (context.agentService?.lastError) {
     rows.push({ label: '최근 오류', value: context.agentService.lastError });
   }
-  if (context.platform === 'kakao') {
+  if (!context.connectorOnly && context.platform === 'kakao') {
     rows.push(
       { label: '연결 릴레이', value: context.kakaoRuntime?.relayUrl || agent.kakaoRelayUrl || getDefaultKakaoRelayUrl() },
       context.kakaoRuntime?.pairingCode

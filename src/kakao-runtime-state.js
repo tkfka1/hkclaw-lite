@@ -38,7 +38,9 @@ export function getKakaoCommandQueuePath(projectRoot, agentName = null) {
 export function inspectKakaoAgentConfigs(config, channels, runtimeStatus = null) {
   const kakaoChannels = channels.filter((channel) => (channel?.platform || 'discord') === 'kakao');
   const agents = config?.agents || {};
-  const connectors = config?.connectors || {};
+  const connectors = Object.fromEntries(
+    Object.entries(config?.connectors || {}).filter(([, connector]) => connector?.type === 'kakao'),
+  );
   const runtimeAgents = runtimeStatus?.agents || runtimeStatus?.accounts || {};
 
   return {

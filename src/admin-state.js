@@ -209,13 +209,14 @@ function mergeUsageAggregate(target, source) {
 }
 
 function buildDiscordStatus(projectRoot, config, channels) {
-  const tribunalChannelCount = channels.filter(isTribunalChannel).length;
+  const discordChannels = channels.filter((channel) => (channel?.platform || 'discord') === 'discord');
+  const tribunalChannelCount = discordChannels.filter(isTribunalChannel).length;
   const service = buildDiscordServiceSnapshot(projectRoot);
   const tokenStatus = inspectDiscordAgentConfigs(config, channels, service);
 
   return {
     tribunalChannelCount,
-    singleChannelCount: channels.length - tribunalChannelCount,
+    singleChannelCount: discordChannels.length - tribunalChannelCount,
     agents: tokenStatus.agents,
     service,
     agentServices: service.agentServices || {},
@@ -524,6 +525,8 @@ function buildAgentSummaries(projectRoot, config, channels) {
       mappedChannels: mappedChannels.map((channel) => ({
         name: channel.name,
         role: resolveAgentRole(channel, agent.name),
+        platform: channel.platform || 'discord',
+        connector: channel.connector || '',
         workspace: channel.workspace,
       })),
       mappedChannelNames: unique(mappedChannels.map((channel) => channel.name)),
