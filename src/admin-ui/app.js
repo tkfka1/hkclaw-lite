@@ -5,23 +5,23 @@ import {
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
   shouldUseDesktopSidebar,
-} from './ui-shell.js?v=20260424-01';
+} from './ui-shell.js?v=20260425-02';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
-} from './ui-views.js?v=20260424-01';
+} from './ui-views.js?v=20260425-02';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js?v=20260424-01';
+} from './polling.js?v=20260425-02';
 import {
   getClaudeRuntimeSourceBadge,
   getClaudeRuntimeSourceHintLines,
-} from './claude-runtime-ui.js?v=20260424-01';
-import { renderIcon } from './icons.js?v=20260424-01';
+} from './claude-runtime-ui.js?v=20260425-02';
+import { renderIcon } from './icons.js?v=20260425-02';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
@@ -1783,7 +1783,7 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
   const serviceAgents = discordService?.agents || discordService?.bots || {};
   const telegramAgents = telegramService?.agents || telegramService?.bots || {};
   return `
-    <div class="card-list">
+    <div class="card-list agent-list">
       ${agents
         .map(
           (agent) => {
@@ -1828,33 +1828,35 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
                   : agentServiceStale
                     ? '워커 끊김'
                     : '워커 중지';
+            const channelCount = (agent.mappedChannelNames || []).length;
             return `
-              <article class="card">
-                <div class="card-main">
-                  ${renderCardTitle(resolveAgentTypeIcon(agent.agent), agent.name, 'accent')}
-                  ${renderMetaText(`${localizeAgentTypeValue(agent.agent)}${agent.model ? ` · ${agent.model}` : ''} · ${platformLabel}`)}
-                  <div class="card-tags">
-                    <span class="mini-chip">${renderIcon(resolvePlatformIcon(platform), 'ui-icon')} ${escapeHtml(platformLabel)}</span>
-                    <span class="mini-chip ${tokenConfigured ? 'mini-chip--ok' : ''}">${renderIcon('shield', 'ui-icon')} ${escapeHtml(tokenConfigured ? '토큰 설정됨' : '토큰 미설정')}</span>
+              <article class="card agent-card">
+                <div class="card-main agent-card-main">
+                  <div class="agent-card-heading">
+                    ${renderCardTitle(resolveAgentTypeIcon(agent.agent), agent.name, 'accent')}
+                    ${renderMetaText(`${localizeAgentTypeValue(agent.agent)}${agent.model ? ` · ${agent.model}` : ''}`)}
                   </div>
-                  <div class="card-tags">
-                    <span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(connectionSummary)}</span>
-                    <span class="mini-chip">${renderIcon('channels', 'ui-icon')}${escapeHtml(`${(agent.mappedChannelNames || []).length}개`)}</span>
+                  <div class="agent-status-grid">
+                    <span class="mini-chip agent-chip agent-chip--platform">${renderIcon(resolvePlatformIcon(platform), 'ui-icon')} ${escapeHtml(platformLabel)}</span>
+                    <span class="mini-chip agent-chip ${tokenConfigured ? 'mini-chip--ok' : 'mini-chip--danger'}">${renderIcon('shield', 'ui-icon')} ${escapeHtml(tokenConfigured ? '토큰 설정됨' : '토큰 미설정')}</span>
+                    <span class="mini-chip agent-chip ${agentServiceStale ? 'mini-chip--danger' : runtimeAgent.connected || telegramRuntime.connected ? 'mini-chip--ok' : ''}">${renderIcon('server', 'ui-icon')}${escapeHtml(connectionSummary)}</span>
+                    <span class="mini-chip agent-chip">${renderIcon('channels', 'ui-icon')}${escapeHtml(`채널 ${channelCount}개`)}</span>
                   </div>
                 </div>
-                <div class="inline-actions">
+                <div class="inline-actions agent-card-actions">
                   ${primaryAction}
                   ${stopAction}
                   <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
+                  ${renderCardActionDrawer({
+                    title: '더보기',
+                    actions: [
+                      isDiscordPlatform
+                        ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentServiceRunning ? 'disabled' : ''}>${renderButtonLabel('refresh', '재연결')}</button>`
+                        : '',
+                      `<button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>`,
+                    ],
+                  })}
                 </div>
-                ${renderCardActionDrawer({
-                  actions: [
-                    isDiscordPlatform
-                      ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentServiceRunning ? 'disabled' : ''}>${renderButtonLabel('refresh', '재연결')}</button>`
-                      : '',
-                    `<button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>`,
-                  ],
-                })}
               </article>
             `;
           },

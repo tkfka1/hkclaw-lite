@@ -926,6 +926,102 @@ strong,
   gap: 10px;
 }
 
+.agent-list {
+  gap: 12px;
+}
+
+.agent-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 16px;
+  padding: 16px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(47, 91, 216, 0.06), transparent 38%),
+    rgba(255, 255, 255, 0.92);
+}
+
+.agent-card-main {
+  gap: 12px;
+  align-content: center;
+}
+
+.agent-card-heading {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.agent-card .card-title-row {
+  min-width: 0;
+}
+
+.agent-card .card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.03rem;
+}
+
+.agent-card .card-meta {
+  max-width: min(56ch, 100%);
+}
+
+.agent-status-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-chip {
+  justify-content: flex-start;
+  max-width: 100%;
+  min-height: 32px;
+  padding-inline: 10px;
+}
+
+.agent-chip--platform {
+  color: var(--accent-strong);
+  background: rgba(47, 91, 216, 0.08);
+  border-color: rgba(47, 91, 216, 0.08);
+}
+
+.agent-card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(88px, auto));
+  gap: 8px;
+  align-content: start;
+  justify-content: end;
+  min-width: 190px;
+}
+
+.agent-card-actions .btn-secondary,
+.agent-card-actions .btn-danger {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 0.86rem;
+}
+
+.agent-card-actions .card-actions-drawer {
+  grid-column: 1 / -1;
+  width: auto;
+  justify-self: end;
+}
+
+.agent-card-actions .card-actions-summary {
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.agent-card-actions .card-actions-panel {
+  justify-items: end;
+}
+
 .card-actions-drawer {
   width: 100%;
 }
@@ -1589,6 +1685,24 @@ button:focus-visible {
     align-items: stretch;
   }
 
+  .agent-card {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-card-actions {
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    justify-content: stretch;
+    min-width: 0;
+  }
+
+  .agent-card-actions .card-actions-drawer {
+    justify-self: stretch;
+  }
+
+  .agent-card-actions .card-actions-summary {
+    justify-content: center;
+  }
+
   .workspace-header-copy,
   .section-title-group {
     width: 100%;
@@ -1626,6 +1740,15 @@ button:focus-visible {
     width: 100%;
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .agent-status-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .agent-chip {
+    width: 100%;
   }
 
   .modal-shell {

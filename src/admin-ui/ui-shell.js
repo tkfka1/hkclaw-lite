@@ -1,4 +1,4 @@
-import { renderIcon } from './icons.js?v=20260424-01';
+import { renderIcon } from './icons.js?v=20260425-02';
 
 export const DESKTOP_NAV_MIN_WIDTH = 1081;
 
