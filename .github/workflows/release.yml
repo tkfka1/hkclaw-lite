@@ -72,6 +72,8 @@ jobs:
       - name: Check npm publish status
         id: npm_status
         shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           if npm view "${{ steps.meta.outputs.package_name }}@${{ steps.meta.outputs.version }}" version >/dev/null 2>&1; then
@@ -79,24 +81,23 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Ensure npm token exists
-        if: steps.npm_status.outputs.published != 'true'
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$NPM_TOKEN" || {
-            echo "Repository secret NPM_TOKEN is required to publish to npm." >&2
-            exit 1
-          }
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            echo "token_available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "token_available=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish package to npm
-        if: steps.npm_status.outputs.published != 'true'
+        if: steps.npm_status.outputs.published != 'true' && steps.npm_status.outputs.token_available == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public --provenance
+
+      - name: Note skipped npm publish
+        if: steps.npm_status.outputs.published != 'true' && steps.npm_status.outputs.token_available != 'true'
+        shell: bash
+        run: |
+          echo "::warning::Repository secret NPM_TOKEN is not configured; skipping npm publish and continuing with GitHub Release assets."
 
       - name: Upload assets to GitHub Release
         env:

@@ -400,7 +400,8 @@ curl -X DELETE \
 - `Publish Release` (`.github/workflows/release.yml`)
   - `v*` 태그 push 시 실행
   - 버전 동기화 검증
-  - `npm publish --provenance`
+  - `NPM_TOKEN` 이 있으면 `npm publish --provenance` 실행
+  - `NPM_TOKEN` 이 없으면 npm publish만 warning으로 건너뛰고 GitHub Release 자산은 계속 업로드
   - GitHub Release 생성/업데이트
   - npm 패키지 tarball, chart tarball, SHA256SUMS 업로드
 - `Publish Container` (`.github/workflows/container-publish.yml`)
@@ -409,7 +410,7 @@ curl -X DELETE \
 
 ### 필요한 GitHub Secrets
 
-- `NPM_TOKEN`: npm 배포용 토큰
+- `NPM_TOKEN`: npm 배포용 토큰. 없으면 GitHub Release와 컨테이너 이미지는 계속 만들지만 npm publish는 건너뛴다.
 
 ### 운영 방법
 
@@ -418,6 +419,7 @@ curl -X DELETE \
 3. `custom` 이면 `version` 에 정확한 semver 입력 (`1.2.3`)
 4. 워크플로우가 버전 파일 동기화 + 테스트 + 커밋 + `vX.Y.Z` 태그 push 수행
 5. 태그가 올라가면 `Publish Release` 와 `Publish Container` 가 자동 실행
+6. 사용자-facing 변경은 `CHANGELOG.md`에 함께 기록
 
 ### 버전 정책
 
