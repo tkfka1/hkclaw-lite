@@ -772,6 +772,10 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     assert.equal(htmlResponse.headers.get('x-frame-options'), 'DENY');
     assert.equal(htmlResponse.headers.get('referrer-policy'), 'no-referrer');
     assert.match(htmlResponse.headers.get('permissions-policy') || '', /camera=\(\)/u);
+    assert.equal(
+      htmlResponse.headers.get('content-security-policy'),
+      "default-src 'none'; base-uri 'self'; connect-src 'self'; font-src 'self' https://fonts.gstatic.com; form-action 'self'; frame-src 'none'; frame-ancestors 'none'; img-src 'self' data:; manifest-src 'self'; object-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com",
+    );
     assert.match(html, /hkclaw-lite/i);
     assert.match(html, /\/favicon\.ico/u);
     assert.match(html, /\/favicon\.svg/u);
@@ -2043,6 +2047,10 @@ test('admin server supports lightweight password login via env', async () => {
       });
       assert.equal(secureLogin.response.status, 200, JSON.stringify(secureLogin.payload));
       assert.match(secureLogin.response.headers.get('set-cookie') || '', /;\s*Secure/u);
+      assert.equal(
+        secureLogin.response.headers.get('strict-transport-security'),
+        'max-age=31536000; includeSubDomains; preload',
+      );
 
       const authedState = await requestJson(`${url}/api/state`, {
         headers: {

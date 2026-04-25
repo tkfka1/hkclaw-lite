@@ -212,7 +212,7 @@ export async function serveAdmin(
 }
 
 async function handleAdminRequest(projectRoot, auth, request, response) {
-  applyAdminSecurityHeaders(response);
+  applyAdminSecurityHeaders(response, request);
   const url = new URL(request.url || '/', 'http://127.0.0.1');
   const pathname = url.pathname;
   const isStaticRequest = request.method === 'GET' || request.method === 'HEAD';
@@ -3569,12 +3569,32 @@ function writeText(response, statusCode, value, contentType) {
   response.end(value);
 }
 
-function applyAdminSecurityHeaders(response) {
+function applyAdminSecurityHeaders(response, request) {
   response.setHeader('x-content-type-options', 'nosniff');
   response.setHeader('referrer-policy', 'no-referrer');
   response.setHeader('x-frame-options', 'DENY');
   response.setHeader('cross-origin-opener-policy', 'same-origin');
   response.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
+  response.setHeader(
+    'content-security-policy',
+    [
+      "default-src 'none'",
+      "base-uri 'self'",
+      'connect-src \'self\'',
+      "font-src 'self' https://fonts.gstatic.com",
+      "form-action 'self'",
+      "frame-src 'none'",
+      "frame-ancestors 'none'",
+      "img-src 'self' data:",
+      "manifest-src 'self'",
+      "object-src 'none'",
+      "script-src 'self'",
+      "style-src 'self' https://fonts.googleapis.com",
+    ].join('; '),
+  );
+  if (isSecureAdminRequest(request)) {
+    response.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains; preload');
+  }
 }
 
 async function waitForShutdown(server) {
