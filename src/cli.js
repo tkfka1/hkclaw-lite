@@ -1375,12 +1375,12 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
       defaultValue: initial.telegramBotToken,
     });
   } else if (platform === 'kakao') {
-    definition.kakaoRelayUrl = await prompter.askText('Kakao relay URL', {
+    definition.kakaoRelayUrl = await prompter.askText('Kakao connection relay URL', {
       defaultValue: initial.kakaoRelayUrl || getDefaultKakaoRelayUrl(),
       allowEmpty: true,
     });
     definition.kakaoRelayToken = await prompter.askText(
-      'Kakao relay token (optional; empty creates a pairing session)',
+      'Kakao connection token (optional; empty creates a pairing session)',
       {
         defaultValue: initial.kakaoRelayToken,
         allowEmpty: true,
@@ -1582,10 +1582,10 @@ async function promptForChannelDefinition(prompter, config, options) {
       allowEmpty: true,
     });
   } else if (platform === 'kakao') {
-    kakaoChannelId = await prompter.askText('Kakao relay channel ID (* for any paired channel)', {
+    kakaoChannelId = await prompter.askText('Kakao inbound channelId filter (* allows any paired channel)', {
       defaultValue: initial.kakaoChannelId || '*',
     });
-    kakaoUserId = await prompter.askText('Kakao user ID (optional; empty allows any paired user)', {
+    kakaoUserId = await prompter.askText('Kakao user ID filter (optional; empty allows any paired user)', {
       defaultValue: initial.kakaoUserId,
       allowEmpty: true,
     });

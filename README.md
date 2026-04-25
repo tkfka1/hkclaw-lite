@@ -3,8 +3,9 @@
 `hkclaw-lite`는 Discord/Telegram/KakaoTalk 에이전트를 웹 어드민 중심으로 운영하는 경량 런타임이다.
 
 - 기본 진입점은 웹 어드민이다.
-- 에이전트 1개당 선택한 플랫폼(Discord/Telegram/KakaoTalk)용 연결 정보를 가진다.
-- 메시징 워커도 에이전트별 프로세스로 동작한다.
+- 에이전트는 순수 모델 이름이 아니라 **AI 실행 주체 + 플랫폼 연결 계정**이다. Discord/Telegram/KakaoTalk 연결 정보도 에이전트에 붙는다.
+- 채널은 **대화가 들어갈 논리 단위**다. 대상 방/사용자 필터, 워크스페이스, 실행 모드, role 매핑, 하네스 세션 경계를 가진다.
+- 메시징 워커도 에이전트/연결 계정 기준으로 동작한다.
 - 기본 웹 주소는 `http://127.0.0.1:5687` 이다.
 
 ## 요구 사항
@@ -161,17 +162,25 @@ KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bar
 
 ### 구성 모델
 
+현재 모델은 아래처럼 나뉜다.
+
+| 위치 | 의미 | Kakao에서 넣는 값 |
+| --- | --- | --- |
+| Agent | AI 실행 주체 + Kakao 연결 계정/세션 | Kakao 연결 릴레이 URL, 연결 토큰 또는 세션 토큰 |
+| Channel | 들어온 메시지를 어느 하네스/워크스페이스/role 구성으로 실행할지 정하는 논리 대화 단위 | Kakao 수신 channelId 필터, Kakao 사용자 ID 필터 |
+
 - 에이전트 플랫폼을 `KakaoTalk`으로 선택한다.
-- `Kakao 릴레이 URL`은 `OPENCLAW_TALKCHANNEL_RELAY_URL` 또는 `KAKAO_TALKCHANNEL_RELAY_URL` 환경 변수가 있으면 그 값을 기본값으로 쓴다. 값이 없으면 공유 릴레이 `https://k.tess.dev/`를 기본값으로 쓴다.
-- `Kakao 릴레이 토큰` 또는 `Kakao 세션 토큰`은 선택값이다.
+- `Kakao 연결 릴레이 URL`은 워커가 SSE를 붙을 릴레이 주소다. `OPENCLAW_TALKCHANNEL_RELAY_URL` 또는 `KAKAO_TALKCHANNEL_RELAY_URL` 환경 변수가 있으면 그 값을 기본값으로 쓴다. 값이 없으면 공유 릴레이 `https://k.tess.dev/`를 기본값으로 쓴다.
+- `Kakao 연결 토큰` 또는 `Kakao 세션 토큰`은 선택값이다.
 - 토큰을 비워두면 워커 시작 시 릴레이 세션을 만들고 `/pair <code>` 형태의 페어링 코드를 상태에 표시한다.
-- 채널의 `Kakao 릴레이 채널 ID`는 기본적으로 `*`를 쓰면 된다. 특정 릴레이 channelId만 받으려면 그 값을 넣는다.
-- `Kakao 사용자 ID`를 넣으면 해당 paired user만 해당 채널로 라우팅한다.
+- 채널의 `Kakao 수신 channelId 필터`는 기본적으로 `*`를 쓰면 된다. 특정 릴레이/OpenBuilder channelId만 이 hkclaw-lite 채널로 보내려면 그 값을 넣는다.
+- `Kakao 사용자 ID 필터`를 넣으면 해당 paired user만 해당 채널로 라우팅한다.
+- 그래서 hkclaw-lite의 **Channel은 역할이 있다.** Kakao 연결 자체를 여는 것은 Agent/worker지만, 어떤 workspace, single/tribunal 모드, owner/reviewer/arbiter role 세션으로 실행할지는 Channel이 결정한다.
 
 ### 배포 단위
 
 - **릴레이 서버/엔드포인트는 hkclaw-lite 인스턴스당 하나면 된다.** Admin HTTP 서버가 `/kakao-talkchannel/webhook`, `/v1/events`, `/openclaw/reply`를 같이 제공한다.
-- **`Kakao 릴레이 채널 ID`는 Kubernetes 배포 단위가 아니라 라우팅 필터다.** 보통은 `*`로 두고, 특정 OpenBuilder/릴레이 channelId만 받을 때만 값을 좁힌다.
+- **`Kakao 수신 channelId 필터`는 Kubernetes 배포 단위가 아니라 라우팅 필터다.** 보통은 `*`로 두고, 특정 OpenBuilder/릴레이 channelId만 받을 때만 값을 좁힌다.
 - **worker도 보통 하나면 충분하다.** `kakao serve` 하나가 설정된 모든 KakaoTalk 에이전트를 읽고 에이전트별 SSE 세션을 만든 뒤, 들어온 메시지를 `kakaoChannelId`, `kakaoUserId`, owner agent 기준으로 채널에 라우팅한다.
 - 채널마다 Pod/Deployment를 하나씩 만들 필요는 없다. 같은 session/channel을 여러 worker가 동시에 처리하면 중복 응답이나 pairing token 혼선이 생길 수 있다.
 - 여러 worker가 필요한 경우는 트래픽/장애 격리, 서로 다른 Kakao 계정/토큰을 완전히 분리해야 하는 운영 요구가 있을 때다. 이 경우에도 보통 “채널별”보다 “에이전트/계정별”로 분리하고 `kakao serve --agent <agent-name>`처럼 담당 범위를 명확히 나눈다.
@@ -186,7 +195,7 @@ kakao serve
   ↓
 SSE: <relay>/v1/events 수신
   ↓
-채널 매칭(kakaoChannelId, kakaoUserId, owner agent)
+채널 매칭(owner agent, kakaoChannelId 필터, kakaoUserId 필터)
   ↓
 executeChannelTurn
   ↓
@@ -218,7 +227,7 @@ env:
 https://hkclawtest.idc.hkyo.kr/kakao-talkchannel/webhook
 ```
 
-토큰을 비워 둔 Kakao 에이전트는 워커 시작 시 내장 릴레이에 session을 만들고 pairing code를 상태에 표시한다. 사용자가 카카오톡에서 `/pair <code>`를 입력하면 해당 대화가 session과 연결되고 이후 메시지는 `channel + role` 하네스로 라우팅된다. 외부 릴레이를 계속 쓰고 싶으면 에이전트의 `Kakao 릴레이 URL`을 별도 릴레이 주소로 직접 지정하면 된다.
+토큰을 비워 둔 Kakao 에이전트는 워커 시작 시 내장 릴레이에 session을 만들고 pairing code를 상태에 표시한다. 사용자가 카카오톡에서 `/pair <code>`를 입력하면 해당 대화가 session과 연결되고 이후 메시지는 `channel + role` 하네스로 라우팅된다. 외부 릴레이를 계속 쓰고 싶으면 에이전트의 `Kakao 연결 릴레이 URL`을 별도 릴레이 주소로 직접 지정하면 된다.
 
 ## 채널, 에이전트, 하네스 관리 모델
 

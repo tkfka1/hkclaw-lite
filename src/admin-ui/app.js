@@ -2230,7 +2230,7 @@ function renderAgentDetailPanel(agent, context) {
   }
   if (context.platform === 'kakao') {
     rows.push(
-      { label: '릴레이', value: context.kakaoRuntime?.relayUrl || agent.kakaoRelayUrl || getDefaultKakaoRelayUrl() },
+      { label: '연결 릴레이', value: context.kakaoRuntime?.relayUrl || agent.kakaoRelayUrl || getDefaultKakaoRelayUrl() },
       context.kakaoRuntime?.pairingCode
         ? { label: '페어링', value: `/pair ${context.kakaoRuntime.pairingCode}` }
         : null,
@@ -2995,14 +2995,14 @@ function renderChannelModal() {
                 : isKakao
                   ? `
                     <div class="field ${fieldErrorClass('channel', 'kakaoChannelId')}">
-                      <label for="channel-kakao-channel">${renderRequiredLabel('Kakao 릴레이 채널 ID')}</label>
-                      <input id="channel-kakao-channel" name="kakaoChannelId" value="${escapeAttr(current.kakaoChannelId || '*')}" placeholder="* 또는 relay channelId" />
-                      <div class="field-hint">기본 릴레이/페어링 방식은 * 로 두면 됩니다.</div>
+                      <label for="channel-kakao-channel">${renderRequiredLabel('Kakao 수신 channelId 필터')}</label>
+                      <input id="channel-kakao-channel" name="kakaoChannelId" value="${escapeAttr(current.kakaoChannelId || '*')}" placeholder="* = 모든 Kakao channelId 허용" />
+                      <div class="field-hint">Kakao 연결은 Agent가 열고, 이 값은 들어온 메시지를 이 hkclaw-lite 채널로 보낼지 고르는 필터입니다. 단일 Kakao 채널이면 * 로 두세요.</div>
                       ${renderFormError('channel', 'kakaoChannelId')}
                     </div>
                     <div class="field">
-                      <label for="channel-kakao-user">Kakao 사용자 ID</label>
-                      <input id="channel-kakao-user" name="kakaoUserId" value="${escapeAttr(current.kakaoUserId)}" placeholder="선택: 특정 paired user만 허용" />
+                      <label for="channel-kakao-user">Kakao 사용자 ID 필터</label>
+                      <input id="channel-kakao-user" name="kakaoUserId" value="${escapeAttr(current.kakaoUserId)}" placeholder="선택: 특정 paired user만 이 채널로 라우팅" />
                     </div>
                   `
                 : `
@@ -3387,17 +3387,17 @@ function renderAgentWizardRuntimeStep(draft) {
     platform === 'kakao'
       ? `
         <div class="field">
-          <label for="wizard-agent-kakao-relay">Kakao 릴레이 URL</label>
+          <label for="wizard-agent-kakao-relay">Kakao 연결 릴레이 URL</label>
           <input
             id="wizard-agent-kakao-relay"
             name="kakaoRelayUrl"
             value="${escapeAttr(draft.kakaoRelayUrl || getDefaultKakaoRelayUrl())}"
             placeholder="${escapeAttr(getDefaultKakaoRelayUrl())}"
           />
-          <div class="field-hint">자체 릴레이를 운영하지 않으면 기본값을 사용합니다.</div>
+          <div class="field-hint">이 Agent/worker가 SSE를 붙을 Kakao 릴레이 주소입니다. hkclaw-lite 내장 릴레이를 쓰면 배포 환경 기본값을 사용합니다.</div>
         </div>
         <div class="field field-full ${fieldErrorClass('agentWizard', tokenFieldName)}">
-          <label for="wizard-agent-platform-token">Kakao 릴레이/세션 토큰</label>
+          <label for="wizard-agent-platform-token">Kakao 연결 토큰</label>
           <input
             id="wizard-agent-platform-token"
             name="kakaoRelayToken"
@@ -3721,7 +3721,7 @@ function collectChannelDraftErrors(draft = state.channelDraft || {}) {
     }
   } else if (platform === 'kakao') {
     if (!optionalDraftText(draft.kakaoChannelId)) {
-      errors.kakaoChannelId = 'Kakao 릴레이 채널 ID를 입력하세요. 전체 허용은 * 를 사용하세요.';
+      errors.kakaoChannelId = 'Kakao 수신 channelId 필터를 입력하세요. 전체 허용은 * 를 사용하세요.';
     }
   } else if (!optionalDraftText(draft.discordChannelId)) {
     errors.discordChannelId = '디스코드 채널 ID를 입력하세요.';
@@ -5376,16 +5376,16 @@ function localizeFieldName(key) {
     agent: '에이전트',
     discordToken: 'Discord 토큰',
     telegramBotToken: 'Telegram 봇 토큰',
-    kakaoRelayUrl: 'Kakao 릴레이 URL',
-    kakaoRelayToken: 'Kakao 릴레이 토큰',
+    kakaoRelayUrl: 'Kakao 연결 릴레이 URL',
+    kakaoRelayToken: 'Kakao 연결 토큰',
     kakaoSessionToken: 'Kakao 세션 토큰',
     model: '모델',
     command: '명령어',
     discordChannelId: '디스코드 채널 ID',
     telegramChatId: 'Telegram 채팅 ID',
     telegramThreadId: 'Telegram 스레드 ID',
-    kakaoChannelId: 'Kakao 릴레이 채널 ID',
-    kakaoUserId: 'Kakao 사용자 ID',
+    kakaoChannelId: 'Kakao 수신 channelId 필터',
+    kakaoUserId: 'Kakao 사용자 ID 필터',
     workspace: '워크스페이스',
     ownerWorkspace: 'owner 워크스페이스',
     reviewerWorkspace: 'reviewer 워크스페이스',
@@ -5468,7 +5468,7 @@ function localizeErrorMessage(message) {
     return 'Telegram 채팅 ID를 입력하세요.';
   }
   if (text === 'kakaoChannelId is required.') {
-    return 'Kakao 릴레이 채널 ID를 입력하세요.';
+    return 'Kakao 수신 channelId 필터를 입력하세요.';
   }
   if (text === 'Reviewer must be different from the owner agent.') {
     return 'reviewer 는 owner 와 달라야 합니다.';
