@@ -26,6 +26,10 @@ import {
   writeTelegramAgentServiceStatus,
 } from '../src/telegram-runtime-state.js';
 import {
+  buildKakaoServiceSnapshot,
+  readKakaoAgentServiceStatus,
+} from '../src/kakao-runtime-state.js';
+import {
   recordRuntimeRoleSession,
   recordRuntimeUsageEvent,
   setManagedServiceEnvSnapshot,
@@ -60,6 +64,12 @@ const fakeTelegramServicePath = path.join(
   'test',
   'fixtures',
   'fake-telegram-service.mjs',
+);
+const fakeKakaoServicePath = path.join(
+  repoRoot,
+  'test',
+  'fixtures',
+  'fake-kakao-service.mjs',
 );
 
 function createProject() {
@@ -1430,6 +1440,78 @@ test('admin server can start, restart, and stop Telegram service', async () => {
       delete process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY;
     } else {
       process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
+test('admin server can start, restart, and stop Kakao service', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = fakeKakaoServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'kakao',
+    kakaoRelayUrl: 'https://relay.example/',
+  });
+  saveConfig(projectRoot, config);
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const startResponse = await requestJson(`${url}/api/agents/worker/start`, {
+        method: 'POST',
+      });
+      assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
+      assert.equal(startResponse.payload.result.action, 'start');
+      assert.equal(startResponse.payload.result.agentName, 'worker');
+      assert.equal(startResponse.payload.result.platform, 'kakao');
+
+      const running = await waitFor(() => {
+        const snapshot = buildKakaoServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(running?.running), true);
+      assert.equal(Number.isInteger(running?.agentServices?.worker?.pid), true);
+
+      const restartResponse = await requestJson(`${url}/api/agents/worker/restart`, {
+        method: 'POST',
+      });
+      assert.equal(restartResponse.response.status, 200, JSON.stringify(restartResponse.payload));
+      assert.equal(restartResponse.payload.result.action, 'restart');
+      assert.equal(restartResponse.payload.result.agentName, 'worker');
+      assert.equal(restartResponse.payload.result.platform, 'kakao');
+
+      const restarted = await waitFor(() => {
+        const snapshot = buildKakaoServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(restarted?.running), true);
+      assert.equal(Number.isInteger(restarted?.agentServices?.worker?.pid), true);
+
+      const stopResponse = await requestJson(`${url}/api/agents/worker/stop`, {
+        method: 'POST',
+      });
+      assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
+      assert.equal(stopResponse.payload.result.action, 'stop');
+      assert.equal(stopResponse.payload.result.agentName, 'worker');
+      assert.equal(stopResponse.payload.result.platform, 'kakao');
+
+      const stopped = await waitFor(() => {
+        const snapshot = buildKakaoServiceSnapshot(projectRoot);
+        const worker = snapshot.agentServices?.worker;
+        return worker && !worker.running && !worker.pidAlive ? snapshot : null;
+      });
+      assert.equal(stopped?.agentServices?.worker?.running, false);
+      assert.equal(readKakaoAgentServiceStatus(projectRoot, 'worker')?.desiredRunning, false);
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = previousEntry;
     }
   }
 });

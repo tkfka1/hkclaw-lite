@@ -64,6 +64,16 @@ import {
   writeTelegramAgentServiceStatus,
   writeTelegramServiceStatus,
 } from './telegram-runtime-state.js';
+import {
+  buildKakaoAgentServiceSnapshot,
+  buildKakaoServiceSnapshot,
+  deleteKakaoAgentServiceArtifacts,
+  enqueueKakaoServiceCommand,
+  readKakaoAgentServiceStatus,
+  readKakaoServiceStatus,
+  writeKakaoAgentServiceStatus,
+  writeKakaoServiceStatus,
+} from './kakao-runtime-state.js';
 import { listAgentModels } from './model-catalog.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import { assert, parseInteger, toErrorMessage } from './utils.js';
@@ -95,6 +105,9 @@ const DISCORD_SERVICE_ENTRY_ENV = 'HKCLAW_LITE_DISCORD_SERVICE_ENTRY';
 const TELEGRAM_SERVICE_START_TIMEOUT_MS = 15_000;
 const TELEGRAM_SERVICE_STOP_TIMEOUT_MS = 8_000;
 const TELEGRAM_SERVICE_ENTRY_ENV = 'HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY';
+const KAKAO_SERVICE_START_TIMEOUT_MS = 15_000;
+const KAKAO_SERVICE_STOP_TIMEOUT_MS = 8_000;
+const KAKAO_SERVICE_ENTRY_ENV = 'HKCLAW_LITE_KAKAO_SERVICE_ENTRY';
 
 export async function startAdminServer(
   projectRoot,
@@ -353,6 +366,38 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     return;
   }
 
+  if (request.method === 'POST' && pathname === '/api/kakao-service/reload') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await reloadAllKakaoServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/kakao-service/start') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await startAllKakaoServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/kakao-service/restart') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await restartAllKakaoServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/kakao-service/stop') {
+    writeJson(response, 200, {
+      ok: true,
+      result: await stopAllKakaoServiceProcesses(projectRoot),
+    });
+    return;
+  }
+
   if (
     request.method === 'POST' &&
     pathname.startsWith('/api/agents/') &&
@@ -365,6 +410,8 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
       result:
         platform === 'telegram'
           ? await startTelegramServiceProcess(projectRoot, name)
+          : platform === 'kakao'
+            ? await startKakaoServiceProcess(projectRoot, name)
           : await startDiscordServiceProcess(projectRoot, name),
     });
     return;
@@ -382,6 +429,8 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
       result:
         platform === 'telegram'
           ? await restartTelegramServiceProcess(projectRoot, name)
+          : platform === 'kakao'
+            ? await restartKakaoServiceProcess(projectRoot, name)
           : await restartDiscordServiceProcess(projectRoot, name),
     });
     return;
@@ -399,6 +448,8 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
       result:
         platform === 'telegram'
           ? await stopTelegramServiceProcess(projectRoot, name)
+          : platform === 'kakao'
+            ? await stopKakaoServiceProcess(projectRoot, name)
           : await stopDiscordServiceProcess(projectRoot, name),
     });
     return;
@@ -419,6 +470,11 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
               action: 'reconnect-agent',
               agentName: name,
             })
+          : platform === 'kakao'
+            ? await queueKakaoServiceAction(projectRoot, {
+                action: 'reconnect-agent',
+                agentName: name,
+              })
           : await queueDiscordServiceAction(projectRoot, {
               action: 'reconnect-agent',
               agentName: name,
@@ -664,6 +720,28 @@ async function queueTelegramServiceAction(projectRoot, input = {}) {
   };
 }
 
+async function queueKakaoServiceAction(projectRoot, input = {}) {
+  const config = loadConfig(projectRoot);
+  const agentName = input?.agentName ? String(input.agentName).trim() : null;
+  assert(agentName, 'Agent name is required.');
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+
+  const service = buildKakaoAgentServiceSnapshot(projectRoot, agentName);
+  assert(service.running, `에이전트 "${agentName}" Kakao 프로세스가 실행 중이 아닙니다.`);
+
+  const command = enqueueKakaoServiceCommand(projectRoot, {
+    action: input?.action,
+    agentName,
+  });
+
+  return {
+    queued: true,
+    action: command.action,
+    agentName: command.agentName,
+    requestedAt: command.requestedAt,
+  };
+}
+
 function getAgentMessagingPlatform(projectRoot, agentName) {
   const config = loadConfig(projectRoot);
   const agent = config.agents?.[agentName];
@@ -676,11 +754,29 @@ async function restoreManagedServiceProcesses(projectRoot) {
   const tasks = [];
   const legacyDiscordStatus = readDiscordServiceStatus(projectRoot);
   const legacyTelegramStatus = readTelegramServiceStatus(projectRoot);
+  const legacyKakaoStatus = readKakaoServiceStatus(projectRoot);
   const legacyDiscordSnapshot = buildDiscordServiceSnapshot(projectRoot, legacyDiscordStatus);
   const legacyTelegramSnapshot = buildTelegramServiceSnapshot(projectRoot, legacyTelegramStatus);
+  const legacyKakaoSnapshot = buildKakaoServiceSnapshot(projectRoot, legacyKakaoStatus);
 
   for (const [agentName, agent] of Object.entries(config.agents || {})) {
     const platform = String(agent?.platform || 'discord').trim();
+    if (platform === 'kakao') {
+      const rawStatus = readKakaoAgentServiceStatus(projectRoot, agentName);
+      const snapshot = buildKakaoAgentServiceSnapshot(projectRoot, agentName, rawStatus);
+      if (
+        shouldRestoreKakaoAgentService(
+          agentName,
+          rawStatus,
+          legacyKakaoStatus,
+          legacyKakaoSnapshot,
+        ) &&
+        !snapshot.pidAlive
+      ) {
+        tasks.push(restoreManagedServiceProcess(projectRoot, agentName, 'kakao'));
+      }
+      continue;
+    }
     if (platform === 'telegram') {
       const rawStatus = readTelegramAgentServiceStatus(projectRoot, agentName);
       const snapshot = buildTelegramAgentServiceSnapshot(projectRoot, agentName, rawStatus);
@@ -742,6 +838,16 @@ function shouldRestoreTelegramAgentService(agentName, agentStatus, legacyStatus,
   return shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapshot);
 }
 
+function shouldRestoreKakaoAgentService(agentName, agentStatus, legacyStatus, legacySnapshot) {
+  if (agentStatus?.desiredRunning ?? agentStatus?.running) {
+    return true;
+  }
+  if (agentStatus) {
+    return false;
+  }
+  return shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapshot);
+}
+
 function shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapshot) {
   if (!(legacyStatus?.desiredRunning ?? legacyStatus?.running)) {
     return false;
@@ -760,6 +866,11 @@ async function restoreManagedServiceProcess(projectRoot, agentName, platform) {
   try {
     if (platform === 'telegram') {
       return await startTelegramServiceProcess(projectRoot, agentName, {
+        envSource: 'runtime-db',
+      });
+    }
+    if (platform === 'kakao') {
+      return await startKakaoServiceProcess(projectRoot, agentName, {
         envSource: 'runtime-db',
       });
     }
@@ -797,14 +908,27 @@ async function deleteAgentAndRuntimeByName(projectRoot, name) {
     // Ignore Telegram stop failures during delete cleanup.
   }
 
+  try {
+    await stopKakaoServiceProcess(projectRoot, name, {
+      allowStopped: true,
+    });
+  } catch {
+    // Ignore Kakao stop failures during delete cleanup.
+  }
+
   deleteDiscordAgentServiceArtifacts(projectRoot, name);
   deleteTelegramAgentServiceArtifacts(projectRoot, name);
+  deleteKakaoAgentServiceArtifacts(projectRoot, name);
   await deleteManagedServiceEnvSnapshot(projectRoot, {
     platform: 'discord',
     agentName: name,
   });
   await deleteManagedServiceEnvSnapshot(projectRoot, {
     platform: 'telegram',
+    agentName: name,
+  });
+  await deleteManagedServiceEnvSnapshot(projectRoot, {
+    platform: 'kakao',
     agentName: name,
   });
 
@@ -1191,6 +1315,199 @@ async function reloadAllTelegramServiceProcesses(projectRoot) {
   };
 }
 
+async function startKakaoServiceProcess(projectRoot, agentName, options = {}) {
+  const config = loadConfig(projectRoot);
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+  assert(
+    (config.agents[agentName]?.platform || 'discord') === 'kakao',
+    `Agent "${agentName}" is not configured for Kakao.`,
+  );
+
+  setKakaoAgentDesiredRunning(projectRoot, agentName, true);
+  const current = buildKakaoAgentServiceSnapshot(projectRoot, agentName);
+  assert(!current.pidAlive, 'Kakao 서비스가 이미 실행 중입니다.');
+  if (current.stale || current.state === 'stopped') {
+    normalizeKakaoServiceStoppedState(projectRoot, agentName, {
+      desiredRunning: true,
+    });
+  }
+
+  const args = buildKakaoServiceStartArgs(projectRoot, { agentName });
+  const childEnv = await resolveManagedServiceRuntimeEnv(projectRoot, {
+    platform: 'kakao',
+    agentName,
+    envSource: options.envSource,
+  });
+  const child = spawn(process.execPath, args, {
+    cwd: projectRoot,
+    env: childEnv,
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+
+  const service = await waitForKakaoServiceSnapshot(
+    projectRoot,
+    agentName,
+    (snapshot) => snapshot.running || snapshot.starting || Boolean(snapshot.lastError),
+    KAKAO_SERVICE_START_TIMEOUT_MS,
+  );
+  assert(
+    service.running || service.starting,
+    service.lastError || 'Kakao 서비스 시작을 확인하지 못했습니다.',
+  );
+
+  return {
+    action: 'start',
+    agentName,
+    platform: 'kakao',
+    running: service.running,
+    starting: service.starting,
+    pid: service.pid,
+    startedAt: service.startedAt,
+  };
+}
+
+async function restartKakaoServiceProcess(projectRoot, agentName) {
+  const previous = await stopKakaoServiceProcess(projectRoot, agentName, {
+    allowStopped: true,
+    disableDesiredRunning: false,
+  });
+  const next = await startKakaoServiceProcess(projectRoot, agentName);
+  return {
+    action: 'restart',
+    agentName,
+    platform: 'kakao',
+    previous,
+    current: next,
+  };
+}
+
+async function stopKakaoServiceProcess(
+  projectRoot,
+  agentName,
+  { allowStopped = false, disableDesiredRunning = true } = {},
+) {
+  const config = loadConfig(projectRoot);
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+  const service = buildKakaoAgentServiceSnapshot(projectRoot, agentName);
+  if (!service.pidAlive) {
+    if (service.stale || service.state === 'stopped') {
+      const normalized = normalizeKakaoServiceStoppedState(projectRoot, agentName, {
+        desiredRunning: disableDesiredRunning ? false : service.desiredRunning,
+      });
+      if (!allowStopped) {
+        assert(false, 'Kakao 서비스가 실행 중이 아닙니다.');
+      }
+      return {
+        action: 'stop',
+        agentName,
+        platform: 'kakao',
+        running: false,
+        pid: normalized.pid,
+        stoppedAt: normalized.stoppedAt,
+      };
+    }
+    assert(false, 'Kakao 서비스가 실행 중이 아닙니다.');
+  }
+
+  try {
+    process.kill(service.pid, 'SIGTERM');
+  } catch (error) {
+    if (error?.code !== 'ESRCH') {
+      throw error;
+    }
+  }
+
+  const stopped = await waitForKakaoServiceSnapshot(
+    projectRoot,
+    agentName,
+    (snapshot) => !snapshot.pidAlive && !snapshot.running,
+    KAKAO_SERVICE_STOP_TIMEOUT_MS,
+  );
+  const normalized = disableDesiredRunning
+    ? normalizeKakaoServiceStoppedState(projectRoot, agentName, {
+        desiredRunning: false,
+      })
+    : stopped.running
+      ? normalizeKakaoServiceStoppedState(projectRoot, agentName, {
+          desiredRunning: true,
+        })
+      : stopped;
+
+  return {
+    action: 'stop',
+    agentName,
+    platform: 'kakao',
+    running: false,
+    pid: normalized.pid,
+    stoppedAt: normalized.stoppedAt,
+  };
+}
+
+async function startAllKakaoServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredKakaoAgents(projectRoot);
+  assert(agentNames.length > 0, 'Kakao 플랫폼 에이전트가 없습니다.');
+  return {
+    action: 'start-all',
+    platform: 'kakao',
+    agents: await Promise.all(
+      agentNames.map((agentName) => startKakaoServiceProcess(projectRoot, agentName)),
+    ),
+  };
+}
+
+async function restartAllKakaoServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredKakaoAgents(projectRoot);
+  assert(agentNames.length > 0, 'Kakao 플랫폼 에이전트가 없습니다.');
+  return {
+    action: 'restart-all',
+    platform: 'kakao',
+    agents: await Promise.all(
+      agentNames.map((agentName) => restartKakaoServiceProcess(projectRoot, agentName)),
+    ),
+  };
+}
+
+async function stopAllKakaoServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredKakaoAgents(projectRoot);
+  if (agentNames.length === 0) {
+    return {
+      action: 'stop-all',
+      platform: 'kakao',
+      agents: [],
+    };
+  }
+  return {
+    action: 'stop-all',
+    platform: 'kakao',
+    agents: await Promise.all(
+      agentNames.map((agentName) =>
+        stopKakaoServiceProcess(projectRoot, agentName, {
+          allowStopped: true,
+        }),
+      ),
+    ),
+  };
+}
+
+async function reloadAllKakaoServiceProcesses(projectRoot) {
+  const agentNames = listConfiguredKakaoAgents(projectRoot);
+  assert(agentNames.length > 0, 'Kakao 플랫폼 에이전트가 없습니다.');
+  return {
+    action: 'reload-all',
+    platform: 'kakao',
+    agents: await Promise.all(
+      agentNames.map((agentName) =>
+        queueKakaoServiceAction(projectRoot, {
+          action: 'reload-config',
+          agentName,
+        }),
+      ),
+    ),
+  };
+}
+
 function normalizeDiscordServiceStoppedState(projectRoot, agentName = null, options = {}) {
   const rawStatus = agentName
     ? readDiscordAgentServiceStatus(projectRoot, agentName)
@@ -1247,6 +1564,34 @@ function normalizeTelegramServiceStoppedState(projectRoot, agentName = null, opt
   return buildTelegramServiceSnapshot(projectRoot, nextStatus);
 }
 
+function normalizeKakaoServiceStoppedState(projectRoot, agentName = null, options = {}) {
+  const rawStatus = agentName
+    ? readKakaoAgentServiceStatus(projectRoot, agentName)
+    : readKakaoServiceStatus(projectRoot);
+  if (!rawStatus) {
+    return agentName
+      ? buildKakaoAgentServiceSnapshot(projectRoot, agentName, null)
+      : buildKakaoServiceSnapshot(projectRoot, null);
+  }
+
+  const nextStatus = {
+    ...rawStatus,
+    running: false,
+    desiredRunning:
+      options.desiredRunning === undefined
+        ? Boolean(rawStatus.desiredRunning ?? rawStatus.running)
+        : Boolean(options.desiredRunning),
+    stoppedAt: new Date().toISOString(),
+    heartbeatAt: new Date().toISOString(),
+  };
+  if (agentName) {
+    writeKakaoAgentServiceStatus(projectRoot, agentName, nextStatus);
+    return buildKakaoAgentServiceSnapshot(projectRoot, agentName, nextStatus);
+  }
+  writeKakaoServiceStatus(projectRoot, nextStatus);
+  return buildKakaoServiceSnapshot(projectRoot, nextStatus);
+}
+
 function setDiscordAgentDesiredRunning(projectRoot, agentName, desiredRunning) {
   const rawStatus = readDiscordAgentServiceStatus(projectRoot, agentName);
   writeDiscordAgentServiceStatus(projectRoot, agentName, {
@@ -1281,6 +1626,23 @@ function setTelegramAgentDesiredRunning(projectRoot, agentName, desiredRunning) 
   });
 }
 
+function setKakaoAgentDesiredRunning(projectRoot, agentName, desiredRunning) {
+  const rawStatus = readKakaoAgentServiceStatus(projectRoot, agentName);
+  writeKakaoAgentServiceStatus(projectRoot, agentName, {
+    version: 1,
+    projectRoot,
+    agentName,
+    pid: rawStatus?.pid || null,
+    running: Boolean(rawStatus?.running),
+    desiredRunning: Boolean(desiredRunning),
+    startedAt: rawStatus?.startedAt || null,
+    stoppedAt: rawStatus?.stoppedAt || null,
+    heartbeatAt: rawStatus?.heartbeatAt || null,
+    lastError: rawStatus?.lastError || null,
+    agents: rawStatus?.agents || rawStatus?.accounts || {},
+  });
+}
+
 function buildDiscordServiceStartArgs(projectRoot, { agentName = null } = {}) {
   const customEntry = String(process.env[DISCORD_SERVICE_ENTRY_ENV] || '').trim();
   if (customEntry) {
@@ -1301,6 +1663,19 @@ function buildTelegramServiceStartArgs(projectRoot, { agentName = null } = {}) {
   }
 
   const args = [CLI_ENTRY_PATH, '--root', projectRoot, 'telegram', 'serve'];
+  if (agentName) {
+    args.push('--agent', agentName);
+  }
+  return args;
+}
+
+function buildKakaoServiceStartArgs(projectRoot, { agentName = null } = {}) {
+  const customEntry = String(process.env[KAKAO_SERVICE_ENTRY_ENV] || '').trim();
+  if (customEntry) {
+    return agentName ? [customEntry, projectRoot, agentName] : [customEntry, projectRoot];
+  }
+
+  const args = [CLI_ENTRY_PATH, '--root', projectRoot, 'kakao', 'serve'];
   if (agentName) {
     args.push('--agent', agentName);
   }
@@ -1333,6 +1708,19 @@ async function waitForTelegramServiceSnapshot(projectRoot, agentName, predicate,
   return snapshot;
 }
 
+async function waitForKakaoServiceSnapshot(projectRoot, agentName, predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot = buildKakaoAgentServiceSnapshot(projectRoot, agentName);
+  while (Date.now() < deadline) {
+    snapshot = buildKakaoAgentServiceSnapshot(projectRoot, agentName);
+    if (predicate(snapshot)) {
+      return snapshot;
+    }
+    await delay(200);
+  }
+  return snapshot;
+}
+
 function delay(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -1350,6 +1738,13 @@ function listConfiguredTelegramAgents(projectRoot) {
   const config = loadConfig(projectRoot);
   return Object.entries(config.agents || {})
     .filter(([, agent]) => String(agent?.telegramBotToken || '').trim())
+    .map(([agentName]) => agentName);
+}
+
+function listConfiguredKakaoAgents(projectRoot) {
+  const config = loadConfig(projectRoot);
+  return Object.entries(config.agents || {})
+    .filter(([, agent]) => (agent?.platform || 'discord') === 'kakao')
     .map(([agentName]) => agentName);
 }
 
@@ -2749,7 +3144,7 @@ async function resolveManagedServiceRuntimeEnv(
     const snapshot = await getManagedServiceEnvSnapshot(projectRoot, { platform, agentName });
     assert(
       snapshot,
-      `${platform === 'telegram' ? 'Telegram' : 'Discord'} 서비스 런타임 스냅샷이 없습니다. 현재 배포 환경으로 한 번 수동 실행해 DB 스냅샷을 저장하세요.`,
+      `${localizeServicePlatformLabel(platform)} 서비스 런타임 스냅샷이 없습니다. 현재 배포 환경으로 한 번 수동 실행해 DB 스냅샷을 저장하세요.`,
     );
     return snapshot;
   }
@@ -2759,6 +3154,16 @@ async function resolveManagedServiceRuntimeEnv(
     agentName,
     env: captureManagedServiceRuntimeEnv(process.env),
   });
+}
+
+function localizeServicePlatformLabel(platform) {
+  if (platform === 'telegram') {
+    return 'Telegram';
+  }
+  if (platform === 'kakao') {
+    return 'Kakao';
+  }
+  return 'Discord';
 }
 
 function captureManagedServiceRuntimeEnv(sourceEnv = process.env) {

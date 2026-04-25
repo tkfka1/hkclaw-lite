@@ -1,0 +1,117 @@
+name: Publish Kakao Relay Container
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/kakao-relay-container-publish.yml
+  workflow_dispatch:
+    inputs:
+      relay_ref:
+        description: Kakao relay Git ref to build
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: kakao-relay-container-publish-${{ github.event_name == 'workflow_dispatch' && inputs.relay_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RELAY_REPOSITORY: kakao-bart-lee/kakao-talkchannel-relay-openclaw
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/kakao-talkchannel-relay-openclaw
+  PACKAGE_NAME: kakao-talkchannel-relay-openclaw
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out workflow repository
+        uses: actions/checkout@v5
+
+      - name: Check out Kakao relay source
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.RELAY_REPOSITORY }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.relay_ref || 'main' }}
+          path: relay-src
+          fetch-depth: 1
+
+      - name: Resolve relay metadata
+        id: relay
+        working-directory: relay-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          relay_sha="$(git rev-parse --short=7 HEAD)"
+          relay_full_sha="$(git rev-parse HEAD)"
+          echo "sha=${relay_sha}" >> "$GITHUB_OUTPUT"
+          echo "full_sha=${relay_full_sha}" >> "$GITHUB_OUTPUT"
+          echo "source=https://github.com/${RELAY_REPOSITORY}/commit/${relay_full_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract container metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=sha-${{ steps.relay.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ steps.relay.outputs.source }}
+            org.opencontainers.image.revision=${{ steps.relay.outputs.full_sha }}
+
+      - name: Build and push Kakao relay image
+        uses: docker/build-push-action@v6
+        with:
+          context: relay-src
+          file: relay-src/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=kakao-relay
+          cache-to: type=gha,mode=max,scope=kakao-relay
+
+      - name: Make GHCR package public
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$OWNER_TYPE" = "Organization" ]; then
+            package_endpoint="/orgs/${OWNER}/packages/container/${PACKAGE_NAME}"
+          else
+            package_endpoint="/user/packages/container/${PACKAGE_NAME}"
+          fi
+
+          visibility="$(gh api "${package_endpoint}" --jq '.visibility')"
+          if [ "$visibility" != "public" ]; then
+            gh api \
+              --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "${package_endpoint}/visibility" \
+              -f visibility='public'
+          fi

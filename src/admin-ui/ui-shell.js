@@ -1,4 +1,4 @@
-import { renderIcon } from './icons.js?v=20260425-06';
+import { renderIcon } from './icons.js?v=20260425-07';
 
 export const DESKTOP_NAV_MIN_WIDTH = 1081;
 
@@ -73,8 +73,10 @@ export function getDashboardStats({
   const channels = Array.isArray(data?.channels) ? data.channels : [];
   const discordService = data?.discord?.service || {};
   const telegramService = data?.telegram?.service || {};
+  const kakaoService = data?.kakao?.service || {};
   const discordRuntimeAgents = discordService.agents || discordService.bots || {};
   const telegramRuntimeAgents = telegramService.agents || telegramService.bots || {};
+  const kakaoRuntimeAgents = kakaoService.agents || kakaoService.accounts || {};
   const agentTypes = (data?.choices?.agentTypes || []).filter(
     (entry) => !['command', 'local-llm'].includes(entry.value),
   );
@@ -82,22 +84,35 @@ export function getDashboardStats({
 
   const configuredAgentCount = agents.filter((agent) => {
     const platform = agent.platform || 'discord';
-    return platform === 'telegram'
-      ? Boolean(agent.telegramBotTokenConfigured)
-      : Boolean(agent.discordTokenConfigured);
+    if (platform === 'telegram') {
+      return Boolean(agent.telegramBotTokenConfigured);
+    }
+    if (platform === 'kakao') {
+      return Boolean(agent.kakaoRelayConfigured);
+    }
+    return Boolean(agent.discordTokenConfigured);
   }).length;
 
   const activeWorkerCount = agents.filter((agent) => {
     const platform = agent.platform || 'discord';
-    const service = platform === 'telegram' ? agent.telegramService : agent.discordService;
+    const service =
+      platform === 'telegram'
+        ? agent.telegramService
+        : platform === 'kakao'
+          ? agent.kakaoService
+          : agent.discordService;
     return Boolean(service?.running || service?.starting || service?.stale);
   }).length;
 
   const connectedAgentCount = agents.filter((agent) => {
     const platform = agent.platform || 'discord';
-    return platform === 'telegram'
-      ? Boolean(telegramRuntimeAgents[agent.name]?.connected)
-      : Boolean(discordRuntimeAgents[agent.name]?.connected);
+    if (platform === 'telegram') {
+      return Boolean(telegramRuntimeAgents[agent.name]?.connected);
+    }
+    if (platform === 'kakao') {
+      return Boolean(kakaoRuntimeAgents[agent.name]?.connected);
+    }
+    return Boolean(discordRuntimeAgents[agent.name]?.connected);
   }).length;
 
   const availableAiCount = agentTypes.length + localLlmConnections.length;
@@ -110,6 +125,7 @@ export function getDashboardStats({
   ).length;
   const discordChannelCount = channels.filter((channel) => (channel.platform || 'discord') === 'discord').length;
   const telegramChannelCount = channels.filter((channel) => (channel.platform || 'discord') === 'telegram').length;
+  const kakaoChannelCount = channels.filter((channel) => (channel.platform || 'discord') === 'kakao').length;
   const claudeSessionCount = channels.reduce((total, channel) => {
     const sessions = Array.isArray(channel.runtime?.sessions) ? channel.runtime.sessions : [];
     return total + sessions.filter((session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId).length;
@@ -120,6 +136,7 @@ export function getDashboardStats({
     channels,
     discordService,
     telegramService,
+    kakaoService,
     configuredAgentCount,
     activeWorkerCount,
     connectedAgentCount,
@@ -128,6 +145,7 @@ export function getDashboardStats({
     tribunalChannelCount,
     discordChannelCount,
     telegramChannelCount,
+    kakaoChannelCount,
     claudeSessionCount,
     agentTypeSummary: summarizeCounts(
       agents,

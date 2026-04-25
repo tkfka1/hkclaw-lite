@@ -1386,7 +1386,10 @@ function ensureRoleSessionColumn(db, columnName, columnSql) {
 
 function normalizeManagedServicePlatform(platform) {
   const normalized = String(platform || '').trim().toLowerCase();
-  assert(normalized === 'discord' || normalized === 'telegram', 'platform must be discord or telegram.');
+  assert(
+    normalized === 'discord' || normalized === 'telegram' || normalized === 'kakao',
+    'platform must be discord, telegram, or kakao.',
+  );
   return normalized;
 }
 

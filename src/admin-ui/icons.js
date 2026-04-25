@@ -8,6 +8,7 @@ const ICONS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19 12h2"/><path d="M3 12h2"/><path d="M12 3v2"/><path d="M12 19v2"/><path d="m17 7 1.5-1.5"/><path d="M5.5 18.5 7 17"/><path d="m17 17 1.5 1.5"/><path d="M5.5 5.5 7 7"/>',
   discord: '<path d="M7.5 8.5c3-1.2 6-1.2 9 0"/><path d="M6 16c1.2 1.1 3.5 2 6 2s4.8-.9 6-2"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M6.5 9.5 5 14"/><path d="M17.5 9.5 19 14"/>',
   telegram: '<path d="M21 4 3 11l6 2 2 6 10-15Z"/><path d="m9 13 8-6"/>',
+  kakao: '<path d="M12 5c5 0 9 2.8 9 6.3s-4 6.3-9 6.3c-.7 0-1.4-.1-2-.2L6.5 20l.9-3.4C4.7 15.5 3 13.6 3 11.3 3 7.8 7 5 12 5Z"/><path d="M8.5 11.5h.01"/><path d="M12 11.5h.01"/><path d="M15.5 11.5h.01"/>',
   plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
   edit: '<path d="m4 20 4.5-1 9-9a2.1 2.1 0 0 0-3-3l-9 9L4 20Z"/><path d="m13.5 6.5 4 4"/>',
   play: '<path d="m8 6 10 6-10 6V6Z"/>',

@@ -65,6 +65,11 @@ export const MESSAGING_PLATFORM_CHOICES = [
     label: 'Telegram',
     description: 'Use a Telegram bot token and Telegram chat ID',
   },
+  {
+    value: 'kakao',
+    label: 'KakaoTalk',
+    description: 'Use a Kakao TalkChannel relay session or token',
+  },
 ];
 export const CODEX_SANDBOX_CHOICES = [
   {

@@ -36,6 +36,7 @@ import {
   MESSAGING_PLATFORM_CHOICES,
 } from './constants.js';
 import { withPrompter } from './interactive.js';
+import { getDefaultKakaoRelayUrl } from './kakao-service.js';
 import { inspectAgentRuntime } from './runners.js';
 import {
   buildAgentDefinition,
@@ -152,6 +153,9 @@ export async function main(argv) {
         return;
       case 'telegram':
         await handleTelegramCommand(projectRoot, tail);
+        return;
+      case 'kakao':
+        await handleKakaoCommand(projectRoot, tail);
         return;
       case 'service':
         throw new Error(
@@ -792,6 +796,19 @@ async function handleTelegramCommand(projectRoot, argv) {
   });
 }
 
+async function handleKakaoCommand(projectRoot, argv) {
+  const [subcommand = 'serve', ...tail] = argv;
+  if (subcommand !== 'serve') {
+    throw new Error(`Unknown kakao subcommand "${subcommand}".`);
+  }
+
+  const { flags } = parseArgs(tail);
+  const { serveKakao } = await import('./kakao-service.js');
+  await serveKakao(projectRoot, {
+    agentName: getFlagValue(flags, 'agent'),
+  });
+}
+
 async function handleBackupCommand(rootOverride, argv) {
   const [subcommand, ...tail] = argv;
   const { positionals, flags } = parseArgs(tail);
@@ -1357,6 +1374,25 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
     definition.telegramBotToken = await prompter.askText('Telegram bot token', {
       defaultValue: initial.telegramBotToken,
     });
+  } else if (platform === 'kakao') {
+    definition.kakaoRelayUrl = await prompter.askText('Kakao relay URL', {
+      defaultValue: initial.kakaoRelayUrl || getDefaultKakaoRelayUrl(),
+      allowEmpty: true,
+    });
+    definition.kakaoRelayToken = await prompter.askText(
+      'Kakao relay token (optional; empty creates a pairing session)',
+      {
+        defaultValue: initial.kakaoRelayToken,
+        allowEmpty: true,
+      },
+    );
+    definition.kakaoSessionToken = await prompter.askText(
+      'Kakao session token (optional)',
+      {
+        defaultValue: initial.kakaoSessionToken,
+        allowEmpty: true,
+      },
+    );
   } else {
     definition.discordToken = await prompter.askText('Discord bot token', {
       defaultValue: initial.discordToken,
@@ -1535,12 +1571,22 @@ async function promptForChannelDefinition(prompter, config, options) {
   let guildId = '';
   let telegramChatId = '';
   let telegramThreadId = '';
+  let kakaoChannelId = '';
+  let kakaoUserId = '';
   if (platform === 'telegram') {
     telegramChatId = await prompter.askText('Telegram chat ID', {
       defaultValue: initial.telegramChatId,
     });
     telegramThreadId = await prompter.askText('Telegram thread ID (optional)', {
       defaultValue: initial.telegramThreadId,
+      allowEmpty: true,
+    });
+  } else if (platform === 'kakao') {
+    kakaoChannelId = await prompter.askText('Kakao relay channel ID (* for any paired channel)', {
+      defaultValue: initial.kakaoChannelId || '*',
+    });
+    kakaoUserId = await prompter.askText('Kakao user ID (optional; empty allows any paired user)', {
+      defaultValue: initial.kakaoUserId,
       allowEmpty: true,
     });
   } else {
@@ -1656,6 +1702,8 @@ async function promptForChannelDefinition(prompter, config, options) {
     guildId,
     telegramChatId,
     telegramThreadId,
+    kakaoChannelId,
+    kakaoUserId,
     workspace,
     ownerWorkspace,
     reviewerWorkspace,
@@ -1768,12 +1816,7 @@ function renderChannelStatus(config, channel) {
     `channel=${channel.name}`,
     `platform=${channel.platform || 'discord'}`,
     `mode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}`,
-    channel.platform === 'telegram'
-      ? `telegramChatId=${channel.telegramChatId}`
-      : `discordChannelId=${channel.discordChannelId}`,
-    channel.platform === 'telegram'
-      ? (channel.telegramThreadId ? `telegramThreadId=${channel.telegramThreadId}` : null)
-      : (channel.guildId ? `guildId=${channel.guildId}` : null),
+    ...renderChannelTargetStatusLines(channel),
     `workspace=${channel.workspace || channel.workdir}`,
     channel.ownerWorkspace ? `ownerWorkspace=${channel.ownerWorkspace}` : null,
     `agent=${channel.agent}`,
@@ -1787,6 +1830,25 @@ function renderChannelStatus(config, channel) {
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function renderChannelTargetStatusLines(channel) {
+  if (channel.platform === 'telegram') {
+    return [
+      `telegramChatId=${channel.telegramChatId}`,
+      channel.telegramThreadId ? `telegramThreadId=${channel.telegramThreadId}` : null,
+    ];
+  }
+  if (channel.platform === 'kakao') {
+    return [
+      `kakaoChannelId=${channel.kakaoChannelId || '*'}`,
+      channel.kakaoUserId ? `kakaoUserId=${channel.kakaoUserId}` : null,
+    ];
+  }
+  return [
+    `discordChannelId=${channel.discordChannelId}`,
+    channel.guildId ? `guildId=${channel.guildId}` : null,
+  ];
 }
 
 function buildChannelsByAgent(config) {
@@ -1825,14 +1887,25 @@ function printChannels(channels) {
     return;
   }
   for (const channel of channels) {
-    const target =
-      channel.platform === 'telegram'
-        ? channel.telegramChatId
-        : channel.discordChannelId;
+    const target = formatChannelListTarget(channel);
     console.log(
       `  ${channel.name}\t${channel.platform || 'discord'}:${target}\tmode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}\tagent=${channel.agent}\tworkspace=${channel.workspace || channel.workdir}`,
     );
   }
+}
+
+function formatChannelListTarget(channel) {
+  if (channel.platform === 'telegram') {
+    return channel.telegramThreadId
+      ? `${channel.telegramChatId}/${channel.telegramThreadId}`
+      : channel.telegramChatId;
+  }
+  if (channel.platform === 'kakao') {
+    return channel.kakaoUserId
+      ? `${channel.kakaoChannelId || '*'}/${channel.kakaoUserId}`
+      : channel.kakaoChannelId || '*';
+  }
+  return channel.discordChannelId;
 }
 
 function printDashboards(dashboards) {
@@ -1908,6 +1981,9 @@ function buildAgentPreset(name, flags) {
     dangerous: getFlagValue(flags, 'dangerous'),
     discordToken: getFlagValue(flags, 'discord-token'),
     telegramBotToken: getFlagValue(flags, 'telegram-bot-token'),
+    kakaoRelayUrl: getFlagValue(flags, 'kakao-relay-url'),
+    kakaoRelayToken: getFlagValue(flags, 'kakao-relay-token'),
+    kakaoSessionToken: getFlagValue(flags, 'kakao-session-token'),
     baseUrl: getFlagValue(flags, 'base-url'),
     command: getFlagValue(flags, 'command'),
   };
@@ -1931,6 +2007,8 @@ function buildChannelPreset(name, flags) {
     guildId: getFlagValue(flags, 'guild-id'),
     telegramChatId: getFlagValue(flags, 'telegram-chat-id'),
     telegramThreadId: getFlagValue(flags, 'telegram-thread-id'),
+    kakaoChannelId: getFlagValue(flags, 'kakao-channel-id'),
+    kakaoUserId: getFlagValue(flags, 'kakao-user-id'),
     workspace: getFlagValue(flags, 'workspace') || getFlagValue(flags, 'workdir'),
     ownerWorkspace: getFlagValue(flags, 'owner-workspace'),
     reviewerWorkspace: getFlagValue(flags, 'reviewer-workspace'),
@@ -1958,6 +2036,7 @@ Execution model:
   hkclaw-lite run ...       Execute one one-shot turn
   hkclaw-lite discord serve Start the long-running Discord worker
   hkclaw-lite telegram serve Start the long-running Telegram worker
+  hkclaw-lite kakao serve   Start the long-running Kakao TalkChannel worker
   Containers and Kubernetes only run whichever command you pass explicitly.
 
 Usage:
@@ -1965,6 +2044,7 @@ Usage:
   hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
   hkclaw-lite discord serve [--root DIR]
   hkclaw-lite telegram serve [--root DIR]
+  hkclaw-lite kakao serve [--root DIR]
   hkclaw-lite backup export <file> [--root DIR] [--no-watchers] [--no-logs]
   hkclaw-lite backup import <file> [--root DIR] [--force]
   hkclaw-lite migrate --from <project-root> [--root DIR] [--force]
@@ -2002,6 +2082,7 @@ Examples:
   hkclaw-lite admin --host 0.0.0.0 --port ${DEFAULT_ADMIN_PORT}
   hkclaw-lite discord serve
   hkclaw-lite telegram serve
+  hkclaw-lite kakao serve
   hkclaw-lite backup export ./backups/project.json
   hkclaw-lite backup import ./backups/project.json --root ./restored
   hkclaw-lite migrate --from ../old-project --root ./new-project

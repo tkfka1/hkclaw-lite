@@ -2,8 +2,8 @@ import {
   renderDetailList,
   renderMetricCard,
   renderShortcutCard,
-} from './ui-shell.js?v=20260425-06';
-import { renderIcon } from './icons.js?v=20260425-06';
+} from './ui-shell.js?v=20260425-07';
+import { renderIcon } from './icons.js?v=20260425-07';
 
 export function renderHomeView(ctx) {
   const { state, getDashboardStats, escapeHtml } = ctx;
@@ -31,6 +31,7 @@ export function renderAgentsView(ctx) {
   const stats = getDashboardStats();
   const discordService = state.data?.discord?.service || {};
   const telegramService = state.data?.telegram?.service || {};
+  const kakaoService = state.data?.kakao?.service || {};
   const filterOptions = [
     ['all', '전체'],
     ['running', '실행중'],
@@ -40,6 +41,7 @@ export function renderAgentsView(ctx) {
     ['missing-token', '토큰 없음'],
     ['discord', 'Discord'],
     ['telegram', 'Telegram'],
+    ['kakao', 'KakaoTalk'],
   ];
 
   return `
@@ -78,7 +80,7 @@ export function renderAgentsView(ctx) {
           <span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`워커 ${stats.activeWorkerCount}`)}</span>
         </div>
       </div>
-      ${renderAgentList(state.data.agents, discordService, telegramService)}
+      ${renderAgentList(state.data.agents, discordService, telegramService, kakaoService)}
     </section>
   `;
 }

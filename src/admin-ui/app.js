@@ -5,26 +5,27 @@ import {
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
   shouldUseDesktopSidebar,
-} from './ui-shell.js?v=20260425-06';
+} from './ui-shell.js?v=20260425-07';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
-} from './ui-views.js?v=20260425-06';
+} from './ui-views.js?v=20260425-07';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js?v=20260425-06';
+} from './polling.js?v=20260425-07';
 import {
   getClaudeRuntimeSourceBadge,
   getClaudeRuntimeSourceHintLines,
-} from './claude-runtime-ui.js?v=20260425-06';
-import { renderIcon } from './icons.js?v=20260425-06';
+} from './claude-runtime-ui.js?v=20260425-07';
+import { renderIcon } from './icons.js?v=20260425-07';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
+const FALLBACK_KAKAO_RELAY_URL = 'https://k.tess.dev/';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'ai', 'tokens', 'all']);
 let noticeTimer = null;
@@ -332,6 +333,11 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'reload-kakao-service') {
+    void reloadKakaoServiceConfig();
+    return;
+  }
+
   if (action === 'start-discord-service') {
     void startDiscordService();
     return;
@@ -339,6 +345,11 @@ function handleClick(event) {
 
   if (action === 'start-telegram-service') {
     void startTelegramService();
+    return;
+  }
+
+  if (action === 'start-kakao-service') {
+    void startKakaoService();
     return;
   }
 
@@ -352,6 +363,11 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'restart-kakao-service') {
+    void restartKakaoService();
+    return;
+  }
+
   if (action === 'stop-discord-service') {
     void stopDiscordService();
     return;
@@ -359,6 +375,11 @@ function handleClick(event) {
 
   if (action === 'stop-telegram-service') {
     void stopTelegramService();
+    return;
+  }
+
+  if (action === 'stop-kakao-service') {
+    void stopKakaoService();
     return;
   }
 
@@ -646,9 +667,19 @@ function handleInput(event) {
         if (state.channelDraft.platform === 'telegram') {
           state.channelDraft.discordChannelId = '';
           state.channelDraft.guildId = '';
+          state.channelDraft.kakaoChannelId = '';
+          state.channelDraft.kakaoUserId = '';
+        } else if (state.channelDraft.platform === 'kakao') {
+          state.channelDraft.discordChannelId = '';
+          state.channelDraft.guildId = '';
+          state.channelDraft.telegramChatId = '';
+          state.channelDraft.telegramThreadId = '';
+          state.channelDraft.kakaoChannelId = state.channelDraft.kakaoChannelId || '*';
         } else {
           state.channelDraft.telegramChatId = '';
           state.channelDraft.telegramThreadId = '';
+          state.channelDraft.kakaoChannelId = '';
+          state.channelDraft.kakaoUserId = '';
         }
         render();
         return;
@@ -684,8 +715,19 @@ function handleInput(event) {
   if (target.name === 'platform') {
     if (state.agentWizard.draft.platform === 'telegram') {
       state.agentWizard.draft.discordToken = '';
+      state.agentWizard.draft.kakaoRelayUrl = '';
+      state.agentWizard.draft.kakaoRelayToken = '';
+      state.agentWizard.draft.kakaoSessionToken = '';
+    } else if (state.agentWizard.draft.platform === 'kakao') {
+      state.agentWizard.draft.discordToken = '';
+      state.agentWizard.draft.telegramBotToken = '';
+      state.agentWizard.draft.kakaoRelayUrl =
+        state.agentWizard.draft.kakaoRelayUrl || getDefaultKakaoRelayUrl();
     } else {
       state.agentWizard.draft.telegramBotToken = '';
+      state.agentWizard.draft.kakaoRelayUrl = '';
+      state.agentWizard.draft.kakaoRelayToken = '';
+      state.agentWizard.draft.kakaoSessionToken = '';
     }
     setFormErrors('agentWizard', collectAgentWizardStepErrors());
     render();
@@ -901,6 +943,18 @@ async function saveAgentWizard() {
       platform === 'telegram'
         ? requiredDraftText(values.telegramBotToken, 'telegramBotToken')
         : undefined,
+    kakaoRelayUrl:
+      platform === 'kakao'
+        ? optionalDraftText(values.kakaoRelayUrl) || getDefaultKakaoRelayUrl()
+        : undefined,
+    kakaoRelayToken:
+      platform === 'kakao'
+        ? optionalDraftText(values.kakaoRelayToken)
+        : undefined,
+    kakaoSessionToken:
+      platform === 'kakao'
+        ? optionalDraftText(values.kakaoSessionToken)
+        : undefined,
     localLlmConnection: optionalDraftText(values.localLlmConnection),
     baseUrl: optionalDraftText(values.baseUrl),
     command: optionalDraftText(values.command),
@@ -941,6 +995,10 @@ async function saveChannel(form) {
       platform === 'telegram' ? requiredText(values, 'telegramChatId') : undefined,
     telegramThreadId:
       platform === 'telegram' ? optionalText(values, 'telegramThreadId') : undefined,
+    kakaoChannelId:
+      platform === 'kakao' ? requiredText(values, 'kakaoChannelId') : undefined,
+    kakaoUserId:
+      platform === 'kakao' ? optionalText(values, 'kakaoUserId') : undefined,
     workspace: requiredText(values, 'workspace'),
     ownerWorkspace: optionalText(values, 'ownerWorkspace'),
     reviewerWorkspace: optionalText(values, 'reviewerWorkspace'),
@@ -1057,6 +1115,20 @@ async function reloadTelegramServiceConfig() {
   }
 }
 
+async function reloadKakaoServiceConfig() {
+  try {
+    await mutateJson('/api/kakao-service/reload', {
+      method: 'POST',
+    });
+    setNotice('info', 'KakaoTalk 서비스가 최신 에이전트 연결 설정을 다시 읽고 있습니다.');
+    render();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
 async function startDiscordService() {
   try {
     await mutateJson('/api/discord-service/start', {
@@ -1077,6 +1149,20 @@ async function startTelegramService() {
       method: 'POST',
     });
     setNotice('info', 'Telegram 서비스를 시작하고 있습니다.');
+    render();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function startKakaoService() {
+  try {
+    await mutateJson('/api/kakao-service/start', {
+      method: 'POST',
+    });
+    setNotice('info', 'KakaoTalk 서비스를 시작하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1113,6 +1199,20 @@ async function restartTelegramService() {
   }
 }
 
+async function restartKakaoService() {
+  try {
+    await mutateJson('/api/kakao-service/restart', {
+      method: 'POST',
+    });
+    setNotice('info', 'KakaoTalk 서비스를 재시작하고 있습니다.');
+    render();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
 async function stopDiscordService() {
   try {
     await mutateJson('/api/discord-service/stop', {
@@ -1141,6 +1241,20 @@ async function stopTelegramService() {
   }
 }
 
+async function stopKakaoService() {
+  try {
+    await mutateJson('/api/kakao-service/stop', {
+      method: 'POST',
+    });
+    setNotice('info', 'KakaoTalk 서비스를 중지하고 있습니다.');
+    render();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
 async function reconnectAgent(name) {
   if (!name) {
     return;
@@ -1150,7 +1264,7 @@ async function reconnectAgent(name) {
       method: 'POST',
     });
     const platform = resolveAgentPlatform(name);
-    setNotice('info', `에이전트 "${name}" ${platform === 'telegram' ? 'Telegram' : 'Discord'} 연결을 다시 시도합니다.`);
+    setNotice('info', `에이전트 "${name}" ${localizeMessagingPlatform(platform)} 연결을 다시 시도합니다.`);
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1830,7 +1944,13 @@ function resolveAgentTypeIcon(agentType) {
 }
 
 function resolvePlatformIcon(platform) {
-  return platform === 'telegram' ? 'telegram' : 'discord';
+  if (platform === 'telegram') {
+    return 'telegram';
+  }
+  if (platform === 'kakao') {
+    return 'kakao';
+  }
+  return 'discord';
 }
 
 function renderCardActionDrawer({
@@ -1861,16 +1981,17 @@ function renderCardActionDrawer({
   `;
 }
 
-function renderAgentList(agents, discordService = {}, telegramService = {}) {
+function renderAgentList(agents, discordService = {}, telegramService = {}, kakaoService = {}) {
   if (!agents.length) {
     return '<div class="empty-inline">에이전트가 없습니다.</div>';
   }
 
   const serviceAgents = discordService?.agents || discordService?.bots || {};
   const telegramAgents = telegramService?.agents || telegramService?.bots || {};
+  const kakaoAgents = kakaoService?.agents || kakaoService?.accounts || {};
   const agentEntries = agents.map((agent) => ({
     agent,
-    context: buildAgentDisplayContext(agent, serviceAgents, telegramAgents),
+    context: buildAgentDisplayContext(agent, serviceAgents, telegramAgents, kakaoAgents),
   }));
   const filteredEntries = agentEntries.filter(({ agent, context }) => matchesAgentListControls(agent, context));
   const hasActiveControls = Boolean((state.agentSearch || '').trim()) || (state.agentFilter || 'all') !== 'all';
@@ -1905,6 +2026,7 @@ function renderAgentCard(agent, context) {
     platformLabel,
     runtimeAgent,
     telegramRuntime,
+    kakaoRuntime,
     agentService,
     agentServiceRunning,
     agentServiceStarting,
@@ -1945,7 +2067,7 @@ function renderAgentCard(agent, context) {
           title: '더보기',
           body: renderAgentDetailPanel(agent, context),
           actions: [
-            isDiscordPlatform
+            isDiscordPlatform || platform === 'kakao'
               ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentService?.running ? 'disabled' : ''}>${renderButtonLabel('refresh', '재연결')}</button>`
               : '',
             `<button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>`,
@@ -1956,21 +2078,32 @@ function renderAgentCard(agent, context) {
   `;
 }
 
-function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}) {
+function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}, kakaoAgents = {}) {
   const platform = agent.platform || 'discord';
   const isDiscordPlatform = platform === 'discord';
   const platformLabel = localizeMessagingPlatform(platform);
   const runtimeAgent = serviceAgents[agent.name] || {};
   const telegramRuntime = telegramAgents[agent.name] || {};
-  const agentService = isDiscordPlatform ? (agent.discordService || null) : (agent.telegramService || null);
+  const kakaoRuntime = kakaoAgents[agent.name] || {};
+  const agentService = isDiscordPlatform
+    ? (agent.discordService || null)
+    : platform === 'kakao'
+      ? (agent.kakaoService || null)
+      : (agent.telegramService || null);
   const agentServiceLabel = agentService?.label || '중지';
   const agentServiceRunning = Boolean(agentService?.running);
   const agentServiceStarting = Boolean(agentService?.starting);
   const agentServiceStale = Boolean(agentService?.stale);
   const tokenConfigured = isDiscordPlatform
     ? agent.discordTokenConfigured
-    : agent.telegramBotTokenConfigured;
-  const connected = isDiscordPlatform ? Boolean(runtimeAgent.connected) : Boolean(telegramRuntime.connected);
+    : platform === 'kakao'
+      ? agent.kakaoRelayConfigured
+      : agent.telegramBotTokenConfigured;
+  const connected = isDiscordPlatform
+    ? Boolean(runtimeAgent.connected)
+    : platform === 'kakao'
+      ? Boolean(kakaoRuntime.connected)
+      : Boolean(telegramRuntime.connected);
   const connectionSummary = isDiscordPlatform
     ? runtimeAgent.connected
       ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
@@ -1981,15 +2114,27 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
           : agentServiceStale
             ? '워커 끊김'
             : '워커 중지'
-    : telegramRuntime.connected
-      ? `연결됨${telegramRuntime.username ? ` · @${telegramRuntime.username}` : ''}`
-      : agentServiceRunning
-        ? '연결 안 됨'
-        : agentServiceStarting
-          ? '워커 시작 중'
-          : agentServiceStale
-            ? '워커 끊김'
-            : '워커 중지';
+    : platform === 'kakao'
+      ? kakaoRuntime.connected
+        ? `연결됨${kakaoRuntime.pairedUserId ? ` · ${kakaoRuntime.pairedUserId}` : ''}`
+        : kakaoRuntime.pairingCode
+          ? `/pair ${kakaoRuntime.pairingCode}`
+          : agentServiceRunning
+            ? '페어링 대기'
+            : agentServiceStarting
+              ? '워커 시작 중'
+              : agentServiceStale
+                ? '워커 끊김'
+                : '워커 중지'
+      : telegramRuntime.connected
+        ? `연결됨${telegramRuntime.username ? ` · @${telegramRuntime.username}` : ''}`
+        : agentServiceRunning
+          ? '연결 안 됨'
+          : agentServiceStarting
+            ? '워커 시작 중'
+            : agentServiceStale
+              ? '워커 끊김'
+              : '워커 중지';
 
   return {
     platform,
@@ -1997,6 +2142,7 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
     platformLabel,
     runtimeAgent,
     telegramRuntime,
+    kakaoRuntime,
     agentService,
     agentServiceLabel,
     agentServiceRunning,
@@ -2030,6 +2176,8 @@ function matchesAgentFilter(context, filter) {
       return context.platform === 'discord';
     case 'telegram':
       return context.platform === 'telegram';
+    case 'kakao':
+      return context.platform === 'kakao';
     default:
       return true;
   }
@@ -2079,11 +2227,23 @@ function renderAgentDetailPanel(agent, context) {
   if (context.agentService?.lastError) {
     rows.push({ label: '최근 오류', value: context.agentService.lastError });
   }
+  if (context.platform === 'kakao') {
+    rows.push(
+      { label: '릴레이', value: context.kakaoRuntime?.relayUrl || agent.kakaoRelayUrl || getDefaultKakaoRelayUrl() },
+      context.kakaoRuntime?.pairingCode
+        ? { label: '페어링', value: `/pair ${context.kakaoRuntime.pairingCode}` }
+        : null,
+      context.kakaoRuntime?.pairedUserId
+        ? { label: '연결 사용자', value: context.kakaoRuntime.pairedUserId }
+        : null,
+    );
+  }
 
   return `
     <div class="agent-detail-panel">
       <div class="agent-detail-grid">
         ${rows
+          .filter(Boolean)
           .map(
             (row) => `
               <div class="agent-detail-item">
@@ -2786,7 +2946,9 @@ function renderRuntimeResetModal() {
 function renderChannelModal() {
   const current = state.channelDraft || createBlankChannel();
   const isTribunal = current.mode === 'tribunal';
-  const isTelegram = (current.platform || 'discord') === 'telegram';
+  const platform = current.platform || 'discord';
+  const isTelegram = platform === 'telegram';
+  const isKakao = platform === 'kakao';
   const agentNames = (state.data.agents || []).map((entry) => entry.name);
   const isEditing = Boolean(optionalDraftText(current.currentName));
   const hasErrors = Object.keys(collectChannelDraftErrors(current)).length > 0;
@@ -2826,6 +2988,19 @@ function renderChannelModal() {
                     <div class="field">
                       <label for="channel-telegram-thread">Telegram 스레드 ID</label>
                       <input id="channel-telegram-thread" name="telegramThreadId" value="${escapeAttr(current.telegramThreadId)}" />
+                    </div>
+                  `
+                : isKakao
+                  ? `
+                    <div class="field ${fieldErrorClass('channel', 'kakaoChannelId')}">
+                      <label for="channel-kakao-channel">${renderRequiredLabel('Kakao 릴레이 채널 ID')}</label>
+                      <input id="channel-kakao-channel" name="kakaoChannelId" value="${escapeAttr(current.kakaoChannelId || '*')}" placeholder="* 또는 relay channelId" />
+                      <div class="field-hint">기본 릴레이/페어링 방식은 * 로 두면 됩니다.</div>
+                      ${renderFormError('channel', 'kakaoChannelId')}
+                    </div>
+                    <div class="field">
+                      <label for="channel-kakao-user">Kakao 사용자 ID</label>
+                      <input id="channel-kakao-user" name="kakaoUserId" value="${escapeAttr(current.kakaoUserId)}" placeholder="선택: 특정 paired user만 허용" />
                     </div>
                   `
                 : `
@@ -3184,6 +3359,12 @@ function getAgentWizardSteps(draft) {
 function renderAgentWizardRuntimeStep(draft) {
   const platform = optionalDraftText(draft.platform) || 'discord';
   const codexAccess = optionalDraftText(draft.codexAccess) || 'workspace-write';
+  const tokenFieldName =
+    platform === 'telegram'
+      ? 'telegramBotToken'
+      : platform === 'kakao'
+        ? 'kakaoRelayToken'
+        : 'discordToken';
   const blocks = [
     `
       <div class="field">
@@ -3193,19 +3374,52 @@ function renderAgentWizardRuntimeStep(draft) {
         </select>
       </div>
     `,
-    `
-      <div class="field field-full ${fieldErrorClass('agentWizard', platform === 'telegram' ? 'telegramBotToken' : 'discordToken')}">
-        <label for="wizard-agent-platform-token">${renderRequiredLabel(platform === 'telegram' ? 'Telegram 봇 토큰' : 'Discord 토큰')}</label>
-        <input
-          id="wizard-agent-platform-token"
-          name="${platform === 'telegram' ? 'telegramBotToken' : 'discordToken'}"
-          value="${escapeAttr(platform === 'telegram' ? draft.telegramBotToken || '' : draft.discordToken || '')}"
-          placeholder="${platform === 'telegram' ? 'Telegram bot token' : 'Discord bot token'}"
-        />
-        <div class="field-hint">선택한 메시징 플랫폼에 이 에이전트를 연결할 때 사용하는 토큰입니다.</div>
-        ${renderFormError('agentWizard', platform === 'telegram' ? 'telegramBotToken' : 'discordToken')}
-      </div>
-    `,
+    platform === 'kakao'
+      ? `
+        <div class="field">
+          <label for="wizard-agent-kakao-relay">Kakao 릴레이 URL</label>
+          <input
+            id="wizard-agent-kakao-relay"
+            name="kakaoRelayUrl"
+            value="${escapeAttr(draft.kakaoRelayUrl || getDefaultKakaoRelayUrl())}"
+            placeholder="${escapeAttr(getDefaultKakaoRelayUrl())}"
+          />
+          <div class="field-hint">자체 릴레이를 운영하지 않으면 기본값을 사용합니다.</div>
+        </div>
+        <div class="field field-full ${fieldErrorClass('agentWizard', tokenFieldName)}">
+          <label for="wizard-agent-platform-token">Kakao 릴레이/세션 토큰</label>
+          <input
+            id="wizard-agent-platform-token"
+            name="kakaoRelayToken"
+            value="${escapeAttr(draft.kakaoRelayToken || '')}"
+            placeholder="선택: 비우면 시작 시 페어링 코드를 생성"
+          />
+          <div class="field-hint">비워두면 워커 시작 후 Kakao 채널에 입력할 /pair 코드가 생성됩니다.</div>
+          ${renderFormError('agentWizard', tokenFieldName)}
+        </div>
+        <div class="field field-full">
+          <label for="wizard-agent-kakao-session">Kakao 세션 토큰</label>
+          <input
+            id="wizard-agent-kakao-session"
+            name="kakaoSessionToken"
+            value="${escapeAttr(draft.kakaoSessionToken || '')}"
+            placeholder="선택: 기존 세션 재사용"
+          />
+        </div>
+      `
+      : `
+        <div class="field field-full ${fieldErrorClass('agentWizard', tokenFieldName)}">
+          <label for="wizard-agent-platform-token">${renderRequiredLabel(platform === 'telegram' ? 'Telegram 봇 토큰' : 'Discord 토큰')}</label>
+          <input
+            id="wizard-agent-platform-token"
+            name="${tokenFieldName}"
+            value="${escapeAttr(platform === 'telegram' ? draft.telegramBotToken || '' : draft.discordToken || '')}"
+            placeholder="${platform === 'telegram' ? 'Telegram bot token' : 'Discord bot token'}"
+          />
+          <div class="field-hint">선택한 메시징 플랫폼에 이 에이전트를 연결할 때 사용하는 토큰입니다.</div>
+          ${renderFormError('agentWizard', tokenFieldName)}
+        </div>
+      `,
   ];
 
   if (draft.agent === 'codex') {
@@ -3367,7 +3581,7 @@ function validateAgentWizardStep() {
     const platform = optionalDraftText(draft.platform) || 'discord';
     if (platform === 'telegram') {
       requiredDraftText(draft.telegramBotToken, 'telegramBotToken');
-    } else {
+    } else if (platform !== 'kakao') {
       requiredDraftText(draft.discordToken, 'discordToken');
     }
     if (draft.agent === 'command') {
@@ -3456,6 +3670,13 @@ function collectAgentWizardStepErrors() {
       if (!optionalDraftText(draft.telegramBotToken)) {
         errors.telegramBotToken = 'Telegram 봇 토큰을 입력하세요.';
       }
+    } else if (platform === 'kakao') {
+      if (
+        optionalDraftText(draft.kakaoRelayUrl) &&
+        !/^https?:\/\//iu.test(optionalDraftText(draft.kakaoRelayUrl))
+      ) {
+        errors.kakaoRelayUrl = 'http 또는 https URL을 입력하세요.';
+      }
     } else if (!optionalDraftText(draft.discordToken)) {
       errors.discordToken = 'Discord 토큰을 입력하세요.';
     }
@@ -3487,6 +3708,10 @@ function collectChannelDraftErrors(draft = state.channelDraft || {}) {
   if (platform === 'telegram') {
     if (!optionalDraftText(draft.telegramChatId)) {
       errors.telegramChatId = 'Telegram 채팅 ID를 입력하세요.';
+    }
+  } else if (platform === 'kakao') {
+    if (!optionalDraftText(draft.kakaoChannelId)) {
+      errors.kakaoChannelId = 'Kakao 릴레이 채널 ID를 입력하세요. 전체 허용은 * 를 사용하세요.';
     }
   } else if (!optionalDraftText(draft.discordChannelId)) {
     errors.discordChannelId = '디스코드 채널 ID를 입력하세요.';
@@ -3593,6 +3818,9 @@ function createBlankAgent(agentType = null) {
     dangerous: false,
     discordToken: '',
     telegramBotToken: '',
+    kakaoRelayUrl: getDefaultKakaoRelayUrl(),
+    kakaoRelayToken: '',
+    kakaoSessionToken: '',
     localLlmConnection: getDefaultLocalLlmConnectionName(),
     baseUrl: '',
     command: '',
@@ -3625,6 +3853,9 @@ function createAgentDraft(agent) {
     dangerous: Boolean(agent?.dangerous),
     discordToken: optionalDraftText(agent?.discordToken),
     telegramBotToken: optionalDraftText(agent?.telegramBotToken),
+    kakaoRelayUrl: optionalDraftText(agent?.kakaoRelayUrl) || getDefaultKakaoRelayUrl(),
+    kakaoRelayToken: optionalDraftText(agent?.kakaoRelayToken),
+    kakaoSessionToken: optionalDraftText(agent?.kakaoSessionToken),
     localLlmConnection: optionalDraftText(agent?.localLlmConnection) || getDefaultLocalLlmConnectionName(),
     baseUrl: optionalDraftText(agent?.baseUrl),
     command: agent?.command || '',
@@ -3655,6 +3886,8 @@ function createChannelDraft(channel) {
     guildId: channel?.guildId || '',
     telegramChatId: channel?.telegramChatId || '',
     telegramThreadId: channel?.telegramThreadId || '',
+    kakaoChannelId: channel?.kakaoChannelId || '*',
+    kakaoUserId: channel?.kakaoUserId || '',
     workspace: channel?.workspace || getDefaultChannelWorkspace(),
     ownerWorkspace: channel?.ownerWorkspace || '',
     reviewerWorkspace: channel?.reviewerWorkspace || '',
@@ -4446,6 +4679,8 @@ function createBlankChannel() {
     guildId: '',
     telegramChatId: '',
     telegramThreadId: '',
+    kakaoChannelId: '*',
+    kakaoUserId: '',
     workspace: getDefaultChannelWorkspace(),
     ownerWorkspace: '',
     reviewerWorkspace: '',
@@ -4644,6 +4879,10 @@ function optionalDraftText(value) {
   return String(value).trim();
 }
 
+function getDefaultKakaoRelayUrl() {
+  return optionalDraftText(state.data?.defaults?.kakaoRelayUrl) || FALLBACK_KAKAO_RELAY_URL;
+}
+
 function optionalText(formData, key) {
   const value = formData.get(key);
   if (value === null || value === undefined) {
@@ -4702,6 +4941,9 @@ function localizeChannelMode(value) {
 }
 
 function localizeMessagingPlatform(value) {
+  if (value === 'kakao') {
+    return 'KakaoTalk';
+  }
   if (value === 'telegram') {
     return 'Telegram';
   }
@@ -4716,6 +4958,10 @@ function describeChannelTarget(channel) {
   if (platform === 'telegram') {
     const threadSuffix = channel?.telegramThreadId ? ` / ${channel.telegramThreadId}` : '';
     return `${channel?.telegramChatId || '-'}${threadSuffix}`;
+  }
+  if (platform === 'kakao') {
+    const userSuffix = channel?.kakaoUserId ? ` / ${channel.kakaoUserId}` : '';
+    return `${channel?.kakaoChannelId || '*'}${userSuffix}`;
   }
   const guildSuffix = channel?.guildId ? ` / ${channel.guildId}` : '';
   return `${channel?.discordChannelId || '-'}${guildSuffix}`;
@@ -5120,11 +5366,16 @@ function localizeFieldName(key) {
     agent: '에이전트',
     discordToken: 'Discord 토큰',
     telegramBotToken: 'Telegram 봇 토큰',
+    kakaoRelayUrl: 'Kakao 릴레이 URL',
+    kakaoRelayToken: 'Kakao 릴레이 토큰',
+    kakaoSessionToken: 'Kakao 세션 토큰',
     model: '모델',
     command: '명령어',
     discordChannelId: '디스코드 채널 ID',
     telegramChatId: 'Telegram 채팅 ID',
     telegramThreadId: 'Telegram 스레드 ID',
+    kakaoChannelId: 'Kakao 릴레이 채널 ID',
+    kakaoUserId: 'Kakao 사용자 ID',
     workspace: '워크스페이스',
     ownerWorkspace: 'owner 워크스페이스',
     reviewerWorkspace: 'reviewer 워크스페이스',
@@ -5205,6 +5456,9 @@ function localizeErrorMessage(message) {
   }
   if (text === 'telegramChatId is required.') {
     return 'Telegram 채팅 ID를 입력하세요.';
+  }
+  if (text === 'kakaoChannelId is required.') {
+    return 'Kakao 릴레이 채널 ID를 입력하세요.';
   }
   if (text === 'Reviewer must be different from the owner agent.') {
     return 'reviewer 는 owner 와 달라야 합니다.';

@@ -334,6 +334,27 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
         input['telegram-bot-token'] ??
         existing.telegramBotToken,
     ),
+    kakaoRelayUrl: normalizeOptionalString(
+      input.kakaoRelayUrl ??
+        input['kakao-relay-url'] ??
+        input.relayUrl ??
+        input['relay-url'] ??
+        existing.kakaoRelayUrl,
+    ),
+    kakaoRelayToken: normalizeOptionalString(
+      input.kakaoRelayToken ??
+        input['kakao-relay-token'] ??
+        input.relayToken ??
+        input['relay-token'] ??
+        existing.kakaoRelayToken,
+    ),
+    kakaoSessionToken: normalizeOptionalString(
+      input.kakaoSessionToken ??
+        input['kakao-session-token'] ??
+        input.sessionToken ??
+        input['session-token'] ??
+        existing.kakaoSessionToken,
+    ),
     localLlmConnection: normalizeOptionalString(
       input.localLlmConnection ??
         input['local-llm-connection'] ??
@@ -380,8 +401,17 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   }
   if (merged.platform === 'telegram') {
     merged.discordToken = undefined;
+    merged.kakaoRelayUrl = undefined;
+    merged.kakaoRelayToken = undefined;
+    merged.kakaoSessionToken = undefined;
+  } else if (merged.platform === 'kakao') {
+    merged.discordToken = undefined;
+    merged.telegramBotToken = undefined;
   } else {
     merged.telegramBotToken = undefined;
+    merged.kakaoRelayUrl = undefined;
+    merged.kakaoRelayToken = undefined;
+    merged.kakaoSessionToken = undefined;
   }
 
   validateAgentDefinition(projectRoot, merged);
@@ -428,6 +458,20 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
         input.threadId ??
         input['thread-id'] ??
         existing.telegramThreadId,
+    ),
+    kakaoChannelId: normalizeOptionalString(
+      input.kakaoChannelId ??
+        input['kakao-channel-id'] ??
+        input.channelId ??
+        input['channel-id'] ??
+        existing.kakaoChannelId,
+    ),
+    kakaoUserId: normalizeOptionalString(
+      input.kakaoUserId ??
+        input['kakao-user-id'] ??
+        input.userId ??
+        input['user-id'] ??
+        existing.kakaoUserId,
     ),
     workspace: normalizeOptionalString(
       input.workspace ??
@@ -478,9 +522,19 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
   if (merged.platform === 'telegram') {
     merged.discordChannelId = undefined;
     merged.guildId = undefined;
+    merged.kakaoChannelId = undefined;
+    merged.kakaoUserId = undefined;
+  } else if (merged.platform === 'kakao') {
+    merged.discordChannelId = undefined;
+    merged.guildId = undefined;
+    merged.telegramChatId = undefined;
+    merged.telegramThreadId = undefined;
+    merged.kakaoChannelId = merged.kakaoChannelId || '*';
   } else {
     merged.telegramChatId = undefined;
     merged.telegramThreadId = undefined;
+    merged.kakaoChannelId = undefined;
+    merged.kakaoUserId = undefined;
   }
   validateChannelDefinition(projectRoot, config, merged);
   return sortObjectKeys(merged);
@@ -653,6 +707,24 @@ function validateAgentDefinition(projectRoot, agent) {
       'telegramBotToken must be a non-empty string.',
     );
   }
+  if (agent.kakaoRelayUrl !== undefined) {
+    assert(
+      typeof agent.kakaoRelayUrl === 'string' && agent.kakaoRelayUrl.trim().length > 0,
+      'kakaoRelayUrl must be a non-empty string.',
+    );
+  }
+  if (agent.kakaoRelayToken !== undefined) {
+    assert(
+      typeof agent.kakaoRelayToken === 'string' && agent.kakaoRelayToken.trim().length > 0,
+      'kakaoRelayToken must be a non-empty string.',
+    );
+  }
+  if (agent.kakaoSessionToken !== undefined) {
+    assert(
+      typeof agent.kakaoSessionToken === 'string' && agent.kakaoSessionToken.trim().length > 0,
+      'kakaoSessionToken must be a non-empty string.',
+    );
+  }
 
 }
 
@@ -670,6 +742,12 @@ function validateChannelDefinition(projectRoot, config, channel) {
       typeof channel.telegramChatId === 'string' &&
         channel.telegramChatId.trim().length > 0,
       'telegramChatId is required.',
+    );
+  } else if (channel.platform === 'kakao') {
+    assert(
+      typeof channel.kakaoChannelId === 'string' &&
+        channel.kakaoChannelId.trim().length > 0,
+      'kakaoChannelId is required.',
     );
   } else {
     assert(
@@ -828,9 +906,12 @@ function normalizeLegacyAgentRecords(agents) {
         next.discordToken = next.token;
       }
       if (!next.platform) {
-        next.platform = typeof next.telegramBotToken === 'string' && next.telegramBotToken.trim()
-          ? 'telegram'
-          : 'discord';
+        next.platform =
+          typeof next.kakaoRelayToken === 'string' && next.kakaoRelayToken.trim()
+            ? 'kakao'
+            : typeof next.telegramBotToken === 'string' && next.telegramBotToken.trim()
+              ? 'telegram'
+              : 'discord';
       }
       delete next.token;
       return [name, next];
@@ -903,9 +984,11 @@ function normalizeLegacyChannelRecords(channels, rawAgents, rawBots = {}) {
       }
       if (!next.platform) {
         next.platform =
-          typeof next.telegramChatId === 'string' && next.telegramChatId.trim()
-            ? 'telegram'
-            : 'discord';
+          typeof next.kakaoChannelId === 'string' && next.kakaoChannelId.trim()
+            ? 'kakao'
+            : typeof next.telegramChatId === 'string' && next.telegramChatId.trim()
+              ? 'telegram'
+              : 'discord';
       }
       if (typeof next.ownerBot === 'string' && !next.bot) {
         next.bot = next.ownerBot;
@@ -939,6 +1022,15 @@ function resolveMessagingPlatform(value, existing = {}) {
   }
   if (typeof existing?.telegramChatId === 'string' && existing.telegramChatId.trim()) {
     return 'telegram';
+  }
+  if (typeof existing?.kakaoRelayToken === 'string' && existing.kakaoRelayToken.trim()) {
+    return 'kakao';
+  }
+  if (typeof existing?.kakaoSessionToken === 'string' && existing.kakaoSessionToken.trim()) {
+    return 'kakao';
+  }
+  if (typeof existing?.kakaoChannelId === 'string' && existing.kakaoChannelId.trim()) {
+    return 'kakao';
   }
   return 'discord';
 }

@@ -1,9 +1,9 @@
 # hkclaw-lite
 
-`hkclaw-lite`는 Discord/Telegram 에이전트를 웹 어드민 중심으로 운영하는 경량 런타임이다.
+`hkclaw-lite`는 Discord/Telegram/KakaoTalk 에이전트를 웹 어드민 중심으로 운영하는 경량 런타임이다.
 
 - 기본 진입점은 웹 어드민이다.
-- 에이전트 1개당 선택한 플랫폼(Discord/Telegram)용 연결 정보를 가진다.
+- 에이전트 1개당 선택한 플랫폼(Discord/Telegram/KakaoTalk)용 연결 정보를 가진다.
 - 메시징 워커도 에이전트별 프로세스로 동작한다.
 - 기본 웹 주소는 `http://127.0.0.1:5687` 이다.
 
@@ -53,7 +53,7 @@ npx hkclaw-lite admin
 
 - 웹 어드민은 `5687` 포트에서 뜬다.
 - 에이전트/채널/AI 로그인은 웹에서 관리한다.
-- 실제 Discord/Telegram 연결은 에이전트 카드의 `실행 / 재시작 / 중지` 버튼으로 제어한다.
+- 실제 Discord/Telegram/KakaoTalk 연결은 에이전트 카드의 `실행 / 재시작 / 중지` 버튼으로 제어한다.
 
 ## 2. Docker
 
@@ -80,7 +80,7 @@ docker run --rm \
 - `/workspace`는 Docker 실행 예시에서 실제 작업 디렉터리를 붙이는 용도다.
 - 기본 Helm 배포는 단일 웹 어드민 Pod다. 웹 어드민에서 워커를 시작하면 같은 컨테이너 안에서 child process로 실행된다.
 - 컨테이너 이미지 기준 기본 채널 워크스페이스는 `/workspace` 다. `~` 는 명시적으로 썼을 때만 `HOME` 으로 해석된다.
-- 컨테이너는 자동으로 역할을 추측하지 않는다. `admin`, `run`, `discord serve` 중 어떤 명령을 띄울지 직접 넘겨야 한다.
+- 컨테이너는 자동으로 역할을 추측하지 않는다. `admin`, `run`, `discord serve`, `telegram serve`, `kakao serve` 중 어떤 명령을 띄울지 직접 넘겨야 한다.
 - 컨테이너에는 운영용 기본 도구로 `ssh`, `kubectl`, `argocd`, `git`, `ripgrep`가 같이 들어간다.
 
 ## 3. Helm
@@ -109,12 +109,12 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 
 운영 주의:
 
-- 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord/Telegram 워커를 같은 컨테이너 안에서 띄운다.
+- 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord/Telegram/KakaoTalk 워커를 같은 컨테이너 안에서 띄운다.
 - worker 재기동 복구는 runtime SQLite DB에 저장된 서비스 런타임 스냅샷을 우선 사용한다. 새 배포 환경을 반영하려면 웹 어드민에서 해당 워커를 한 번 다시 실행하거나 재시작하면 된다.
 - Helm 기본 배포는 단일 state PVC 안의 `/home/hkclaw/workspace` 를 채널 기본 workdir 로 사용한다.
 - 별도 작업용 볼륨을 쓰고 싶을 때만 `workspace.enabled=true` 로 켜고 원하는 마운트 경로를 준다.
 - `~` 를 명시적으로 쓰면 `HOME` 으로 해석되고 Helm 기본값에서는 `/home/hkclaw` 를 뜻한다.
-- `discord serve` 또는 `telegram serve` 를 정말 별도 Deployment/Pod로 분리할 때만 `/home/hkclaw` PVC를 admin Pod와 공유해야 한다. 그렇지 않으면 Claude 로그인 상태와 `.hkclaw-lite` 프로젝트 상태가 분리된다.
+- `discord serve`, `telegram serve`, `kakao serve` 를 정말 별도 Deployment/Pod로 분리할 때만 `/home/hkclaw` PVC를 admin Pod와 공유해야 한다. 그렇지 않으면 Claude 로그인 상태와 `.hkclaw-lite` 프로젝트 상태가 분리된다.
 
 즉 Helm 기본 배포는 단일 웹 어드민 Pod 기준이고, 별도 role Pod가 필요할 때만 `args`를 override 하면 된다.
 
@@ -148,9 +148,61 @@ hkclaw-lite admin
 hkclaw-lite run --channel <name> --message "hello"
 hkclaw-lite discord serve --agent <agent-name>
 hkclaw-lite telegram serve --agent <agent-name>
+hkclaw-lite kakao serve --agent <agent-name>
 ```
 
-`admin`은 웹 어드민, `run`은 one-shot 실행, `discord serve`/`telegram serve`는 특정 에이전트의 플랫폼 워커를 직접 띄우는 명령이다.
+`admin`은 웹 어드민, `run`은 one-shot 실행, `discord serve`/`telegram serve`/`kakao serve`는 특정 에이전트의 플랫폼 워커를 직접 띄우는 명령이다.
+
+## KakaoTalk 채널
+
+KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bart-lee/openclaw-kakao-talkchannel-plugin) 플러그인의 릴레이 구조를 참고했다. 카카오 i 오픈빌더를 직접 Pod 안에 붙이는 방식이 아니라, **Kakao TalkChannel 릴레이 서버와 SSE/reply API로 통신**한다.
+
+### 구성 모델
+
+- 에이전트 플랫폼을 `KakaoTalk`으로 선택한다.
+- `Kakao 릴레이 URL`은 `OPENCLAW_TALKCHANNEL_RELAY_URL` 또는 `KAKAO_TALKCHANNEL_RELAY_URL` 환경 변수가 있으면 그 값을 기본값으로 쓴다. 값이 없으면 공유 릴레이 `https://k.tess.dev/`를 기본값으로 쓴다.
+- `Kakao 릴레이 토큰` 또는 `Kakao 세션 토큰`은 선택값이다.
+- 토큰을 비워두면 워커 시작 시 릴레이 세션을 만들고 `/pair <code>` 형태의 페어링 코드를 상태에 표시한다.
+- 채널의 `Kakao 릴레이 채널 ID`는 기본적으로 `*`를 쓰면 된다. 특정 릴레이 channelId만 받으려면 그 값을 넣는다.
+- `Kakao 사용자 ID`를 넣으면 해당 paired user만 해당 채널로 라우팅한다.
+
+### 실행 흐름
+
+```txt
+kakao serve
+  ↓
+릴레이 세션 생성 또는 기존 token 사용
+  ↓
+SSE: <relay>/v1/events 수신
+  ↓
+채널 매칭(kakaoChannelId, kakaoUserId, owner agent)
+  ↓
+executeChannelTurn
+  ↓
+Reply: <relay>/openclaw/reply 로 Kakao SkillResponse 전송
+```
+
+일반 텍스트는 카카오 `simpleText`로 전송하고, 응답이 JSON 카드 형식이면 `textCard`, `basicCard`, `listCard`, `quickReplies` 같은 Kakao SkillResponse 카드로 변환한다.
+
+### 자체 릴레이 서버 배포
+
+자체 운영 릴레이는 [`kakao-talkchannel-relay-openclaw`](https://github.com/kakao-bart-lee/kakao-talkchannel-relay-openclaw)를 컨테이너로 빌드해 배포한다. 이 서버는 Kakao i 오픈빌더 웹훅을 받고, OpenClaw/hkclaw-lite 쪽에는 세션 생성, SSE 이벤트, reply API를 제공한다.
+
+운영 배포에서는 다음 값이 필요하다.
+
+- `DATABASE_URL`, `REDIS_URL`: 릴레이 서버용 PostgreSQL/Redis 연결.
+- `ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET`, `PORTAL_SESSION_SECRET`: 릴레이 Admin/Portal 인증.
+- `PORTAL_BASE_URL`: 사용자가 접근할 릴레이 외부 URL.
+- 선택: `KAKAO_SIGNATURE_SECRET`, `ENCRYPTION_KEY`, `QUEUE_TTL_SECONDS`, `CALLBACK_TTL_SECONDS`.
+
+현재 IDC GitOps 배포는 릴레이 외부 URL을 `https://kakao-relay.idc.hkyo.kr/`로 두고, hkclaw-lite Pod에는 아래 기본값을 주입한다.
+
+```yaml
+env:
+  OPENCLAW_TALKCHANNEL_RELAY_URL: https://kakao-relay.idc.hkyo.kr/
+```
+
+카카오 i 오픈빌더 스킬 URL은 릴레이의 `/kakao-talkchannel/webhook` 엔드포인트로 설정한다. Admin UI에서 Account를 만들면 `relayToken`이 1회 표시되며, 토큰을 쓰지 않는 세션 기반 에이전트는 워커 시작 시 `/pair <code>` 페어링 코드로 연결한다.
 
 ## 채널, 에이전트, 하네스 관리 모델
 
@@ -176,7 +228,7 @@ ops:owner
 ### 용어
 
 - **Agent**: Codex, Claude, Gemini, local LLM, command runner 같은 실제 실행 주체다. 모델, 명령, fallback, 플랫폼 토큰을 가진다.
-- **Channel**: Discord/Telegram 대상, 기본 워크스페이스, 실행 모드, role 매핑을 가진 실행 단위다.
+- **Channel**: Discord/Telegram/KakaoTalk 대상, 기본 워크스페이스, 실행 모드, role 매핑을 가진 실행 단위다.
 - **Role**: 한 turn 안에서 에이전트가 맡는 역할이다. 기본은 `owner`, tribunal 모드에서는 `owner`, `reviewer`, `arbiter`가 있다.
 - **Harness / runtime session**: 채널 turn을 실행하고, role별 메시지/세션/사용량/outbox를 기록하는 런타임 상태다.
 
@@ -185,7 +237,9 @@ ops:owner
 - `runtime_runs`: 채널 turn 1회의 상태, active role, round, 최종 disposition.
 - `runtime_role_messages`: owner/reviewer/arbiter가 낸 메시지.
 - `runtime_role_sessions`: `channel.name + role` 기준의 세션 매핑.
-- `runtime_outbox_events`: Discord/Telegram으로 내보낼 role 메시지 이벤트.
+- `runtime_outbox_events`: 메시징 플랫폼으로 내보낼 role 메시지 이벤트.
+
+KakaoTalk 릴레이 reply는 원본 `messageId`가 있어야 하므로, inbound SSE 이벤트를 처리하는 동안 즉시 전송한다. 프로세스가 중간에 죽어 원본 `messageId`를 잃은 orphan outbox는 안전하게 재전송할 수 없다.
 
 ### Single 채널
 
@@ -200,7 +254,7 @@ channel.agent -> owner
 1. `hkclaw-lite run --channel <name>` 또는 메시징 워커가 채널 turn을 시작한다.
 2. `channel.agent`를 찾아 `owner` role로 실행한다.
 3. 결과를 `runtime_runs`, `runtime_role_messages`, `runtime_role_sessions`에 기록한다.
-4. Discord/Telegram 워커가 필요한 경우 outbox 이벤트를 전송한다.
+4. Discord/Telegram/KakaoTalk 워커가 필요한 경우 outbox 이벤트를 전송한다.
 
 세션 재사용도 `agent.name` 단독이 아니라 `channel.name:owner` 기준이다. 저장된 세션의 `agentName`이 현재 `channel.agent`와 다르면 기존 세션은 무시된다. 에이전트를 바꿨는데 옛 Claude 세션에 잘못 붙는 사고를 막기 위한 장치다.
 

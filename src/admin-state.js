@@ -17,6 +17,11 @@ import {
   buildTelegramServiceSnapshot,
   inspectTelegramAgentConfigs,
 } from './telegram-runtime-state.js';
+import {
+  buildKakaoServiceSnapshot,
+  inspectKakaoAgentConfigs,
+} from './kakao-runtime-state.js';
+import { getDefaultKakaoRelayUrl } from './kakao-service.js';
 import { inspectAgentRuntime } from './runners.js';
 import {
   listPendingRuntimeOutboxEvents,
@@ -56,6 +61,7 @@ export async function buildAdminSnapshot(projectRoot) {
   const agents = buildAgentSummaries(projectRoot, config, channels);
   const discord = buildDiscordStatus(projectRoot, config, channels);
   const telegram = buildTelegramStatus(projectRoot, config, channels);
+  const kakao = buildKakaoStatus(projectRoot, config, channels);
   const tokenUsage = await buildTokenUsageSnapshot(projectRoot);
   const watchers = listCiWatchers(projectRoot).map((watcher) => ({
     ...watcher,
@@ -71,6 +77,7 @@ export async function buildAdminSnapshot(projectRoot) {
     defaults: {
       ...config.defaults,
       channelWorkspace: getDefaultChannelWorkspace(),
+      kakaoRelayUrl: getDefaultKakaoRelayUrl(),
     },
     localLlmConnections: listLocalLlmConnections(config),
     agents,
@@ -78,6 +85,7 @@ export async function buildAdminSnapshot(projectRoot) {
     dashboards,
     discord,
     telegram,
+    kakao,
     tokenUsage,
     watchers,
     runtime: runtime.summary,
@@ -215,6 +223,18 @@ function buildTelegramStatus(projectRoot, config, channels) {
 
   return {
     telegramChannelCount: tokenStatus.telegramChannelCount,
+    agents: tokenStatus.agents,
+    service,
+    agentServices: service.agentServices || {},
+  };
+}
+
+function buildKakaoStatus(projectRoot, config, channels) {
+  const service = buildKakaoServiceSnapshot(projectRoot);
+  const tokenStatus = inspectKakaoAgentConfigs(config, channels, service);
+
+  return {
+    kakaoChannelCount: tokenStatus.kakaoChannelCount,
     agents: tokenStatus.agents,
     service,
     agentServices: service.agentServices || {},
@@ -417,24 +437,36 @@ function buildAgentSummaries(projectRoot, config, channels) {
   const telegramService = buildTelegramServiceSnapshot(projectRoot);
   const telegramRuntimeAgents = telegramService.agents || telegramService.bots || {};
   const telegramAgentServices = telegramService.agentServices || {};
+  const kakaoService = buildKakaoServiceSnapshot(projectRoot);
+  const kakaoRuntimeAgents = kakaoService.agents || kakaoService.accounts || {};
+  const kakaoAgentServices = kakaoService.agentServices || {};
   return listAgents(config).map((agent) => {
     const mappedChannels = channelsByAgent[agent.name] || [];
     const discordRuntime = discordRuntimeAgents[agent.name] || {};
     const service = agentServices[agent.name] || null;
     const telegramRuntime = telegramRuntimeAgents[agent.name] || {};
     const telegramServiceState = telegramAgentServices[agent.name] || null;
+    const kakaoRuntime = kakaoRuntimeAgents[agent.name] || {};
+    const kakaoServiceState = kakaoAgentServices[agent.name] || null;
     return {
       ...agent,
       runtime: inspectAgentRuntime(projectRoot, agent),
       platform: agent.platform || 'discord',
       discordTokenConfigured: Boolean(agent.discordToken),
       telegramBotTokenConfigured: Boolean(agent.telegramBotToken),
+      kakaoRelayConfigured: (agent.platform || 'discord') === 'kakao' ||
+        Boolean(agent.kakaoRelayToken || agent.kakaoSessionToken || kakaoRuntime.tokenConfigured),
       discordConnected: Boolean(discordRuntime.connected),
       discordTag: discordRuntime.tag || '',
       discordService: service,
       telegramConnected: Boolean(telegramRuntime.connected),
       telegramUsername: telegramRuntime.username || '',
       telegramService: telegramServiceState,
+      kakaoConnected: Boolean(kakaoRuntime.connected),
+      kakaoRelayUrl: kakaoRuntime.relayUrl || agent.kakaoRelayUrl || '',
+      kakaoPairingCode: kakaoRuntime.pairingCode || '',
+      kakaoPairedUserId: kakaoRuntime.pairedUserId || '',
+      kakaoService: kakaoServiceState,
       mappedChannels: mappedChannels.map((channel) => ({
         name: channel.name,
         role: resolveAgentRole(channel, agent.name),
