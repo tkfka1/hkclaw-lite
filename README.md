@@ -106,11 +106,13 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 - 상태 저장용 PVC 사용
 - 기본 채널 워크스페이스는 `/home/hkclaw/workspace`
 - 별도 workspace PVC는 기본 비활성화
+- KakaoTalk 상시 수신은 `workers.kakao.enabled=true` 로 같은 Pod 안의 `kakao serve` sidecar를 켤 수 있다.
 
 운영 주의:
 
-- 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord/Telegram/KakaoTalk 워커를 같은 컨테이너 안에서 띄운다.
-- worker 재기동 복구는 runtime SQLite DB에 저장된 서비스 런타임 스냅샷을 우선 사용한다. 새 배포 환경을 반영하려면 웹 어드민에서 해당 워커를 한 번 다시 실행하거나 재시작하면 된다.
+- 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord/Telegram/KakaoTalk 워커를 같은 컨테이너 안에서 child process로 띄운다.
+- GitOps로 KakaoTalk 수신을 항상 켜두려면 별도 Deployment보다 `workers.kakao.enabled=true` sidecar를 권장한다. 같은 Pod라서 state/workspace PVC를 안전하게 공유하고, `kakao serve` 하나가 설정된 Kakao 에이전트/채널을 모두 처리한다.
+- worker 재기동 복구는 runtime SQLite DB에 저장된 서비스 런타임 스냅샷을 우선 사용한다. sidecar worker는 Pod 재시작 시 Kubernetes가 직접 살린다. 웹 어드민 child-process worker를 새 배포 환경에 맞춰 반영하려면 웹 어드민에서 해당 워커를 한 번 다시 실행하거나 재시작하면 된다.
 - Helm 기본 배포는 단일 state PVC 안의 `/home/hkclaw/workspace` 를 채널 기본 workdir 로 사용한다.
 - 별도 작업용 볼륨을 쓰고 싶을 때만 `workspace.enabled=true` 로 켜고 원하는 마운트 경로를 준다.
 - `~` 를 명시적으로 쓰면 `HOME` 으로 해석되고 Helm 기본값에서는 `/home/hkclaw` 를 뜻한다.
@@ -165,6 +167,15 @@ KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bar
 - 토큰을 비워두면 워커 시작 시 릴레이 세션을 만들고 `/pair <code>` 형태의 페어링 코드를 상태에 표시한다.
 - 채널의 `Kakao 릴레이 채널 ID`는 기본적으로 `*`를 쓰면 된다. 특정 릴레이 channelId만 받으려면 그 값을 넣는다.
 - `Kakao 사용자 ID`를 넣으면 해당 paired user만 해당 채널로 라우팅한다.
+
+### 배포 단위
+
+- **릴레이 서버/엔드포인트는 hkclaw-lite 인스턴스당 하나면 된다.** Admin HTTP 서버가 `/kakao-talkchannel/webhook`, `/v1/events`, `/openclaw/reply`를 같이 제공한다.
+- **`Kakao 릴레이 채널 ID`는 Kubernetes 배포 단위가 아니라 라우팅 필터다.** 보통은 `*`로 두고, 특정 OpenBuilder/릴레이 channelId만 받을 때만 값을 좁힌다.
+- **worker도 보통 하나면 충분하다.** `kakao serve` 하나가 설정된 모든 KakaoTalk 에이전트를 읽고 에이전트별 SSE 세션을 만든 뒤, 들어온 메시지를 `kakaoChannelId`, `kakaoUserId`, owner agent 기준으로 채널에 라우팅한다.
+- 채널마다 Pod/Deployment를 하나씩 만들 필요는 없다. 같은 session/channel을 여러 worker가 동시에 처리하면 중복 응답이나 pairing token 혼선이 생길 수 있다.
+- 여러 worker가 필요한 경우는 트래픽/장애 격리, 서로 다른 Kakao 계정/토큰을 완전히 분리해야 하는 운영 요구가 있을 때다. 이 경우에도 보통 “채널별”보다 “에이전트/계정별”로 분리하고 `kakao serve --agent <agent-name>`처럼 담당 범위를 명확히 나눈다.
+- GitOps 운영에서는 `workers.kakao.enabled=true`로 같은 Pod 안의 sidecar를 켜는 구성을 권장한다. 별도 Pod로 분리하면 ReadWriteOnce state PVC와 AI 로그인 상태 공유 문제가 생길 수 있다.
 
 ### 실행 흐름
 

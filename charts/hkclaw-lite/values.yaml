@@ -133,6 +133,22 @@ args:
   - --port
   - "5687"
 
+# Optional long-running platform workers that share the admin Pod state/workspace
+# volumes. This is the preferred GitOps shape for KakaoTalk because a single
+# `kakao serve` process can fan out to all configured Kakao agents/channels
+# without requiring a second Pod to mount the ReadWriteOnce state PVC.
+workers:
+  kakao:
+    enabled: false
+    name: kakao-worker
+    command: []
+    args:
+      - kakao
+      - serve
+    env: {}
+    extraEnv: []
+    resources: {}
+
 env: {}
 extraEnv: []
 envFrom: []

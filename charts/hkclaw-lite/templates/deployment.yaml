@@ -168,6 +168,59 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.workers.kakao.enabled }}
+        - name: {{ default "kakao-worker" .Values.workers.kakao.name }}
+          image: {{ include "hkclaw-lite.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          workingDir: {{ .Values.state.mountPath }}
+          {{- with .Values.workers.kakao.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.workers.kakao.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: HOME
+              value: {{ .Values.state.mountPath | quote }}
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- range $key, $value := .Values.workers.kakao.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- with .Values.workers.kakao.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.envFrom }}
+          envFrom:
+            {{- toYaml .Values.envFrom | nindent 12 }}
+          {{- else if or .Values.adminExternalSecret.enabled .Values.adminSecret.enabled }}
+          envFrom:
+            - secretRef:
+                name: {{ include "hkclaw-lite.adminSecretName" . }}
+          {{- end }}
+          volumeMounts:
+            - name: state
+              mountPath: {{ .Values.state.mountPath }}
+            {{- if .Values.workspace.enabled }}
+            - name: workspace
+              mountPath: {{ .Values.workspace.mountPath }}
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.workers.kakao.resources | nindent 12 }}
+        {{- end }}
       volumes:
         - name: state
           {{- if .Values.state.persistence.enabled }}
