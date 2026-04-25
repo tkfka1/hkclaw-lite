@@ -28,3 +28,17 @@ test('desktop layout can show the sidebar without always rendering the hamburger
   assert.match(shellSource, /desktopNavVisible/u);
   assert.match(shellSource, /nav-toggle-button/u);
 });
+
+test('agents page keeps operator controls visible and bookmarkable', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
+
+  assert.match(appSource, /VIEW_NAMES/u);
+  assert.match(appSource, /window\.location\.hash/u);
+  assert.match(appSource, /agentSearch/u);
+  assert.match(appSource, /agentFilter/u);
+  assert.match(appSource, /renderAgentDetailPanel/u);
+  assert.match(viewsSource, /data-form="agent-filters"/u);
+  assert.match(viewsSource, /name="agentSearch"/u);
+  assert.match(viewsSource, /name="agentFilter"/u);
+});

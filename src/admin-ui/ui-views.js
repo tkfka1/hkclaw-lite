@@ -2,8 +2,8 @@ import {
   renderDetailList,
   renderMetricCard,
   renderShortcutCard,
-} from './ui-shell.js?v=20260425-03';
-import { renderIcon } from './icons.js?v=20260425-03';
+} from './ui-shell.js?v=20260425-04';
+import { renderIcon } from './icons.js?v=20260425-04';
 
 export function renderHomeView(ctx) {
   const { state, getDashboardStats, escapeHtml } = ctx;
@@ -30,10 +30,20 @@ export function renderHomeView(ctx) {
 }
 
 export function renderAgentsView(ctx) {
-  const { state, getDashboardStats, escapeHtml, renderAgentList } = ctx;
+  const { state, getDashboardStats, escapeHtml, escapeAttr, renderAgentList } = ctx;
   const stats = getDashboardStats();
   const discordService = state.data?.discord?.service || {};
   const telegramService = state.data?.telegram?.service || {};
+  const filterOptions = [
+    ['all', '전체'],
+    ['running', '실행중'],
+    ['connected', '연결됨'],
+    ['stopped', '중지'],
+    ['issues', '확인 필요'],
+    ['missing-token', '토큰 없음'],
+    ['discord', 'Discord'],
+    ['telegram', 'Telegram'],
+  ];
 
   return `
     <section class="panel section-panel">
@@ -47,6 +57,31 @@ export function renderAgentsView(ctx) {
         </div>
         <div class="inline-actions">
           <button type="button" class="btn-primary" data-action="open-agent-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}에이전트 추가</button>
+        </div>
+      </div>
+      <div class="agent-toolbar" data-form="agent-filters">
+        <label class="agent-search-field">
+          <span>검색</span>
+          <input
+            type="search"
+            name="agentSearch"
+            value="${escapeAttr(state.agentSearch || '')}"
+            placeholder="이름, 모델, 채널, 워크스페이스"
+            autocomplete="off"
+          />
+        </label>
+        <label class="agent-filter-field">
+          <span>상태</span>
+          <select name="agentFilter">
+            ${filterOptions
+              .map(([value, label]) => `<option value="${escapeAttr(value)}" ${(state.agentFilter || 'all') === value ? 'selected' : ''}>${escapeHtml(label)}</option>`)
+              .join('')}
+          </select>
+        </label>
+        <div class="agent-toolbar-summary" aria-label="에이전트 요약">
+          <span class="mini-chip">${renderIcon('agents', 'ui-icon')}${escapeHtml(`전체 ${stats.agents.length}`)}</span>
+          <span class="mini-chip mini-chip--ok">${renderIcon('link', 'ui-icon')}${escapeHtml(`연결 ${stats.connectedAgentCount}`)}</span>
+          <span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`워커 ${stats.activeWorkerCount}`)}</span>
         </div>
       </div>
       ${renderAgentList(state.data.agents, discordService, telegramService)}

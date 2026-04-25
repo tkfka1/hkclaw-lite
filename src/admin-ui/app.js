@@ -5,27 +5,28 @@ import {
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
   shouldUseDesktopSidebar,
-} from './ui-shell.js?v=20260425-03';
+} from './ui-shell.js?v=20260425-04';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
-} from './ui-views.js?v=20260425-03';
+} from './ui-views.js?v=20260425-04';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js?v=20260425-03';
+} from './polling.js?v=20260425-04';
 import {
   getClaudeRuntimeSourceBadge,
   getClaudeRuntimeSourceHintLines,
-} from './claude-runtime-ui.js?v=20260425-03';
-import { renderIcon } from './icons.js?v=20260425-03';
+} from './claude-runtime-ui.js?v=20260425-04';
+import { renderIcon } from './icons.js?v=20260425-04';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
+const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'ai', 'tokens', 'all']);
 let noticeTimer = null;
 let aiManagerStatusPollTimer = null;
 let aiManagerStatusPollSession = 0;
@@ -40,9 +41,11 @@ const state = {
     authenticated: true,
     passwordEnv: 'HKCLAW_LITE_ADMIN_PASSWORD',
   },
-  activeView: 'home',
+  activeView: getInitialActiveView(),
   desktopNav: shouldUseDesktopSidebar(window.innerWidth),
   navOpen: false,
+  agentSearch: '',
+  agentFilter: 'all',
   agentModalOpen: false,
   channelModalOpen: false,
   localLlmModalOpen: false,
@@ -66,6 +69,7 @@ app.addEventListener('submit', handleSubmit);
 app.addEventListener('input', handleInput);
 app.addEventListener('change', handleInput);
 window.addEventListener('resize', handleWindowResize);
+window.addEventListener('hashchange', handleHashChange);
 
 boot().catch((error) => {
   setNotice('error', localizeErrorMessage(error.message));
@@ -127,8 +131,15 @@ function handleClick(event) {
   }
 
   if (action === 'switch-view') {
-    state.activeView = button.dataset.view || 'home';
+    setActiveView(button.dataset.view || 'home');
     state.navOpen = false;
+    render();
+    return;
+  }
+
+  if (action === 'clear-agent-filters') {
+    state.agentSearch = '';
+    state.agentFilter = 'all';
     render();
     return;
   }
@@ -512,6 +523,34 @@ function handleWindowResize() {
   render();
 }
 
+function handleHashChange() {
+  const nextView = normalizeView(window.location.hash.replace(/^#/u, ''));
+  if (nextView === state.activeView) {
+    return;
+  }
+  state.activeView = nextView;
+  state.navOpen = false;
+  render();
+}
+
+function getInitialActiveView() {
+  return normalizeView(window.location.hash.replace(/^#/u, ''));
+}
+
+function normalizeView(view) {
+  const value = String(view || '').trim();
+  return VIEW_NAMES.has(value) ? value : 'home';
+}
+
+function setActiveView(view) {
+  const nextView = normalizeView(view);
+  state.activeView = nextView;
+  const nextHash = `#${nextView}`;
+  if (window.location.hash !== nextHash) {
+    window.history.replaceState(null, '', nextHash);
+  }
+}
+
 function handleKeydown(event) {
   const target = event.target.closest('[data-action][data-clickable="true"]');
   if (!target) {
@@ -527,6 +566,17 @@ function handleKeydown(event) {
 function handleInput(event) {
   const target = event.target;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  if (target.closest('[data-form="agent-filters"]') && target.name) {
+    if (target.name === 'agentSearch') {
+      state.agentSearch = target.value;
+    }
+    if (target.name === 'agentFilter') {
+      state.agentFilter = target.value || 'all';
+    }
+    render();
     return;
   }
 
@@ -1556,6 +1606,7 @@ function renderAgentsView() {
     state,
     getDashboardStats,
     escapeHtml,
+    escapeAttr,
     renderAgentList,
   });
 }
@@ -1759,17 +1810,27 @@ function resolvePlatformIcon(platform) {
 
 function renderCardActionDrawer({
   title = '관리',
+  body = '',
   actions = [],
 }) {
   const items = actions.filter(Boolean);
-  if (!items.length) {
+  if (!items.length && !body) {
     return '';
   }
   return `
     <details class="card-actions-drawer">
       <summary class="card-actions-summary">${renderIcon('settings', 'ui-icon')}${escapeHtml(title)}</summary>
       <div class="card-actions-panel">
-        ${items.join('')}
+        ${body}
+        ${
+          items.length
+            ? `
+                <div class="card-actions-panel-actions">
+                  ${items.join('')}
+                </div>
+              `
+            : ''
+        }
       </div>
     </details>
   `;
@@ -1782,88 +1843,255 @@ function renderAgentList(agents, discordService = {}, telegramService = {}) {
 
   const serviceAgents = discordService?.agents || discordService?.bots || {};
   const telegramAgents = telegramService?.agents || telegramService?.bots || {};
+  const agentEntries = agents.map((agent) => ({
+    agent,
+    context: buildAgentDisplayContext(agent, serviceAgents, telegramAgents),
+  }));
+  const filteredEntries = agentEntries.filter(({ agent, context }) => matchesAgentListControls(agent, context));
+  const hasActiveControls = Boolean((state.agentSearch || '').trim()) || (state.agentFilter || 'all') !== 'all';
+
   return `
-    <div class="card-list agent-list">
-      ${agents
-        .map(
-          (agent) => {
-            const platform = agent.platform || 'discord';
-            const isDiscordPlatform = platform === 'discord';
-            const platformLabel = localizeMessagingPlatform(platform);
-            const runtimeAgent = serviceAgents[agent.name] || {};
-            const telegramRuntime = telegramAgents[agent.name] || {};
-            const agentService = isDiscordPlatform ? (agent.discordService || null) : (agent.telegramService || null);
-            const agentServiceLabel = agentService?.label || '중지';
-            const agentServiceRunning = Boolean(agentService?.running);
-            const agentServiceStarting = Boolean(agentService?.starting);
-            const agentServiceStale = Boolean(agentService?.stale);
-            const tokenConfigured = isDiscordPlatform
-              ? agent.discordTokenConfigured
-              : agent.telegramBotTokenConfigured;
-            const primaryAction = !tokenConfigured
-              ? `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" disabled>${renderButtonLabel('play', '실행')}</button>`
-              : agentServiceRunning || agentServiceStale
-                ? `<button type="button" class="btn-secondary" data-action="restart-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>${renderButtonLabel('refresh', '재시작')}</button>`
-                : `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || agentServiceRunning || agentServiceStarting ? 'disabled' : ''}>${renderButtonLabel('play', '실행')}</button>`;
-            const stopAction =
-              agentServiceRunning || agentServiceStale || agentServiceStarting
-                ? `<button type="button" class="btn-secondary" data-action="stop-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale && !agentServiceStarting) ? 'disabled' : ''}>${renderButtonLabel('stop', '중지')}</button>`
-                : '';
-            const connectionSummary = isDiscordPlatform
-              ? runtimeAgent.connected
-                ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
-                : agentServiceRunning
-                  ? '연결 안 됨'
-                  : agentServiceStarting
-                    ? '워커 시작 중'
-                  : agentServiceStale
-                    ? '워커 끊김'
-                    : '워커 중지'
-              : telegramRuntime.connected
-                ? `연결됨${telegramRuntime.username ? ` · @${telegramRuntime.username}` : ''}`
-                : agentServiceRunning
-                  ? '연결 안 됨'
-                  : agentServiceStarting
-                    ? '워커 시작 중'
-                  : agentServiceStale
-                    ? '워커 끊김'
-                    : '워커 중지';
-            const channelCount = (agent.mappedChannelNames || []).length;
-            return `
-              <article class="card agent-card">
-                <div class="card-main agent-card-main">
-                  <div class="agent-card-heading">
-                    ${renderCardTitle(resolveAgentTypeIcon(agent.agent), agent.name, 'accent')}
-                    ${renderMetaText(`${localizeAgentTypeValue(agent.agent)}${agent.model ? ` · ${agent.model}` : ''}`)}
-                  </div>
-                  <div class="agent-status-grid">
-                    <span class="mini-chip agent-chip agent-chip--platform">${renderIcon(resolvePlatformIcon(platform), 'ui-icon')} ${escapeHtml(platformLabel)}</span>
-                    <span class="mini-chip agent-chip ${tokenConfigured ? 'mini-chip--ok' : 'mini-chip--danger'}">${renderIcon('shield', 'ui-icon')} ${escapeHtml(tokenConfigured ? '토큰 설정됨' : '토큰 미설정')}</span>
-                    <span class="mini-chip agent-chip ${agentServiceStale ? 'mini-chip--danger' : runtimeAgent.connected || telegramRuntime.connected ? 'mini-chip--ok' : ''}">${renderIcon('server', 'ui-icon')}${escapeHtml(connectionSummary)}</span>
-                    <span class="mini-chip agent-chip">${renderIcon('channels', 'ui-icon')}${escapeHtml(`채널 ${channelCount}개`)}</span>
-                  </div>
-                </div>
-                <div class="inline-actions agent-card-actions">
-                  ${primaryAction}
-                  ${stopAction}
-                  <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
-                  ${renderCardActionDrawer({
-                    title: '더보기',
-                    actions: [
-                      isDiscordPlatform
-                        ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentServiceRunning ? 'disabled' : ''}>${renderButtonLabel('refresh', '재연결')}</button>`
-                        : '',
-                      `<button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>`,
-                    ],
-                  })}
-                </div>
-              </article>
-            `;
-          },
-        )
-        .join('')}
+    <div class="agent-result-row">
+      <span>${escapeHtml(`표시 ${filteredEntries.length}/${agents.length}`)}</span>
+      ${hasActiveControls ? `<button type="button" class="btn-secondary btn-inline" data-action="clear-agent-filters">${renderButtonLabel('refresh', '필터 초기화')}</button>` : ''}
+    </div>
+    ${
+      filteredEntries.length
+        ? `
+            <div class="card-list agent-list">
+              ${filteredEntries.map(({ agent, context }) => renderAgentCard(agent, context)).join('')}
+            </div>
+          `
+        : `
+            <div class="empty-inline agent-empty">
+              <strong>조건에 맞는 에이전트가 없습니다.</strong>
+              <span>검색어를 줄이거나 상태 필터를 전체로 바꿔보세요.</span>
+              <button type="button" class="btn-secondary" data-action="clear-agent-filters">${renderButtonLabel('refresh', '필터 초기화')}</button>
+            </div>
+          `
+    }
+  `;
+}
+
+function renderAgentCard(agent, context) {
+  const {
+    platform,
+    isDiscordPlatform,
+    platformLabel,
+    runtimeAgent,
+    telegramRuntime,
+    agentService,
+    agentServiceRunning,
+    agentServiceStarting,
+    agentServiceStale,
+    tokenConfigured,
+    connectionSummary,
+    connected,
+    channelCount,
+  } = context;
+  const primaryAction = !tokenConfigured
+    ? `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" disabled>${renderButtonLabel('play', '실행')}</button>`
+    : agentServiceRunning || agentServiceStale
+      ? `<button type="button" class="btn-secondary" data-action="restart-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>${renderButtonLabel('refresh', '재시작')}</button>`
+      : `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || agentServiceRunning || agentServiceStarting ? 'disabled' : ''}>${renderButtonLabel('play', '실행')}</button>`;
+  const stopAction =
+    agentServiceRunning || agentServiceStale || agentServiceStarting
+      ? `<button type="button" class="btn-secondary" data-action="stop-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale && !agentServiceStarting) ? 'disabled' : ''}>${renderButtonLabel('stop', '중지')}</button>`
+      : '';
+  return `
+    <article class="card agent-card">
+      <div class="card-main agent-card-main">
+        <div class="agent-card-heading">
+          ${renderCardTitle(resolveAgentTypeIcon(agent.agent), agent.name, 'accent')}
+          ${renderMetaText(`${localizeAgentTypeValue(agent.agent)}${agent.model ? ` · ${agent.model}` : ''}`)}
+        </div>
+        <div class="agent-status-grid">
+          <span class="mini-chip agent-chip agent-chip--platform">${renderIcon(resolvePlatformIcon(platform), 'ui-icon')} ${escapeHtml(platformLabel)}</span>
+          <span class="mini-chip agent-chip ${tokenConfigured ? 'mini-chip--ok' : 'mini-chip--danger'}">${renderIcon('shield', 'ui-icon')} ${escapeHtml(tokenConfigured ? '토큰 설정됨' : '토큰 미설정')}</span>
+          <span class="mini-chip agent-chip ${agentServiceStale ? 'mini-chip--danger' : connected ? 'mini-chip--ok' : ''}">${renderIcon('server', 'ui-icon')}${escapeHtml(connectionSummary)}</span>
+          <span class="mini-chip agent-chip">${renderIcon('channels', 'ui-icon')}${escapeHtml(`채널 ${channelCount}개`)}</span>
+        </div>
+      </div>
+      <div class="inline-actions agent-card-actions">
+        ${primaryAction}
+        ${stopAction}
+        <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
+        ${renderCardActionDrawer({
+          title: '더보기',
+          body: renderAgentDetailPanel(agent, context),
+          actions: [
+            isDiscordPlatform
+              ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentService?.running ? 'disabled' : ''}>${renderButtonLabel('refresh', '재연결')}</button>`
+              : '',
+            `<button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>`,
+          ],
+        })}
+      </div>
+    </article>
+  `;
+}
+
+function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}) {
+  const platform = agent.platform || 'discord';
+  const isDiscordPlatform = platform === 'discord';
+  const platformLabel = localizeMessagingPlatform(platform);
+  const runtimeAgent = serviceAgents[agent.name] || {};
+  const telegramRuntime = telegramAgents[agent.name] || {};
+  const agentService = isDiscordPlatform ? (agent.discordService || null) : (agent.telegramService || null);
+  const agentServiceLabel = agentService?.label || '중지';
+  const agentServiceRunning = Boolean(agentService?.running);
+  const agentServiceStarting = Boolean(agentService?.starting);
+  const agentServiceStale = Boolean(agentService?.stale);
+  const tokenConfigured = isDiscordPlatform
+    ? agent.discordTokenConfigured
+    : agent.telegramBotTokenConfigured;
+  const connected = isDiscordPlatform ? Boolean(runtimeAgent.connected) : Boolean(telegramRuntime.connected);
+  const connectionSummary = isDiscordPlatform
+    ? runtimeAgent.connected
+      ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
+      : agentServiceRunning
+        ? '연결 안 됨'
+        : agentServiceStarting
+          ? '워커 시작 중'
+          : agentServiceStale
+            ? '워커 끊김'
+            : '워커 중지'
+    : telegramRuntime.connected
+      ? `연결됨${telegramRuntime.username ? ` · @${telegramRuntime.username}` : ''}`
+      : agentServiceRunning
+        ? '연결 안 됨'
+        : agentServiceStarting
+          ? '워커 시작 중'
+          : agentServiceStale
+            ? '워커 끊김'
+            : '워커 중지';
+
+  return {
+    platform,
+    isDiscordPlatform,
+    platformLabel,
+    runtimeAgent,
+    telegramRuntime,
+    agentService,
+    agentServiceLabel,
+    agentServiceRunning,
+    agentServiceStarting,
+    agentServiceStale,
+    tokenConfigured,
+    connected,
+    connectionSummary,
+    channelCount: (agent.mappedChannelNames || []).length,
+    needsAttention: !tokenConfigured || agentServiceStale || Boolean(agentService?.lastError),
+  };
+}
+
+function matchesAgentListControls(agent, context) {
+  return matchesAgentFilter(context, state.agentFilter || 'all') && matchesAgentSearch(agent, context, state.agentSearch || '');
+}
+
+function matchesAgentFilter(context, filter) {
+  switch (filter) {
+    case 'running':
+      return context.agentServiceRunning || context.agentServiceStarting;
+    case 'connected':
+      return context.connected;
+    case 'stopped':
+      return !context.agentServiceRunning && !context.agentServiceStarting && !context.agentServiceStale;
+    case 'issues':
+      return context.needsAttention;
+    case 'missing-token':
+      return !context.tokenConfigured;
+    case 'discord':
+      return context.platform === 'discord';
+    case 'telegram':
+      return context.platform === 'telegram';
+    default:
+      return true;
+  }
+}
+
+function matchesAgentSearch(agent, context, rawSearch) {
+  const search = normalizeSearchText(rawSearch);
+  if (!search) {
+    return true;
+  }
+  const values = [
+    agent.name,
+    agent.agent,
+    localizeAgentTypeValue(agent.agent),
+    agent.model,
+    agent.sandbox,
+    context.platformLabel,
+    context.connectionSummary,
+    context.agentServiceLabel,
+    agent.runtime?.source,
+    agent.runtime?.detail,
+    ...(agent.mappedChannelNames || []),
+    ...(agent.workspaces || []),
+  ];
+  return normalizeSearchText(values.filter(Boolean).join(' ')).includes(search);
+}
+
+function normalizeSearchText(value) {
+  return String(value || '').trim().toLocaleLowerCase('ko-KR');
+}
+
+function renderAgentDetailPanel(agent, context) {
+  const channels = (agent.mappedChannels || []).map((channel) => {
+    const role = channel.role ? ` · ${localizeAgentRole(channel.role)}` : '';
+    return `${channel.name}${role}`;
+  });
+  const workspaces = agent.workspaces || [];
+  const runtimeStatus = agent.runtime
+    ? `${agent.runtime.ready ? '준비됨' : '확인 필요'} · ${agent.runtime.source || 'unknown'}`
+    : '미확인';
+  const rows = [
+    { label: '서비스', value: context.agentServiceLabel },
+    { label: 'Heartbeat', value: context.agentService?.heartbeatAt ? formatRelativeDateTime(context.agentService.heartbeatAt) : '없음' },
+    { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
+    { label: 'Sandbox', value: agent.sandbox || '기본값' },
+  ];
+  if (context.agentService?.lastError) {
+    rows.push({ label: '최근 오류', value: context.agentService.lastError });
+  }
+
+  return `
+    <div class="agent-detail-panel">
+      <div class="agent-detail-grid">
+        ${rows
+          .map(
+            (row) => `
+              <div class="agent-detail-item">
+                <span>${escapeHtml(row.label)}</span>
+                <strong title="${escapeAttr(row.title || row.value)}">${escapeHtml(row.value)}</strong>
+              </div>
+            `,
+          )
+          .join('')}
+      </div>
+      <div class="agent-detail-block">
+        <span>채널</span>
+        <p>${escapeHtml(channels.length ? channels.join(', ') : '연결된 채널 없음')}</p>
+      </div>
+      <div class="agent-detail-block">
+        <span>워크스페이스</span>
+        <p>${escapeHtml(workspaces.length ? workspaces.join(', ') : '미지정')}</p>
+      </div>
     </div>
   `;
+}
+
+function localizeAgentRole(role) {
+  if (role === 'owner') {
+    return 'owner';
+  }
+  if (role === 'reviewer') {
+    return 'reviewer';
+  }
+  if (role === 'arbiter') {
+    return 'arbiter';
+  }
+  return role || '';
 }
 
 function renderChannelList(channels, agents) {
