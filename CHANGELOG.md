@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Added unauthenticated Kakao relay health endpoints for ingress and OpenBuilder smoke checks.
+
+### Fixed
+- Return a protocol-local `400 Invalid JSON body` for malformed Kakao relay payloads instead of falling through to the admin error wrapper.
+
 ## 1.0.3 - 2026-04-25
 
 ### Added

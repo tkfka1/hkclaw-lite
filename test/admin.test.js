@@ -1806,6 +1806,28 @@ test('admin server exposes embedded Kakao relay session, webhook, SSE, and reply
   initProject(projectRoot);
 
   await withAdminServer(projectRoot, async ({ url }) => {
+    const health = await requestJson(`${url}/v1/healthz`);
+    assert.equal(health.response.status, 200, JSON.stringify(health.payload));
+    assert.deepEqual(health.payload, {
+      ok: true,
+      status: 'healthy',
+      relay: 'kakao-talkchannel',
+      activeEventStreams: 0,
+    });
+
+    const healthHead = await fetch(`${url}/kakao-talkchannel/healthz`, { method: 'HEAD' });
+    assert.equal(healthHead.status, 200);
+    assert.match(healthHead.headers.get('content-type') || '', /application\/json/u);
+
+    const invalidJson = await fetch(`${url}/kakao-talkchannel/webhook`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{',
+    });
+    const invalidJsonPayload = await invalidJson.json();
+    assert.equal(invalidJson.status, 400);
+    assert.deepEqual(invalidJsonPayload, { error: 'Invalid JSON body.' });
+
     const session = await requestJson(`${url}/v1/sessions/create`, {
       method: 'POST',
       body: {},

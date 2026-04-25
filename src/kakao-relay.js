@@ -18,6 +18,7 @@ const KAKAO_RELAY_ROUTES = [
   '/kakao-talkchannel/',
   '/openclaw/',
   '/v1/events',
+  '/v1/healthz',
   '/v1/sessions',
 ];
 
@@ -27,49 +28,87 @@ export function isKakaoRelayRequest(pathname) {
   return KAKAO_RELAY_ROUTES.some((prefix) => pathname === prefix || pathname.startsWith(prefix));
 }
 
-export async function handleKakaoRelayRequest(projectRoot, request, response, { pathname } = {}) {
-  const url = new URL(request.url || '/', 'http://127.0.0.1');
-  const routePath = pathname || url.pathname;
+function isKakaoRelayHealthPath(routePath) {
+  return [
+    '/v1/healthz',
+    '/openclaw/healthz',
+    '/kakao-talkchannel/healthz',
+  ].includes(routePath);
+}
 
-  if (request.method === 'POST' && routePath === '/v1/sessions/create') {
-    writeJson(response, 200, await createKakaoRelaySession(projectRoot));
-    return true;
+function buildKakaoRelayHealth() {
+  return {
+    ok: true,
+    status: 'healthy',
+    relay: 'kakao-talkchannel',
+    activeEventStreams: countActiveSseClients(),
+  };
+}
+
+function countActiveSseClients() {
+  let count = 0;
+  for (const clients of sseClientsByTokenHash.values()) {
+    count += [...clients].filter((client) => !client.closed).length;
   }
+  return count;
+}
 
-  if (
-    request.method === 'GET' &&
-    routePath.startsWith('/v1/sessions/') &&
-    routePath.endsWith('/status')
-  ) {
-    const sessionToken = decodeURIComponent(
-      routePath.slice('/v1/sessions/'.length, -'/status'.length),
-    );
-    const status = await getKakaoRelaySessionStatus(projectRoot, sessionToken);
-    if (!status) {
-      writeJson(response, 404, { error: 'Session not found.' });
+export async function handleKakaoRelayRequest(projectRoot, request, response, { pathname } = {}) {
+  try {
+    const url = new URL(request.url || '/', 'http://127.0.0.1');
+    const routePath = pathname || url.pathname;
+
+    if (
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      isKakaoRelayHealthPath(routePath)
+    ) {
+      writeJson(response, 200, buildKakaoRelayHealth());
       return true;
     }
-    writeJson(response, 200, status);
+
+    if (request.method === 'POST' && routePath === '/v1/sessions/create') {
+      writeJson(response, 200, await createKakaoRelaySession(projectRoot));
+      return true;
+    }
+
+    if (
+      request.method === 'GET' &&
+      routePath.startsWith('/v1/sessions/') &&
+      routePath.endsWith('/status')
+    ) {
+      const sessionToken = decodeURIComponent(
+        routePath.slice('/v1/sessions/'.length, -'/status'.length),
+      );
+      const status = await getKakaoRelaySessionStatus(projectRoot, sessionToken);
+      if (!status) {
+        writeJson(response, 404, { error: 'Session not found.' });
+        return true;
+      }
+      writeJson(response, 200, status);
+      return true;
+    }
+
+    if (request.method === 'GET' && routePath === '/v1/events') {
+      await handleKakaoRelayEvents(projectRoot, request, response);
+      return true;
+    }
+
+    if (request.method === 'POST' && routePath === '/openclaw/reply') {
+      await handleKakaoRelayReply(projectRoot, request, response);
+      return true;
+    }
+
+    if (request.method === 'POST' && routePath === '/kakao-talkchannel/webhook') {
+      await handleKakaoWebhook(projectRoot, request, response);
+      return true;
+    }
+
+    writeJson(response, 404, { error: 'Not found.' });
+    return true;
+  } catch (error) {
+    writeJson(response, error?.statusCode || 500, { error: toErrorMessage(error) });
     return true;
   }
-
-  if (request.method === 'GET' && routePath === '/v1/events') {
-    await handleKakaoRelayEvents(projectRoot, request, response);
-    return true;
-  }
-
-  if (request.method === 'POST' && routePath === '/openclaw/reply') {
-    await handleKakaoRelayReply(projectRoot, request, response);
-    return true;
-  }
-
-  if (request.method === 'POST' && routePath === '/kakao-talkchannel/webhook') {
-    await handleKakaoWebhook(projectRoot, request, response);
-    return true;
-  }
-
-  writeJson(response, 404, { error: 'Not found.' });
-  return true;
 }
 
 async function handleKakaoRelayEvents(projectRoot, request, response) {
@@ -397,7 +436,13 @@ async function readJsonBody(request) {
   if (!raw.trim()) {
     return {};
   }
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const error = new Error('Invalid JSON body.');
+    error.statusCode = 400;
+    throw error;
+  }
 }
 
 function textResponse(text) {

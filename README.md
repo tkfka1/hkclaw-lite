@@ -218,6 +218,7 @@ Reply: <relay>/openclaw/reply 로 Kakao SkillResponse 전송
 
 `admin` 서버는 웹 어드민과 같은 HTTP 서버에서 아래 릴레이 엔드포인트를 같이 제공한다. `/api/*`와 달리 Kakao/OpenClaw 릴레이 프로토콜용 엔드포인트라 웹 어드민 로그인 쿠키를 요구하지 않는다.
 
+- `GET /v1/healthz` 또는 `/kakao-talkchannel/healthz`: 내장 릴레이 health/smoke 확인.
 - `POST /v1/sessions/create`: 토큰 없는 Kakao 커넥터가 pairing session 생성.
 - `GET /v1/events`: Kakao 워커가 SSE로 pairing/message 이벤트 수신.
 - `POST /openclaw/reply`: Kakao 워커가 OpenBuilder callback으로 최종 답변 전송.
