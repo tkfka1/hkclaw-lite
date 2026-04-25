@@ -49,7 +49,7 @@
   },
   "optionalDependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.105",
-    "@google/gemini-cli": "0.37.1",
+    "@google/gemini-cli": "0.39.1",
     "@openai/codex": "0.120.0"
   }
 }

@@ -95,6 +95,7 @@ const ADMIN_STATIC_CONTENT_TYPES = new Map([
 const CLI_ENTRY_PATH = fileURLToPath(new URL('../bin/hkclaw-lite.js', import.meta.url));
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const ADMIN_PASSWORD_ENV = 'HKCLAW_LITE_ADMIN_PASSWORD';
+const ADMIN_COOKIE_SECURE_ENV = 'HKCLAW_LITE_ADMIN_COOKIE_SECURE';
 const ADMIN_SESSION_COOKIE = 'hkclaw_lite_admin_session';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AI_STATUS_AGENT_TYPES = ['codex', 'claude-code', 'gemini-cli', 'local-llm'];
@@ -211,6 +212,7 @@ export async function serveAdmin(
 }
 
 async function handleAdminRequest(projectRoot, auth, request, response) {
+  applyAdminSecurityHeaders(response);
   const url = new URL(request.url || '/', 'http://127.0.0.1');
   const pathname = url.pathname;
   const isStaticRequest = request.method === 'GET' || request.method === 'HEAD';
@@ -249,7 +251,7 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
   if (request.method === 'POST' && pathname === '/api/login') {
     const payload = await readJsonBody(request);
-    writeJson(response, 200, await auth.login(response, payload.password));
+    writeJson(response, 200, await auth.login(request, response, payload.password));
     return;
   }
 
@@ -3395,7 +3397,7 @@ async function createAdminAuthController(projectRoot, { password, passwordFile }
         throwHttpError(401, 'Authentication required.');
       }
     },
-    async login(response, providedPassword) {
+    async login(request, response, providedPassword) {
       const status = await getAdminAuthStatus(projectRoot);
       if (!status.enabled) {
         return await this.getStatus(null);
@@ -3410,7 +3412,7 @@ async function createAdminAuthController(projectRoot, { password, passwordFile }
       const session = await createAdminSession(projectRoot, {
         ttlMs: ADMIN_SESSION_TTL_MS,
       });
-      setSessionCookie(response, session.token);
+      setSessionCookie(response, session.token, request);
       return await this.getStatus({
         headers: {
           cookie: `${ADMIN_SESSION_COOKIE}=${session.token}`,
@@ -3436,7 +3438,7 @@ async function createAdminAuthController(projectRoot, { password, passwordFile }
       const session = await createAdminSession(projectRoot, {
         ttlMs: ADMIN_SESSION_TTL_MS,
       });
-      setSessionCookie(response, session.token);
+      setSessionCookie(response, session.token, request);
 
       return {
         ok: true,
@@ -3455,7 +3457,7 @@ async function createAdminAuthController(projectRoot, { password, passwordFile }
           await deleteAdminSession(projectRoot, token);
         }
       }
-      clearSessionCookie(response);
+      clearSessionCookie(response, request);
       return {
         enabled: status.enabled,
         authenticated: false,
@@ -3509,18 +3511,45 @@ function parseCookieHeader(rawCookie) {
   return output;
 }
 
-function setSessionCookie(response, token) {
+function setSessionCookie(response, token, request) {
+  const secureAttribute = shouldUseSecureAdminCookie(request) ? '; Secure' : '';
   response.setHeader(
     'set-cookie',
-    `${ADMIN_SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(ADMIN_SESSION_TTL_MS / 1000)}`,
+    `${ADMIN_SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict${secureAttribute}; Max-Age=${Math.floor(ADMIN_SESSION_TTL_MS / 1000)}`,
   );
 }
 
-function clearSessionCookie(response) {
+function clearSessionCookie(response, request) {
+  const secureAttribute = shouldUseSecureAdminCookie(request) ? '; Secure' : '';
   response.setHeader(
     'set-cookie',
-    `${ADMIN_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`,
+    `${ADMIN_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict${secureAttribute}; Max-Age=0`,
   );
+}
+
+function shouldUseSecureAdminCookie(request) {
+  const mode = String(process.env[ADMIN_COOKIE_SECURE_ENV] || 'auto').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on', 'always'].includes(mode)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'off', 'never'].includes(mode)) {
+    return false;
+  }
+  return isSecureAdminRequest(request);
+}
+
+function isSecureAdminRequest(request) {
+  const forwardedProto = String(request?.headers?.['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  if (forwardedProto === 'https') {
+    return true;
+  }
+  if (String(request?.headers?.['x-forwarded-ssl'] || '').trim().toLowerCase() === 'on') {
+    return true;
+  }
+  return Boolean(request?.socket?.encrypted);
 }
 
 function throwHttpError(statusCode, message) {
@@ -3538,6 +3567,14 @@ function writeText(response, statusCode, value, contentType) {
   response.setHeader('content-type', contentType);
   response.setHeader('cache-control', 'no-store');
   response.end(value);
+}
+
+function applyAdminSecurityHeaders(response) {
+  response.setHeader('x-content-type-options', 'nosniff');
+  response.setHeader('referrer-policy', 'no-referrer');
+  response.setHeader('x-frame-options', 'DENY');
+  response.setHeader('cross-origin-opener-policy', 'same-origin');
+  response.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
 }
 
 async function waitForShutdown(server) {

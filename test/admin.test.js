@@ -768,6 +768,10 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     const htmlResponse = await fetch(url);
     const html = await htmlResponse.text();
     assert.equal(htmlResponse.status, 200);
+    assert.equal(htmlResponse.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(htmlResponse.headers.get('x-frame-options'), 'DENY');
+    assert.equal(htmlResponse.headers.get('referrer-policy'), 'no-referrer');
+    assert.match(htmlResponse.headers.get('permissions-policy') || '', /camera=\(\)/u);
     assert.match(html, /hkclaw-lite/i);
     assert.match(html, /\/favicon\.ico/u);
     assert.match(html, /\/favicon\.svg/u);
@@ -2025,7 +2029,20 @@ test('admin server supports lightweight password login via env', async () => {
       assert.equal(login.payload.storage, 'sqlite');
       const cookie = login.response.headers.get('set-cookie');
       assert.match(cookie, /hkclaw_lite_admin_session=/u);
+      assert.doesNotMatch(cookie, /;\s*Secure/u);
       assert.match(cookie, /Max-Age=604800/u);
+
+      const secureLogin = await requestJson(`${url}/api/login`, {
+        method: 'POST',
+        headers: {
+          'x-forwarded-proto': 'https',
+        },
+        body: {
+          password: 'very-secret',
+        },
+      });
+      assert.equal(secureLogin.response.status, 200, JSON.stringify(secureLogin.payload));
+      assert.match(secureLogin.response.headers.get('set-cookie') || '', /;\s*Secure/u);
 
       const authedState = await requestJson(`${url}/api/state`, {
         headers: {

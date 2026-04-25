@@ -134,6 +134,7 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 - 관리자 암호는 `HKCLAW_LITE_ADMIN_PASSWORD` 로 bootstrap 할 수 있다. Helm에서는 `adminSecret` 또는 `adminExternalSecret`이 이 값을 주입한다.
 
 관리자 암호는 첫 시작 때 SQLite 런타임 DB로 이관된다. 이후에는 웹 어드민에서 바꾼 암호가 기준이고, 세션 쿠키 이름은 `hkclaw_lite_admin_session`, 기본 TTL은 7일이다.
+어드민 서버는 기본 보안 헤더(`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`)를 응답에 붙인다. 로그인 세션 쿠키의 `Secure` 속성은 기본값 `auto` 로, `X-Forwarded-Proto: https` 또는 HTTPS 소켓이면 자동 활성화된다. 프록시 구성이 특수하면 `HKCLAW_LITE_ADMIN_COOKIE_SECURE=always|never|auto` 로 강제할 수 있다.
 
 AI 로그인은 Kubernetes ServiceAccount가 아니라 컨테이너의 `HOME` 기준이다. Helm 기본값에서는 `HOME=/home/hkclaw` 이고, 이 경로가 state PVC에 저장된다. Codex/Claude/Gemini 로그인 상태와 `.hkclaw-lite` 런타임 상태도 이 PVC에 남는다.
 
