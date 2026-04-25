@@ -62,3 +62,10 @@ test('channels page exposes role-scoped runtime session controls', () => {
   assert.match(appSource, /confirm-reset-channel-runtime-sessions/u);
   assert.match(appSource, /channel\.name.*session\.role/us);
 });
+
+test('form fields stay top-aligned when validation messages expand a row', () => {
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(styles, /\.form-grid\s*\{[^}]*align-items:\s*start;/su);
+  assert.match(styles, /\.field\s*\{[^}]*align-content:\s*start;/su);
+});
