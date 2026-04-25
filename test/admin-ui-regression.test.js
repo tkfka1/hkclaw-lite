@@ -69,3 +69,18 @@ test('form fields stay top-aligned when validation messages expand a row', () =>
   assert.match(styles, /\.form-grid\s*\{[^}]*align-items:\s*start;/su);
   assert.match(styles, /\.field\s*\{[^}]*align-content:\s*start;/su);
 });
+
+test('channel modal does not show empty-field errors before submit', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+
+  assert.match(
+    appSource,
+    /if \(action === 'open-channel-modal'\) \{[\s\S]*?clearFormErrors\('channel'\);/u,
+  );
+  assert.match(appSource, /const visibleErrors = getFormErrors\('channel'\);/u);
+  assert.match(appSource, /refreshVisibleFormErrors\('channel', collectChannelDraftErrors\(\)\);/u);
+  assert.doesNotMatch(
+    appSource,
+    /if \(action === 'open-channel-modal'\) \{[\s\S]*?setFormErrors\('channel', collectChannelDraftErrors/u,
+  );
+});

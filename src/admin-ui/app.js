@@ -489,7 +489,7 @@ function handleClick(event) {
   if (action === 'open-channel-modal') {
     state.channelModalOpen = true;
     state.channelDraft = createBlankChannel();
-    setFormErrors('channel', collectChannelDraftErrors(state.channelDraft));
+    clearFormErrors('channel');
     render();
     return;
   }
@@ -503,7 +503,7 @@ function handleClick(event) {
     }
     state.channelModalOpen = true;
     state.channelDraft = createChannelDraft(channel);
-    setFormErrors('channel', collectChannelDraftErrors(state.channelDraft));
+    clearFormErrors('channel');
     render();
     return;
   }
@@ -681,6 +681,7 @@ function handleInput(event) {
           state.channelDraft.kakaoChannelId = '';
           state.channelDraft.kakaoUserId = '';
         }
+        refreshVisibleFormErrors('channel', collectChannelDraftErrors());
         render();
         return;
       }
@@ -690,11 +691,11 @@ function handleInput(event) {
         state.channelDraft.reviewRounds = '';
       }
       if (target.name === 'mode') {
+        refreshVisibleFormErrors('channel', collectChannelDraftErrors());
         render();
-        setFormErrors('channel', collectChannelDraftErrors());
         return;
       }
-      setFormErrors('channel', collectChannelDraftErrors());
+      refreshVisibleFormErrors('channel', collectChannelDraftErrors());
       render();
       return;
     }
@@ -2951,7 +2952,8 @@ function renderChannelModal() {
   const isKakao = platform === 'kakao';
   const agentNames = (state.data.agents || []).map((entry) => entry.name);
   const isEditing = Boolean(optionalDraftText(current.currentName));
-  const hasErrors = Object.keys(collectChannelDraftErrors(current)).length > 0;
+  const visibleErrors = getFormErrors('channel');
+  const hasErrors = Object.keys(visibleErrors).length > 0;
   const errorText = getFirstFormError('channel');
   return `
     <section class="modal-shell" aria-modal="true" role="dialog" aria-label="채널 ${isEditing ? '수정' : '추가'}">
@@ -3194,6 +3196,14 @@ function setFormErrors(scope, errors = {}) {
 
 function clearFormErrors(scope) {
   state.formErrors[scope] = {};
+}
+
+function refreshVisibleFormErrors(scope, errors = {}) {
+  if (Object.keys(getFormErrors(scope)).length > 0) {
+    setFormErrors(scope, errors);
+  } else {
+    clearFormErrors(scope);
+  }
 }
 
 function renderFormError(scope, key) {
