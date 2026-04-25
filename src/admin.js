@@ -83,8 +83,11 @@ const ADMIN_UI_ROOT = fileURLToPath(new URL('./admin-ui/', import.meta.url));
 const ADMIN_STATIC_CONTENT_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.css', 'text/css; charset=utf-8'],
+  ['.ico', 'image/x-icon'],
   ['.js', 'text/javascript; charset=utf-8'],
+  ['.png', 'image/png'],
   ['.svg', 'image/svg+xml; charset=utf-8'],
+  ['.webmanifest', 'application/manifest+json; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
 ]);
 const CLI_ENTRY_PATH = fileURLToPath(new URL('../bin/hkclaw-lite.js', import.meta.url));
@@ -591,8 +594,7 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
 function resolveAdminStaticAsset(pathname) {
   const normalizedPath = pathname === '/' ? '/index.html' : pathname;
-  const aliasedPath = normalizedPath === '/favicon.ico' ? '/favicon.svg' : normalizedPath;
-  const relativePath = aliasedPath.replace(/^\/+/, '');
+  const relativePath = normalizedPath.replace(/^\/+/, '');
   const resolvedPath = path.resolve(ADMIN_UI_ROOT, relativePath);
   const normalizedRoot = path.resolve(ADMIN_UI_ROOT);
   if (!resolvedPath.startsWith(`${normalizedRoot}${path.sep}`) && resolvedPath !== normalizedRoot) {

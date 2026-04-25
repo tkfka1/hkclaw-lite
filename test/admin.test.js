@@ -769,7 +769,11 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     const html = await htmlResponse.text();
     assert.equal(htmlResponse.status, 200);
     assert.match(html, /hkclaw-lite/i);
+    assert.match(html, /\/favicon\.ico/u);
     assert.match(html, /\/favicon\.svg/u);
+    assert.match(html, /\/favicon-32x32\.png/u);
+    assert.match(html, /\/apple-touch-icon\.png/u);
+    assert.match(html, /\/site\.webmanifest/u);
 
     const appJsResponse = await fetch(`${url}/app.js`);
     const appJs = await appJsResponse.text();
@@ -796,16 +800,44 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     assert.match(viewsJs, /renderHomeView/u);
 
     const faviconResponse = await fetch(`${url}/favicon.ico`);
-    const favicon = await faviconResponse.text();
+    const favicon = Buffer.from(await faviconResponse.arrayBuffer());
     assert.equal(faviconResponse.status, 200);
-    assert.match(faviconResponse.headers.get('content-type') || '', /image\/svg\+xml/u);
-    assert.match(favicon, /<svg/u);
+    assert.match(faviconResponse.headers.get('content-type') || '', /image\/x-icon/u);
+    assert.equal(favicon.subarray(0, 4).toString('hex'), '00000100');
+
+    const svgFaviconResponse = await fetch(`${url}/favicon.svg`);
+    const svgFavicon = await svgFaviconResponse.text();
+    assert.equal(svgFaviconResponse.status, 200);
+    assert.match(svgFaviconResponse.headers.get('content-type') || '', /image\/svg\+xml/u);
+    assert.match(svgFavicon, /<svg/u);
+
+    const pngFaviconResponse = await fetch(`${url}/favicon-32x32.png`);
+    const pngFavicon = Buffer.from(await pngFaviconResponse.arrayBuffer());
+    assert.equal(pngFaviconResponse.status, 200);
+    assert.match(pngFaviconResponse.headers.get('content-type') || '', /image\/png/u);
+    assert.equal(pngFavicon.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+
+    const appleTouchIconResponse = await fetch(`${url}/apple-touch-icon.png`);
+    const appleTouchIcon = Buffer.from(await appleTouchIconResponse.arrayBuffer());
+    assert.equal(appleTouchIconResponse.status, 200);
+    assert.match(appleTouchIconResponse.headers.get('content-type') || '', /image\/png/u);
+    assert.equal(appleTouchIcon.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+
+    const manifestResponse = await fetch(`${url}/site.webmanifest`);
+    const manifest = await manifestResponse.json();
+    assert.equal(manifestResponse.status, 200);
+    assert.match(manifestResponse.headers.get('content-type') || '', /application\/manifest\+json/u);
+    assert.equal(manifest.short_name, 'hkclaw');
+    assert.deepEqual(
+      manifest.icons.map((entry) => entry.src),
+      ['/favicon.svg', '/favicon-32x32.png', '/apple-touch-icon.png'],
+    );
 
     const faviconHeadResponse = await fetch(`${url}/favicon.ico`, {
       method: 'HEAD',
     });
     assert.equal(faviconHeadResponse.status, 200);
-    assert.match(faviconHeadResponse.headers.get('content-type') || '', /image\/svg\+xml/u);
+    assert.match(faviconHeadResponse.headers.get('content-type') || '', /image\/x-icon/u);
 
     const healthResponse = await fetch(`${url}/healthz`);
     const healthPayload = await healthResponse.json();

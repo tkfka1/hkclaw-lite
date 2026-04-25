@@ -1,4 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#15222c"/>
-  <path d="M18 16h10v14h8V16h10v32H36V38h-8v10H18z" fill="#f5ede3"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="hkclaw-lite">
+  <defs>
+    <linearGradient id="bg" x1="10" x2="54" y1="8" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1f3441"/>
+      <stop offset="1" stop-color="#0f1a22"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="18" x2="48" y1="14" y2="50" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff7ed"/>
+      <stop offset="1" stop-color="#e7c89c"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="17" fill="url(#bg)"/>
+  <path d="M18 15h10v14h8V15h10v34H36V37h-8v12H18z" fill="url(#mark)"/>
+  <circle cx="47" cy="17" r="4" fill="#6ee7f9"/>
+  <path d="M15 54h34" stroke="#6ee7f9" stroke-width="3" stroke-linecap="round" opacity=".8"/>
 </svg>
