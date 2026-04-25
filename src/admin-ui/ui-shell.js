@@ -1,4 +1,4 @@
-import { renderIcon } from './icons.js?v=20260425-04';
+import { renderIcon } from './icons.js?v=20260425-05';
 
 export const DESKTOP_NAV_MIN_WIDTH = 1081;
 
@@ -194,7 +194,6 @@ export function renderShortcutCard({ view, title, description, meta, state, esca
       aria-current="${state.activeView === view ? 'page' : 'false'}"
     >
       <div class="shortcut-icon">${renderIcon(resolveViewIcon(view), 'ui-icon')}</div>
-      <span class="shortcut-eyebrow">${escapeHtml(getViewMeta(view).eyebrow)}</span>
       <strong>${escapeHtml(title)}</strong>
       ${description ? `<span class="shortcut-copy">${escapeHtml(description)}</span>` : ''}
       ${meta ? `<span class="shortcut-meta">${escapeHtml(meta)}</span>` : ''}
@@ -298,7 +297,6 @@ export function renderTopBar({ state, escapeHtml, getActiveViewMeta, stats, show
             : ''
         }
         <div class="workspace-header-copy">
-          <span class="hero-eyebrow">${escapeHtml(activeView.eyebrow)}</span>
           <h1>${escapeHtml(activeView.title)}</h1>
         </div>
       </div>

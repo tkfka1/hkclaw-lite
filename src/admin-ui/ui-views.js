@@ -2,8 +2,8 @@ import {
   renderDetailList,
   renderMetricCard,
   renderShortcutCard,
-} from './ui-shell.js?v=20260425-04';
-import { renderIcon } from './icons.js?v=20260425-04';
+} from './ui-shell.js?v=20260425-05';
+import { renderIcon } from './icons.js?v=20260425-05';
 
 export function renderHomeView(ctx) {
   const { state, getDashboardStats, escapeHtml } = ctx;
@@ -14,10 +14,7 @@ export function renderHomeView(ctx) {
       <div class="section-head section-head--stack">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('sparkles', 'ui-icon')}</span>
-          <div>
-            <span class="section-eyebrow">Launcher</span>
-            <h2>바로가기</h2>
-          </div>
+          <h2>바로가기</h2>
         </div>
       </div>
       <div class="shortcut-grid">
@@ -50,10 +47,7 @@ export function renderAgentsView(ctx) {
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('agents', 'ui-icon')}</span>
-          <div>
-          <span class="section-eyebrow">Agents</span>
           <h2>에이전트 목록</h2>
-          </div>
         </div>
         <div class="inline-actions">
           <button type="button" class="btn-primary" data-action="open-agent-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}에이전트 추가</button>
@@ -97,10 +91,7 @@ export function renderChannelsView(ctx) {
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('channels', 'ui-icon')}</span>
-          <div>
-          <span class="section-eyebrow">Channels</span>
           <h2>채널 목록</h2>
-          </div>
         </div>
         <button type="button" class="btn-primary" data-action="open-channel-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}추가</button>
       </div>
@@ -116,10 +107,7 @@ export function renderAllView(ctx) {
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('settings', 'ui-icon')}</span>
-          <div>
-          <span class="section-eyebrow">Settings</span>
           <h2>관리</h2>
-          </div>
         </div>
       </div>
       <div class="settings-grid">
@@ -164,10 +152,7 @@ export function renderAiView(ctx) {
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('ai', 'ui-icon')}</span>
-          <div>
-          <span class="section-eyebrow">AI Runtime</span>
           <h2>AI 관리</h2>
-          </div>
         </div>
         ${
           supportsLocalLlm

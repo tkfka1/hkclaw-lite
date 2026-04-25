@@ -21,6 +21,16 @@ test('admin shell owns the top header so it does not render twice', () => {
   assert.doesNotMatch(appSource, /function\s+renderTopBar\s*\(/u);
 });
 
+test('top-level admin headings avoid duplicate English eyebrow labels', () => {
+  const shellSource = readRepoFile('src/admin-ui/ui-shell.js');
+  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
+
+  assert.doesNotMatch(shellSource, /activeView\.eyebrow/u);
+  assert.doesNotMatch(shellSource, /class="hero-eyebrow"/u);
+  assert.doesNotMatch(shellSource, /class="shortcut-eyebrow"/u);
+  assert.doesNotMatch(viewsSource, /class="section-eyebrow"/u);
+});
+
 test('desktop layout can show the sidebar without always rendering the hamburger button', () => {
   const shellSource = readRepoFile('src/admin-ui/ui-shell.js');
 

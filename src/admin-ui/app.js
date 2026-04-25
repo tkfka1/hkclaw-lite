@@ -5,23 +5,23 @@ import {
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
   shouldUseDesktopSidebar,
-} from './ui-shell.js?v=20260425-04';
+} from './ui-shell.js?v=20260425-05';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
-} from './ui-views.js?v=20260425-04';
+} from './ui-views.js?v=20260425-05';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js?v=20260425-04';
+} from './polling.js?v=20260425-05';
 import {
   getClaudeRuntimeSourceBadge,
   getClaudeRuntimeSourceHintLines,
-} from './claude-runtime-ui.js?v=20260425-04';
-import { renderIcon } from './icons.js?v=20260425-04';
+} from './claude-runtime-ui.js?v=20260425-05';
+import { renderIcon } from './icons.js?v=20260425-05';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
@@ -1665,10 +1665,7 @@ function renderTokenView() {
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('tokens', 'ui-icon')}</span>
-          <div>
-            <span class="section-eyebrow">Usage</span>
-            <h2>토큰 기록</h2>
-          </div>
+          <h2>토큰 기록</h2>
         </div>
         <span class="field-hint">최근 ${escapeHtml(String(tokenUsage.windowDays || 90))}일 · ${escapeHtml(tokenUsage.since || '')} ~ ${escapeHtml(tokenUsage.until || '')}</span>
       </div>
@@ -2271,10 +2268,7 @@ function renderAgentModal() {
         <div class="section-head">
           <div class="section-title-group">
             <span class="section-title-icon">${renderIcon('agents', 'ui-icon')}</span>
-            <div>
-              <span class="section-eyebrow">Agent Wizard</span>
-              <h2>에이전트 ${isEditing ? '수정' : '추가'}</h2>
-            </div>
+            <h2>에이전트 ${isEditing ? '수정' : '추가'}</h2>
           </div>
           <button type="button" class="btn-secondary" data-action="close-agent-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
         </div>
@@ -2342,10 +2336,7 @@ function renderAiModal() {
         <div class="section-head">
           <div class="section-title-group">
             <span class="section-title-icon">${renderIcon(entry.value === 'local-llm' ? 'ai' : resolveAgentTypeIcon(entry.value), 'ui-icon')}</span>
-            <div>
-              <span class="section-eyebrow">AI Runtime</span>
-              <h2>${escapeHtml(modalTitle)} 관리</h2>
-            </div>
+            <h2>${escapeHtml(modalTitle)} 관리</h2>
           </div>
           <div class="inline-actions">
             ${
@@ -2618,10 +2609,7 @@ function renderAdminPasswordModal() {
         <div class="section-head">
           <div class="section-title-group">
             <span class="section-title-icon">${renderIcon('shield', 'ui-icon')}</span>
-            <div>
-              <span class="section-eyebrow">Security</span>
-              <h2>관리자 비밀번호 설정</h2>
-            </div>
+            <h2>관리자 비밀번호 설정</h2>
           </div>
           <button type="button" class="btn-secondary" data-action="close-admin-password-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
         </div>
@@ -2674,10 +2662,7 @@ function renderChannelModal() {
         <div class="section-head">
           <div class="section-title-group">
             <span class="section-title-icon">${renderIcon('channels', 'ui-icon')}</span>
-            <div>
-              <span class="section-eyebrow">Channel Builder</span>
-              <h2>채널 ${isEditing ? '수정' : '추가'}</h2>
-            </div>
+            <h2>채널 ${isEditing ? '수정' : '추가'}</h2>
           </div>
           <button type="button" class="btn-secondary" data-action="close-channel-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
         </div>
@@ -2839,7 +2824,6 @@ function renderLoginScreen() {
     <section class="login-shell">
       <section class="panel login-panel">
         <div class="login-mark">${renderIcon('shield', 'ui-icon')}</div>
-        <span class="hero-eyebrow">Secure Access</span>
         <h1>관리 화면</h1>
         <p class="hero-description">콘솔 접근은 비밀번호로 보호됩니다. 로그인 후 에이전트, 채널, AI 런타임 구성을 바로 관리할 수 있습니다.</p>
         <div class="login-summary">
@@ -2866,7 +2850,6 @@ function renderEmptyState(title, loading = false) {
   return `
     <section class="empty-state ${loading ? 'is-loading' : ''}">
       <div class="login-mark">${renderIcon(loading ? 'sparkles' : 'server', 'ui-icon')}</div>
-      <span class="hero-eyebrow">${escapeHtml(loading ? 'Loading' : 'Ready')}</span>
       <h1>${escapeHtml(title)}</h1>
       <p>${escapeHtml(loading ? '상태와 구성을 불러오는 중입니다.' : '표시할 데이터가 없거나 아직 초기화되지 않았습니다.')}</p>
     </section>

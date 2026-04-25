@@ -399,7 +399,8 @@ strong,
   justify-content: space-between;
   gap: 12px;
   flex-direction: row;
-  padding: 18px 20px;
+  min-height: 72px;
+  padding: 14px 18px;
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(196, 208, 220, 0.95);
   border-radius: var(--radius-xl);
@@ -415,8 +416,13 @@ strong,
 
 .workspace-header-copy {
   display: grid;
-  gap: 5px;
+  gap: 0;
   min-width: 0;
+}
+
+.workspace-header h1 {
+  font-size: clamp(1.52rem, 2vw, 1.88rem);
+  line-height: 1.08;
 }
 
 .hero-description {
@@ -600,7 +606,7 @@ strong,
 
 .section-title-group {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   min-width: 0;
 }
@@ -687,11 +693,11 @@ strong,
 }
 
 .shortcut-card {
-  min-height: 118px;
+  min-height: 104px;
   padding: 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 5px 12px;
+  gap: 4px 12px;
   align-content: center;
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
@@ -710,7 +716,7 @@ strong,
 .shortcut-icon {
   width: 38px;
   height: 38px;
-  grid-row: 1 / span 3;
+  grid-row: 1 / span 2;
   background: rgba(47, 91, 216, 0.09);
 }
 
