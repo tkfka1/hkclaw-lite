@@ -944,6 +944,22 @@ test('admin server saves config changes and can run a mapped channel', async () 
       JSON.stringify(kakaoChannelResponse.payload),
     );
 
+    const duplicateKakaoChannel = await requestJson(`${url}/api/channels`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'kakao-duplicate',
+          platform: 'kakao',
+          connector: 'kakao-main',
+          kakaoChannelId: '*',
+          workspace: 'workspace',
+          agent: 'worker',
+        },
+      },
+    });
+    assert.equal(duplicateKakaoChannel.response.status, 400);
+    assert.match(duplicateKakaoChannel.payload.error, /overlaps with "kakao-main"/u);
+
     const blockedConnectorDelete = await requestJson(
       `${url}/api/connectors/${encodeURIComponent('kakao-main')}`,
       {

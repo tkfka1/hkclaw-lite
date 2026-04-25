@@ -569,6 +569,7 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
     merged.kakaoUserId = undefined;
   }
   validateChannelDefinition(projectRoot, config, merged);
+  validateKakaoChannelRouteUniqueness(config, { name, ...merged });
   return sortObjectKeys(merged);
 }
 
@@ -962,6 +963,72 @@ function validateChannelDefinition(projectRoot, config, channel) {
     );
     assert(hasTribunal, 'reviewRounds requires a tribunal channel.');
   }
+}
+
+function validateKakaoChannelRouteUniqueness(config, candidate) {
+  if ((candidate.platform || 'discord') !== 'kakao') {
+    return;
+  }
+  const candidateRoute = getKakaoChannelRouteKey(candidate);
+  for (const [channelName, channel] of Object.entries(config.channels || {})) {
+    if (channelName === candidate.name || (channel.name && channel.name === candidate.name)) {
+      continue;
+    }
+    if ((channel.platform || 'discord') !== 'kakao') {
+      continue;
+    }
+    if (getKakaoChannelRouteKey(channel) !== candidateRoute) {
+      continue;
+    }
+    if (!kakaoChannelFiltersOverlap(candidate, channel)) {
+      continue;
+    }
+    assert(
+      false,
+      `Kakao channel "${candidate.name}" overlaps with "${channelName}" for ${formatKakaoRouteKey(candidateRoute)}. Narrow kakaoChannelId or kakaoUserId so only one channel can match each inbound message.`,
+    );
+  }
+}
+
+function getKakaoChannelRouteKey(channel) {
+  if (channel.connector) {
+    return `connector:${channel.connector}`;
+  }
+  return `legacy:${channel.agent || ''}`;
+}
+
+function formatKakaoRouteKey(routeKey) {
+  if (routeKey.startsWith('connector:')) {
+    return `connector "${routeKey.slice('connector:'.length)}"`;
+  }
+  return `legacy agent "${routeKey.slice('legacy:'.length)}"`;
+}
+
+function kakaoChannelFiltersOverlap(left, right) {
+  return (
+    kakaoChannelIdFiltersOverlap(left.kakaoChannelId, right.kakaoChannelId) &&
+    kakaoUserIdFiltersOverlap(left.kakaoUserId, right.kakaoUserId)
+  );
+}
+
+function kakaoChannelIdFiltersOverlap(left, right) {
+  const leftValue = normalizeKakaoChannelIdFilter(left);
+  const rightValue = normalizeKakaoChannelIdFilter(right);
+  return leftValue === '*' || rightValue === '*' || leftValue === rightValue;
+}
+
+function kakaoUserIdFiltersOverlap(left, right) {
+  const leftValue = normalizeKakaoUserIdFilter(left);
+  const rightValue = normalizeKakaoUserIdFilter(right);
+  return !leftValue || !rightValue || leftValue === rightValue;
+}
+
+function normalizeKakaoChannelIdFilter(value) {
+  return String(value || '*').trim() || '*';
+}
+
+function normalizeKakaoUserIdFilter(value) {
+  return String(value || '').trim();
 }
 
 function validateDashboardDefinition(config, dashboard) {

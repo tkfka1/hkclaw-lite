@@ -167,6 +167,18 @@ test('channels can reference a reusable messaging connector', () => {
   const loaded = loadConfig(cwd);
   assert.equal(loaded.channels.kakao.connector, 'kakaoMain');
   assert.equal(loaded.connectors.kakaoMain.type, 'kakao');
+  assert.throws(
+    () =>
+      buildChannelDefinition(cwd, loaded, 'kakao-duplicate', {
+        name: 'kakao-duplicate',
+        platform: 'kakao',
+        connector: 'kakaoMain',
+        kakaoChannelId: '*',
+        workspace: '~',
+        agent: 'owner',
+      }),
+    /overlaps with "kakao"/u,
+  );
 
   const blockedRemove = runCli(cwd, ['remove', 'connector', 'kakaoMain', '--yes']);
   assert.notEqual(blockedRemove.status, 0);

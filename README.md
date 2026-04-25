@@ -182,6 +182,7 @@ KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bar
 - 토큰을 비워두면 워커 시작 시 릴레이 세션을 만들고 `/pair <code>` 형태의 페어링 코드를 상태에 표시한다.
 - 채널의 `Kakao 수신 channelId 필터`는 기본적으로 `*`를 쓰면 된다. 특정 릴레이/OpenBuilder channelId만 이 hkclaw-lite 채널로 보내려면 그 값을 넣는다.
 - `Kakao 사용자 ID 필터`를 넣으면 해당 paired user만 해당 채널로 라우팅한다.
+- 같은 커넥터 안에서는 Kakao 라우팅 필터가 겹치면 저장을 막는다. 예를 들어 `kakaoChannelId=*`이고 사용자 필터가 빈 채널을 같은 커넥터에 두 개 만들 수 없다. 여러 채널을 나누려면 `kakaoChannelId`나 `kakaoUserId`를 좁혀서 각 메시지가 정확히 한 채널에만 매칭되게 한다.
 - 그래서 hkclaw-lite의 **Channel은 역할이 있다.** Kakao 연결 자체를 여는 것은 Connector/worker지만, 어떤 workspace, single/tribunal 모드, owner/reviewer/arbiter role 세션으로 실행할지는 Channel이 결정한다.
 - 기존처럼 에이전트에 Kakao 연결값이 붙어 있는 설정은 legacy 호환으로 계속 읽고, 로드 시 같은 이름의 Kakao 커넥터처럼 취급한다.
 

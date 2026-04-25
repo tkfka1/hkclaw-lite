@@ -4004,6 +4004,12 @@ function collectChannelDraftErrors(draft = state.channelDraft || {}) {
   if (!optionalDraftText(draft.agent)) {
     errors.agent = 'owner 에이전트를 고르세요.';
   }
+  if (platform === 'kakao') {
+    const conflictingChannel = findKakaoChannelRouteConflict(draft);
+    if (conflictingChannel) {
+      errors.kakaoChannelId = `채널 "${conflictingChannel.name}"과 Kakao 라우팅 필터가 겹칩니다. channelId 또는 사용자 ID 필터를 좁혀주세요.`;
+    }
+  }
   if (mode === 'tribunal') {
     if (!optionalDraftText(draft.reviewer)) {
       errors.reviewer = 'reviewer 에이전트를 고르세요.';
@@ -4037,6 +4043,48 @@ function collectChannelDraftErrors(draft = state.channelDraft || {}) {
     }
   }
   return errors;
+}
+
+function findKakaoChannelRouteConflict(draft) {
+  const candidateName = optionalDraftText(draft.currentName) || optionalDraftText(draft.name);
+  const routeKey = getKakaoDraftRouteKey(draft);
+  if (!routeKey) {
+    return null;
+  }
+  return (state.data?.channels || []).find((channel) => {
+    if (channel.name === candidateName) {
+      return false;
+    }
+    if ((channel.platform || 'discord') !== 'kakao') {
+      return false;
+    }
+    return (
+      getKakaoDraftRouteKey(channel) === routeKey &&
+      kakaoChannelIdFiltersOverlap(draft.kakaoChannelId, channel.kakaoChannelId) &&
+      kakaoUserIdFiltersOverlap(draft.kakaoUserId, channel.kakaoUserId)
+    );
+  }) || null;
+}
+
+function getKakaoDraftRouteKey(channel) {
+  const connector = optionalDraftText(channel.connector);
+  if (connector) {
+    return `connector:${connector}`;
+  }
+  const agent = optionalDraftText(channel.agent);
+  return agent ? `legacy:${agent}` : '';
+}
+
+function kakaoChannelIdFiltersOverlap(left, right) {
+  const leftValue = optionalDraftText(left) || '*';
+  const rightValue = optionalDraftText(right) || '*';
+  return leftValue === '*' || rightValue === '*' || leftValue === rightValue;
+}
+
+function kakaoUserIdFiltersOverlap(left, right) {
+  const leftValue = optionalDraftText(left);
+  const rightValue = optionalDraftText(right);
+  return !leftValue || !rightValue || leftValue === rightValue;
 }
 
 function collectLocalLlmDraftErrors(draft = state.localLlmDraft || {}) {
@@ -5755,6 +5803,16 @@ function localizeErrorMessage(message) {
   const unknownAgentMatch = text.match(/^Channel references unknown agent "(.+)"\.$/u);
   if (unknownAgentMatch) {
     return `없는 에이전트입니다: "${unknownAgentMatch[1]}".`;
+  }
+
+  const unknownConnectorMatch = text.match(/^Channel references unknown connector "(.+)"\.$/u);
+  if (unknownConnectorMatch) {
+    return `없는 커넥터입니다: "${unknownConnectorMatch[1]}".`;
+  }
+
+  const kakaoOverlapMatch = text.match(/^Kakao channel "(.+)" overlaps with "(.+)" for (.+)\./u);
+  if (kakaoOverlapMatch) {
+    return `Kakao 채널 "${kakaoOverlapMatch[1]}"의 라우팅 필터가 "${kakaoOverlapMatch[2]}"와 겹칩니다. channelId 또는 사용자 ID 필터를 좁혀주세요.`;
   }
 
   if (text === 'Password is required.') {

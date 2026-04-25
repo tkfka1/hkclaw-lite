@@ -71,6 +71,7 @@ test('channels page exposes reusable connector management', () => {
   assert.match(appSource, /data-form="connector"/u);
   assert.match(appSource, /open-connector-modal/u);
   assert.match(appSource, /\/api\/connectors/u);
+  assert.match(appSource, /findKakaoChannelRouteConflict/u);
 });
 
 test('form fields stay top-aligned when validation messages expand a row', () => {
