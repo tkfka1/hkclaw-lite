@@ -1,4 +1,4 @@
-import { renderIcon } from './icons.js?v=20260426-01';
+import { renderIcon } from './icons.js?v=20260426-02';
 
 export const DESKTOP_NAV_MIN_WIDTH = 1081;
 
@@ -329,12 +329,13 @@ export function renderFrame({
 }) {
   const stats = state.data ? getDashboardStats() : null;
   const desktopNavVisible = Boolean(state.data && state.desktopNav);
+  const sidebarVisible = Boolean(state.data && stats && (desktopNavVisible || state.navOpen));
   return `
     <div class="app-shell ${escapeAttr(className)} ${state.navOpen ? 'is-nav-open' : ''}">
       <div class="app-backdrop" aria-hidden="true"></div>
-      ${state.data && !desktopNavVisible ? `<button type="button" class="nav-scrim ${state.navOpen ? 'is-visible' : ''}" data-action="close-nav" aria-label="메뉴 닫기"></button>` : ''}
+      ${state.data && !desktopNavVisible && state.navOpen ? `<button type="button" class="nav-scrim is-visible" data-action="close-nav" aria-label="메뉴 닫기"></button>` : ''}
       <div class="workspace-shell ${state.data ? '' : 'workspace-shell--simple'} ${desktopNavVisible ? 'workspace-shell--desktop-nav' : ''}">
-        ${state.data && stats ? renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible }) : ''}
+        ${sidebarVisible ? renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible }) : ''}
         <div class="workspace-main">
           ${state.data ? renderTopBar({ state, escapeHtml, getActiveViewMeta, stats, showNavToggle: !desktopNavVisible }) : ''}
           <div class="shell ${state.data ? 'shell--embedded' : ''}">${content}</div>

@@ -5,23 +5,23 @@ import {
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
   shouldUseDesktopSidebar,
-} from './ui-shell.js?v=20260426-01';
+} from './ui-shell.js?v=20260426-02';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
-} from './ui-views.js?v=20260426-01';
+} from './ui-views.js?v=20260426-02';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js?v=20260426-01';
+} from './polling.js?v=20260426-02';
 import {
   getClaudeRuntimeSourceBadge,
   getClaudeRuntimeSourceHintLines,
-} from './claude-runtime-ui.js?v=20260426-01';
-import { renderIcon } from './icons.js?v=20260426-01';
+} from './claude-runtime-ui.js?v=20260426-02';
+import { renderIcon } from './icons.js?v=20260426-02';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';

@@ -36,7 +36,9 @@ test('desktop layout can show the sidebar without always rendering the hamburger
 
   assert.match(shellSource, /showNavToggle/u);
   assert.match(shellSource, /desktopNavVisible/u);
+  assert.match(shellSource, /const sidebarVisible = Boolean\(state\.data && stats && \(desktopNavVisible \|\| state\.navOpen\)\);/u);
   assert.match(shellSource, /nav-toggle-button/u);
+  assert.match(shellSource, /state\.data && !desktopNavVisible && state\.navOpen/u);
   assert.match(shellSource, /desktopNavVisible \|\| state\.navOpen \? '' : 'inert'/u);
 });
 
@@ -102,6 +104,8 @@ test('mobile cards stack actions below content instead of squeezing labels', () 
 
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.card\s*\{[\s\S]*?flex-direction:\s*column;/u);
   assert.match(styles, /\.card\s*>\s*\.inline-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fit, minmax\(128px, 1fr\)\);/u);
+  assert.match(styles, /\.agent-status-grid\s*\{[\s\S]*?overflow-x:\s*auto;/u);
+  assert.match(styles, /\.agent-chip\s*\{[\s\S]*?flex:\s*0 0 auto;/u);
 });
 
 test('mobile shell exposes a thumb-friendly bottom navigation dock', () => {
@@ -124,6 +128,15 @@ test('mobile modals use the dynamic viewport and safe-area padding', () => {
 
   assert.match(styles, /\.modal-shell\s*\{[\s\S]*?env\(safe-area-inset-top\)[\s\S]*?env\(safe-area-inset-bottom\)/u);
   assert.match(styles, /\.modal-card\s*\{[\s\S]*?max-height:\s*calc\(100dvh - 24px\);/u);
+  assert.match(styles, /\.modal-card\s*>\s*\.section-head\s*\{[\s\S]*?position:\s*sticky;/u);
+  assert.match(styles, /\.modal-card\s*>\s*form\s*>\s*\.actions,[\s\S]*?\.modal-card \.wizard-actions\s*\{[\s\S]*?position:\s*sticky;/u);
+});
+
+test('closed mobile sidebar is visually and interactively hidden', () => {
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(styles, /\.sidebar-panel\s*\{[\s\S]*?visibility:\s*hidden;[\s\S]*?pointer-events:\s*none;/u);
+  assert.match(styles, /\.sidebar-panel\.is-open,[\s\S]*?\.sidebar-panel--desktop\s*\{[\s\S]*?visibility:\s*visible;[\s\S]*?pointer-events:\s*auto;/u);
 });
 
 test('channel modal does not show empty-field errors before submit', () => {
