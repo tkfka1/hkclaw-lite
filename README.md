@@ -118,6 +118,21 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 
 즉 Helm 기본 배포는 단일 웹 어드민 Pod 기준이고, 별도 role Pod가 필요할 때만 `args`를 override 하면 된다.
 
+### Kubernetes / GitOps 인증 기준
+
+이미지 안에는 `kubectl`과 `argocd`가 들어있지만, 차트가 클러스터 권한을 자동으로 열어주지는 않는다.
+
+- 기본값은 `serviceAccount.create=true`, `serviceAccount.automountServiceAccountToken=false` 다.
+- 그래서 Pod 안에서 `kubectl`을 실행해도 기본 ServiceAccount 토큰이 자동 주입되지 않는다.
+- 클러스터 내부 권한이 필요하면 명시적으로 `serviceAccount.automountServiceAccountToken=true` 로 켜고, 필요한 RBAC를 별도로 붙여야 한다.
+- 클러스터 외부 권한이 필요하면 kubeconfig를 Secret/PVC/extraVolume 등으로 직접 마운트하거나 환경 변수로 넘겨야 한다.
+- GitOps 운영에서는 앱 저장소를 직접 `kubectl apply` 하는 방식보다, values 저장소의 image tag/digest를 갱신하고 Argo CD가 sync 하게 두는 방식이 기본이다.
+- 관리자 암호는 `HKCLAW_LITE_ADMIN_PASSWORD` 로 bootstrap 할 수 있다. Helm에서는 `adminSecret` 또는 `adminExternalSecret`이 이 값을 주입한다.
+
+관리자 암호는 첫 시작 때 SQLite 런타임 DB로 이관된다. 이후에는 웹 어드민에서 바꾼 암호가 기준이고, 세션 쿠키 이름은 `hkclaw_lite_admin_session`, 기본 TTL은 7일이다.
+
+AI 로그인은 Kubernetes ServiceAccount가 아니라 컨테이너의 `HOME` 기준이다. Helm 기본값에서는 `HOME=/home/hkclaw` 이고, 이 경로가 state PVC에 저장된다. Codex/Claude/Gemini 로그인 상태와 `.hkclaw-lite` 런타임 상태도 이 PVC에 남는다.
+
 ## 기본 흐름
 
 1. `admin`을 띄운다.
@@ -136,6 +151,147 @@ hkclaw-lite telegram serve --agent <agent-name>
 ```
 
 `admin`은 웹 어드민, `run`은 one-shot 실행, `discord serve`/`telegram serve`는 특정 에이전트의 플랫폼 워커를 직접 띄우는 명령이다.
+
+## 채널, 에이전트, 하네스 관리 모델
+
+헷갈리기 쉬운 부분은 이것이다.
+
+`hkclaw-lite`의 대화 하네스와 세션 경계는 **에이전트 단독 기준이 아니라 채널 + 역할(role) 기준**이다.
+
+```txt
+session_key = <channel.name>:<role>
+```
+
+예를 들면:
+
+```txt
+main:owner
+main:reviewer
+main:arbiter
+ops:owner
+```
+
+같은 에이전트를 여러 채널에 붙여도 각 채널은 별도 세션 컨텍스트를 가진다.
+
+### 용어
+
+- **Agent**: Codex, Claude, Gemini, local LLM, command runner 같은 실제 실행 주체다. 모델, 명령, fallback, 플랫폼 토큰을 가진다.
+- **Channel**: Discord/Telegram 대상, 기본 워크스페이스, 실행 모드, role 매핑을 가진 실행 단위다.
+- **Role**: 한 turn 안에서 에이전트가 맡는 역할이다. 기본은 `owner`, tribunal 모드에서는 `owner`, `reviewer`, `arbiter`가 있다.
+- **Harness / runtime session**: 채널 turn을 실행하고, role별 메시지/세션/사용량/outbox를 기록하는 런타임 상태다.
+
+런타임 DB에는 주로 다음 상태가 남는다.
+
+- `runtime_runs`: 채널 turn 1회의 상태, active role, round, 최종 disposition.
+- `runtime_role_messages`: owner/reviewer/arbiter가 낸 메시지.
+- `runtime_role_sessions`: `channel.name + role` 기준의 세션 매핑.
+- `runtime_outbox_events`: Discord/Telegram으로 내보낼 role 메시지 이벤트.
+
+### Single 채널
+
+Single 모드에서는 채널의 기본 에이전트가 owner로 실행된다.
+
+```txt
+channel.agent -> owner
+```
+
+흐름:
+
+1. `hkclaw-lite run --channel <name>` 또는 메시징 워커가 채널 turn을 시작한다.
+2. `channel.agent`를 찾아 `owner` role로 실행한다.
+3. 결과를 `runtime_runs`, `runtime_role_messages`, `runtime_role_sessions`에 기록한다.
+4. Discord/Telegram 워커가 필요한 경우 outbox 이벤트를 전송한다.
+
+세션 재사용도 `agent.name` 단독이 아니라 `channel.name:owner` 기준이다. 저장된 세션의 `agentName`이 현재 `channel.agent`와 다르면 기존 세션은 무시된다. 에이전트를 바꿨는데 옛 Claude 세션에 잘못 붙는 사고를 막기 위한 장치다.
+
+### Tribunal, 또는 tribu 흐름
+
+대화에서 `tribu`라고 부르는 흐름은 코드와 설정에서는 `tribunal` 모드다.
+
+Tribunal은 한 채널 안에서 세 에이전트 역할이 협업하는 모드다.
+
+```txt
+channel.agent    -> owner
+channel.reviewer -> reviewer
+channel.arbiter  -> arbiter
+```
+
+활성 조건:
+
+```txt
+channel.mode = tribunal
+```
+
+또는 legacy/호환 구성에서 `reviewer`와 `arbiter`가 둘 다 있으면 tribunal로 처리된다.
+
+실행 흐름:
+
+```txt
+owner 초안 작성
+  ↓
+reviewer 검토
+  ↓
+APPROVED면 owner 답변을 최종 전송
+BLOCKED면 owner가 reviewer 피드백으로 재수정
+  ↓
+reviewRounds를 다 써도 BLOCKED면 arbiter가 최종 응답 작성
+```
+
+`reviewer`는 반드시 다음 둘 중 하나로 시작하는 판정을 내야 한다.
+
+```txt
+APPROVED
+BLOCKED: <reason>
+```
+
+판정이 이 형식을 지키지 않으면 invalid verdict로 보고 바로 `arbiter`가 최종 응답을 만든다.
+
+기본 review round는 2회다.
+
+```txt
+reviewRounds || 2
+```
+
+### Role별 세션 정책
+
+Claude CLI 같은 sticky session을 지원하는 런타임은 role별로 다르게 다룬다.
+
+```txt
+owner    sticky
+reviewer sticky
+arbiter  ephemeral
+```
+
+owner/reviewer는 이전 turn의 맥락을 이어갈 수 있게 `channel.name:role` 기준으로 세션을 재사용한다. arbiter는 최종 판정자 성격이라 기본적으로 일회성 세션으로 본다.
+
+최근 role 히스토리도 owner/reviewer 중심으로 주입된다. arbiter는 이전 판정보다 현재 owner 초안과 reviewer 피드백을 보고 최종 결정을 내리는 쪽에 가깝다.
+
+### 워크스페이스 기준
+
+채널의 기본 작업 디렉터리는 `channel.workspace` 또는 `channel.workdir`다.
+
+Tribunal에서는 role별 override를 둘 수 있다.
+
+```txt
+ownerWorkspace
+reviewerWorkspace
+arbiterWorkspace
+```
+
+지정하지 않으면 기본 채널 workspace를 쓴다. Helm 기본 배포에서는 `/home/hkclaw/workspace`가 기본 채널 워크스페이스다.
+
+### 세션 초기화
+
+채널 카드에 Claude 세션이 있으면 웹 어드민에서 `세션 초기화` 버튼이 보인다. 이 동작은 해당 채널의 저장된 runtime session 매핑을 지운다.
+
+API로는 다음과 같다.
+
+```bash
+curl -X DELETE \
+  http://127.0.0.1:5687/api/channels/<channel-name>/runtime-sessions
+```
+
+초기화 후 다음 실행은 새 runtime session으로 시작한다.
 
 ## GitHub 릴리즈 / 배포 자동화
 
