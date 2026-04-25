@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.4 - 2026-04-25
 
 ### Added
 - Added unauthenticated Kakao relay health endpoints for ingress and OpenBuilder smoke checks.
