@@ -26,6 +26,7 @@ import {
   writeTelegramAgentServiceStatus,
 } from '../src/telegram-runtime-state.js';
 import {
+  recordRuntimeRoleSession,
   recordRuntimeUsageEvent,
   setManagedServiceEnvSnapshot,
 } from '../src/runtime-db.js';
@@ -2309,6 +2310,97 @@ test('admin server can reset stored Claude channel runtime sessions', async () =
       });
     },
   );
+});
+
+test('admin server can reset stored Claude channel runtime sessions by role', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'claude-code',
+  });
+  config.agents.reviewer = buildAgentDefinition(projectRoot, 'reviewer', {
+    name: 'reviewer',
+    agent: 'claude-code',
+  });
+  config.agents.arbiter = buildAgentDefinition(projectRoot, 'arbiter', {
+    name: 'arbiter',
+    agent: 'claude-code',
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    mode: 'tribunal',
+    discordChannelId: '123456789012345678',
+    workspace: 'workspace',
+    agent: 'owner',
+    reviewer: 'reviewer',
+    arbiter: 'arbiter',
+  });
+  saveConfig(projectRoot, config);
+  const channel = getChannel(config, 'main');
+
+  await recordRuntimeRoleSession(projectRoot, {
+    channel,
+    runId: 'owner-run',
+    entry: {
+      role: 'owner',
+      agent: config.agents.owner,
+      mode: 'tribunal',
+      final: true,
+      runtimeBackend: 'claude-cli',
+      runtimeSessionId: 'owner-session',
+    },
+  });
+  await recordRuntimeRoleSession(projectRoot, {
+    channel,
+    runId: 'reviewer-run',
+    entry: {
+      role: 'reviewer',
+      agent: config.agents.reviewer,
+      mode: 'tribunal',
+      final: true,
+      verdict: 'approved',
+      runtimeBackend: 'claude-cli',
+      runtimeSessionId: 'reviewer-session',
+    },
+  });
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const stateBefore = await requestJson(`${url}/api/state`);
+    assert.equal(stateBefore.response.status, 200, JSON.stringify(stateBefore.payload));
+    const channelBefore = stateBefore.payload.channels.find((entry) => entry.name === 'main');
+    assert.deepEqual(
+      channelBefore.runtime.sessions.map((entry) => entry.role).sort(),
+      ['owner', 'reviewer'],
+    );
+
+    const resetOwner = await requestJson(
+      `${url}/api/channels/${encodeURIComponent('main')}/runtime-sessions?role=owner`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(resetOwner.response.status, 200, JSON.stringify(resetOwner.payload));
+    const channelAfterOwnerReset = resetOwner.payload.state.channels.find(
+      (entry) => entry.name === 'main',
+    );
+    assert.deepEqual(
+      channelAfterOwnerReset.runtime.sessions.map((entry) => entry.role),
+      ['reviewer'],
+    );
+
+    const invalidReset = await requestJson(
+      `${url}/api/channels/${encodeURIComponent('main')}/runtime-sessions?role=member`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(invalidReset.response.status, 400);
+    assert.match(invalidReset.payload.error, /owner, reviewer, or arbiter/u);
+  });
 });
 
 test('admin server uses the selected local LLM connection for test calls', async () => {

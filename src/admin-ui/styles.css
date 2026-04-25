@@ -476,7 +476,11 @@ strong,
 .usage-breakdown-table-body,
 .token-breakdown-list,
 .token-chart,
-.token-table-body {
+.token-table-body,
+.runtime-session-panel,
+.runtime-session-list,
+.runtime-reset-body,
+.runtime-reset-targets {
   display: grid;
   gap: 12px;
 }
@@ -1196,6 +1200,12 @@ strong,
   justify-content: center;
 }
 
+.btn-compact {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
 .icon-button {
   border: 1px solid rgba(216, 225, 234, 0.92);
   background: rgba(15, 23, 42, 0.04);
@@ -1283,6 +1293,77 @@ strong,
 
 .modal-card--small {
   width: min(460px, calc(100vw - 24px));
+}
+
+.runtime-session-panel {
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid rgba(216, 225, 234, 0.76);
+  border-radius: var(--radius-md);
+  background: rgba(248, 251, 255, 0.72);
+}
+
+.runtime-session-head,
+.runtime-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.runtime-session-head {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.runtime-session-head span,
+.runtime-session-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.runtime-session-head strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+}
+
+.runtime-session-row {
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(216, 225, 234, 0.66);
+}
+
+.runtime-session-main {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.runtime-session-main strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.runtime-session-main span,
+.runtime-session-main code,
+.runtime-reset-body p {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.runtime-session-main code {
+  font-family: var(--font-mono);
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.runtime-reset-body p {
+  margin: 0;
+  line-height: 1.5;
 }
 
 .form,
@@ -1872,6 +1953,12 @@ button:focus-visible {
     width: 100%;
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .runtime-session-head,
+  .runtime-session-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .agent-card-actions {

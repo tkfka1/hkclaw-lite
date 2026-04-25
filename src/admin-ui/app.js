@@ -5,23 +5,23 @@ import {
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
   shouldUseDesktopSidebar,
-} from './ui-shell.js?v=20260425-05';
+} from './ui-shell.js?v=20260425-06';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
-} from './ui-views.js?v=20260425-05';
+} from './ui-views.js?v=20260425-06';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js?v=20260425-05';
+} from './polling.js?v=20260425-06';
 import {
   getClaudeRuntimeSourceBadge,
   getClaudeRuntimeSourceHintLines,
-} from './claude-runtime-ui.js?v=20260425-05';
-import { renderIcon } from './icons.js?v=20260425-05';
+} from './claude-runtime-ui.js?v=20260425-06';
+import { renderIcon } from './icons.js?v=20260425-06';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
@@ -50,6 +50,7 @@ const state = {
   channelModalOpen: false,
   localLlmModalOpen: false,
   adminPasswordModalOpen: false,
+  runtimeResetModal: null,
   channelDraft: null,
   localLlmDraft: null,
   agentWizard: null,
@@ -250,6 +251,23 @@ function handleClick(event) {
     state.adminPasswordModalOpen = false;
     clearFormErrors('adminPassword');
     render();
+    return;
+  }
+
+  if (action === 'open-reset-channel-runtime-sessions') {
+    openRuntimeResetModal(button.dataset.name, button.dataset.role || '');
+    return;
+  }
+
+  if (action === 'close-runtime-reset-modal') {
+    state.runtimeResetModal = null;
+    render();
+    return;
+  }
+
+  if (action === 'confirm-reset-channel-runtime-sessions') {
+    const modal = state.runtimeResetModal;
+    void resetChannelRuntimeSessions(modal?.channelName, modal?.role || '');
     return;
   }
 
@@ -498,11 +516,6 @@ function handleClick(event) {
 
   if (action === 'delete-local-llm-connection') {
     void deleteLocalLlmConnection(button.dataset.name);
-    return;
-  }
-
-  if (action === 'reset-channel-runtime-sessions') {
-    void resetChannelRuntimeSessions(button.dataset.name);
     return;
   }
 
@@ -1278,28 +1291,42 @@ async function deleteLocalLlmConnection(name) {
   }
 }
 
-async function resetChannelRuntimeSessions(name) {
+function openRuntimeResetModal(channelName, role = '') {
+  const channel = state.data?.channels?.find((entry) => entry.name === channelName);
+  if (!channel) {
+    setNotice('error', '채널을 찾지 못했습니다.');
+    render();
+    return;
+  }
+  state.runtimeResetModal = {
+    channelName,
+    role: role || '',
+  };
+  render();
+}
+
+async function resetChannelRuntimeSessions(name, role = '') {
   if (!name) {
     return;
   }
 
-  const confirmed = window.confirm(
-    `채널 "${name}"의 Claude 세션 재사용 매핑을 초기화할까요? 다음 실행부터 새 세션으로 시작합니다.`,
-  );
-  if (!confirmed) {
-    return;
-  }
-
   try {
+    const query = role ? `?role=${encodeURIComponent(role)}` : '';
     const response = await mutateJson(
-      `/api/channels/${encodeURIComponent(name)}/runtime-sessions`,
+      `/api/channels/${encodeURIComponent(name)}/runtime-sessions${query}`,
       {
         method: 'DELETE',
       },
     );
 
     state.data = response.state;
-    setNotice('info', `채널 "${name}"의 Claude 세션 매핑을 초기화했습니다.`);
+    state.runtimeResetModal = null;
+    setNotice(
+      'info',
+      role
+        ? `채널 "${name}"의 ${localizeAgentRole(role)} Claude 세션 매핑을 초기화했습니다.`
+        : `채널 "${name}"의 Claude 세션 매핑을 초기화했습니다.`,
+    );
     render();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
@@ -1407,6 +1434,7 @@ function render() {
     ${state.channelModalOpen ? renderChannelModal() : ''}
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
+    ${state.runtimeResetModal ? renderRuntimeResetModal() : ''}
   `);
   restoreRenderState(previousViewState);
 }
@@ -2105,7 +2133,8 @@ function renderChannelList(channels, agents) {
           const mode = channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single');
           const runtime = channel.runtime || {};
           const lastRun = runtime.lastRun || null;
-          const claudeSessions = (runtime.sessions || []).filter(
+          const runtimeSessions = sortRuntimeSessions(runtime.sessions || []);
+          const claudeSessions = runtimeSessions.filter(
             (session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId,
           );
           return `
@@ -2154,17 +2183,13 @@ function renderChannelList(channels, agents) {
                     `
                     : ''
                 }
-                ${
-                  claudeSessions.length > 0
-                    ? `<div class="card-tags"><span class="mini-chip">${renderIcon('ai', 'ui-icon')}${escapeHtml(`세션 ${claudeSessions.length}`)}</span></div>`
-                    : ''
-                }
+                ${renderChannelRuntimeSessions(channel, runtimeSessions)}
               </div>
               <div class="inline-actions">
                 <button type="button" class="btn-secondary" data-action="edit-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
                 ${
                   claudeSessions.length > 0
-                    ? `<button type="button" class="btn-secondary" data-action="reset-channel-runtime-sessions" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', '세션 초기화')}</button>`
+                    ? `<button type="button" class="btn-secondary" data-action="open-reset-channel-runtime-sessions" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', 'Claude 전체 초기화')}</button>`
                     : ''
                 }
                 <button type="button" class="btn-danger" data-action="delete-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>
@@ -2173,6 +2198,66 @@ function renderChannelList(channels, agents) {
           `;
         })
         .join('')}
+    </div>
+  `;
+}
+
+function sortRuntimeSessions(sessions) {
+  const roleRank = new Map([
+    ['owner', 0],
+    ['reviewer', 1],
+    ['arbiter', 2],
+  ]);
+  return [...sessions].sort((left, right) => {
+    const leftRank = roleRank.get(left?.role) ?? 99;
+    const rightRank = roleRank.get(right?.role) ?? 99;
+    return leftRank - rightRank || String(left?.role || '').localeCompare(String(right?.role || ''));
+  });
+}
+
+function renderChannelRuntimeSessions(channel, sessions) {
+  if (!sessions.length) {
+    return '';
+  }
+  const claudeCount = sessions.filter(
+    (session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId,
+  ).length;
+  return `
+    <div class="runtime-session-panel" aria-label="채널 런타임 세션">
+      <div class="runtime-session-head">
+        <span>${renderIcon('ai', 'ui-icon')}${escapeHtml(`채널+역할 세션 ${sessions.length}`)}</span>
+        <strong>${escapeHtml(claudeCount ? `Claude ${claudeCount}` : '재사용 세션 없음')}</strong>
+      </div>
+      <div class="runtime-session-list">
+        ${sessions
+          .map((session) => {
+            const canReset = session.runtimeBackend === 'claude-cli' && session.runtimeSessionId;
+            return `
+              <div class="runtime-session-row">
+                <div class="runtime-session-main">
+                  <strong>${escapeHtml(`${channel.name}:${session.role || 'unknown'}`)}</strong>
+                  <span>${escapeHtml([
+                    session.agentName || 'agent 미지정',
+                    localizeRuntimeBackend(session.runtimeBackend),
+                    localizeSessionPolicy(session.sessionPolicy),
+                    `run ${session.runCount || 0}`,
+                  ].filter(Boolean).join(' · '))}</span>
+                  ${
+                    session.runtimeSessionId
+                      ? `<code>${escapeHtml(formatRuntimeSessionId(session.runtimeSessionId))}</code>`
+                      : ''
+                  }
+                </div>
+                ${
+                  canReset
+                    ? `<button type="button" class="btn-secondary btn-compact" data-action="open-reset-channel-runtime-sessions" data-name="${escapeAttr(channel.name)}" data-role="${escapeAttr(session.role || '')}" ${state.busy ? 'disabled' : ''}>${escapeHtml(`${localizeAgentRole(session.role)} 초기화`)}</button>`
+                    : `<span class="mini-chip">${escapeHtml(localizeSessionPolicy(session.sessionPolicy))}</span>`
+                }
+              </div>
+            `;
+          })
+          .join('')}
+      </div>
     </div>
   `;
 }
@@ -2642,6 +2727,57 @@ function renderAdminPasswordModal() {
             <button type="submit" class="btn-primary" ${state.busy || hasErrors ? 'disabled' : ''}${hasErrors && errorText ? ` title="${escapeAttr(errorText)}"` : ''}>${renderButtonLabel('edit', '저장')}</button>
           </div>
         </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderRuntimeResetModal() {
+  const modal = state.runtimeResetModal || {};
+  const channel = state.data?.channels?.find((entry) => entry.name === modal.channelName) || null;
+  const sessions = sortRuntimeSessions(channel?.runtime?.sessions || []);
+  const targetSessions = modal.role
+    ? sessions.filter((session) => session.role === modal.role)
+    : sessions.filter((session) => session.runtimeBackend === 'claude-cli');
+  const scopeLabel = modal.role ? `${channel?.name || modal.channelName}:${modal.role}` : channel?.name || modal.channelName;
+  const resetLabel = modal.role ? `${localizeAgentRole(modal.role)} role` : '채널 전체 Claude role';
+
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="Claude 세션 초기화">
+      <div class="modal-backdrop" data-action="close-runtime-reset-modal"></div>
+      <div class="panel modal-card modal-card--small">
+        <div class="section-head">
+          <div class="section-title-group">
+            <span class="section-title-icon">${renderIcon('refresh', 'ui-icon')}</span>
+            <h2>Claude 세션 초기화</h2>
+          </div>
+          <button type="button" class="btn-secondary" data-action="close-runtime-reset-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
+        </div>
+        <div class="runtime-reset-body">
+          <p><strong>${escapeHtml(scopeLabel)}</strong>의 저장된 Claude CLI 세션 매핑을 지웁니다.</p>
+          <p>삭제 대상은 ${escapeHtml(resetLabel)}입니다. 다음 실행부터 새 Claude 세션으로 시작하고, 과거 run 기록과 메시지는 유지됩니다.</p>
+          ${
+            targetSessions.length
+              ? `
+                  <div class="runtime-reset-targets">
+                    ${targetSessions
+                      .map((session) => `
+                        <span class="mini-chip">${escapeHtml([
+                          session.role || 'unknown',
+                          session.agentName || 'agent 미지정',
+                          formatRuntimeSessionId(session.runtimeSessionId),
+                        ].filter(Boolean).join(' · '))}</span>
+                      `)
+                      .join('')}
+                  </div>
+                `
+              : '<p class="field-hint">현재 지울 Claude 세션 매핑이 없습니다.</p>'
+          }
+        </div>
+        <div class="actions">
+          <button type="button" class="btn-danger" data-action="confirm-reset-channel-runtime-sessions" ${state.busy || !targetSessions.length ? 'disabled' : ''}>${renderButtonLabel('refresh', '초기화')}</button>
+          <button type="button" class="btn-secondary" data-action="close-runtime-reset-modal" ${state.busy ? 'disabled' : ''}>취소</button>
+        </div>
       </div>
     </section>
   `;
@@ -4620,6 +4756,34 @@ function localizeRuntimeStatus(value) {
     return '대기';
   }
   return value || '';
+}
+
+function localizeRuntimeBackend(value) {
+  if (value === 'claude-cli') {
+    return 'Claude CLI';
+  }
+  return value || 'backend 없음';
+}
+
+function localizeSessionPolicy(value) {
+  if (value === 'sticky') {
+    return 'sticky';
+  }
+  if (value === 'ephemeral') {
+    return 'ephemeral';
+  }
+  return value || 'policy 없음';
+}
+
+function formatRuntimeSessionId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  if (normalized.length <= 12) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 8)}…${normalized.slice(-4)}`;
 }
 
 function localizeReviewerVerdict(value) {

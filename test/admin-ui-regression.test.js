@@ -52,3 +52,13 @@ test('agents page keeps operator controls visible and bookmarkable', () => {
   assert.match(viewsSource, /name="agentSearch"/u);
   assert.match(viewsSource, /name="agentFilter"/u);
 });
+
+test('channels page exposes role-scoped runtime session controls', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+
+  assert.match(appSource, /renderChannelRuntimeSessions/u);
+  assert.match(appSource, /data-role=/u);
+  assert.match(appSource, /open-reset-channel-runtime-sessions/u);
+  assert.match(appSource, /confirm-reset-channel-runtime-sessions/u);
+  assert.match(appSource, /channel\.name.*session\.role/us);
+});

@@ -47,6 +47,8 @@ import {
 } from './store.js';
 import { assert } from './utils.js';
 
+const RUNTIME_SESSION_RESET_ROLES = new Set(['owner', 'reviewer', 'arbiter']);
+
 export async function buildAdminSnapshot(projectRoot) {
   const config = loadConfig(projectRoot);
   const channels = listChannels(config);
@@ -325,11 +327,17 @@ export async function deleteChannelByName(projectRoot, name) {
   return await buildAdminSnapshot(projectRoot);
 }
 
-export async function resetChannelRuntimeSessionsByName(projectRoot, name) {
+export async function resetChannelRuntimeSessionsByName(projectRoot, name, { role = null } = {}) {
   const config = loadConfig(projectRoot);
   getChannel(config, name);
+  const normalizedRole = typeof role === 'string' && role.trim() ? role.trim() : null;
+  assert(
+    !normalizedRole || RUNTIME_SESSION_RESET_ROLES.has(normalizedRole),
+    'Runtime session role must be owner, reviewer, or arbiter.',
+  );
   await clearRuntimeRoleSessions(projectRoot, {
     channelName: name,
+    role: normalizedRole,
     runtimeBackend: 'claude-cli',
   });
   return await buildAdminSnapshot(projectRoot);

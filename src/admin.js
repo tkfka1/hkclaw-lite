@@ -449,9 +449,10 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
       pathname.slice(0, -'/runtime-sessions'.length),
       '/api/channels/',
     );
+    const role = url.searchParams.get('role');
     writeJson(response, 200, {
       ok: true,
-      state: await resetChannelRuntimeSessionsByName(projectRoot, name),
+      state: await resetChannelRuntimeSessionsByName(projectRoot, name, { role }),
     });
     return;
   }
