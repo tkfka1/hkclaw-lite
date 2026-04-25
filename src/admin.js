@@ -74,6 +74,7 @@ import {
   writeKakaoAgentServiceStatus,
   writeKakaoServiceStatus,
 } from './kakao-runtime-state.js';
+import { handleKakaoRelayRequest, isKakaoRelayRequest } from './kakao-relay.js';
 import { listAgentModels } from './model-catalog.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import { assert, parseInteger, toErrorMessage } from './utils.js';
@@ -208,6 +209,11 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
   const url = new URL(request.url || '/', 'http://127.0.0.1');
   const pathname = url.pathname;
   const isStaticRequest = request.method === 'GET' || request.method === 'HEAD';
+
+  if (isKakaoRelayRequest(pathname)) {
+    await handleKakaoRelayRequest(projectRoot, request, response, { pathname });
+    return;
+  }
 
   if (isStaticRequest && !pathname.startsWith('/api/')) {
     if (pathname === '/healthz') {

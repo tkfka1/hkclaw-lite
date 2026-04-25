@@ -155,7 +155,7 @@ hkclaw-lite kakao serve --agent <agent-name>
 
 ## KakaoTalk 채널
 
-KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bart-lee/openclaw-kakao-talkchannel-plugin) 플러그인의 릴레이 구조를 참고했다. 카카오 i 오픈빌더를 직접 Pod 안에 붙이는 방식이 아니라, **Kakao TalkChannel 릴레이 서버와 SSE/reply API로 통신**한다.
+KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bart-lee/openclaw-kakao-talkchannel-plugin) 플러그인과 [`kakao-talkchannel-relay-openclaw`](https://github.com/kakao-bart-lee/kakao-talkchannel-relay-openclaw)의 릴레이 구조를 참고했다. 운영 편의성을 위해 기본 배포에서는 **hkclaw-lite Admin 서버가 Kakao TalkChannel 릴레이 API를 내장 제공**한다.
 
 ### 구성 모델
 
@@ -184,25 +184,30 @@ Reply: <relay>/openclaw/reply 로 Kakao SkillResponse 전송
 
 일반 텍스트는 카카오 `simpleText`로 전송하고, 응답이 JSON 카드 형식이면 `textCard`, `basicCard`, `listCard`, `quickReplies` 같은 Kakao SkillResponse 카드로 변환한다.
 
-### 자체 릴레이 서버 배포
+### 내장 릴레이 엔드포인트
 
-자체 운영 릴레이는 [`kakao-talkchannel-relay-openclaw`](https://github.com/kakao-bart-lee/kakao-talkchannel-relay-openclaw)를 컨테이너로 빌드해 배포한다. 이 서버는 Kakao i 오픈빌더 웹훅을 받고, OpenClaw/hkclaw-lite 쪽에는 세션 생성, SSE 이벤트, reply API를 제공한다.
+`admin` 서버는 웹 어드민과 같은 HTTP 서버에서 아래 릴레이 엔드포인트를 같이 제공한다. `/api/*`와 달리 Kakao/OpenClaw 릴레이 프로토콜용 엔드포인트라 웹 어드민 로그인 쿠키를 요구하지 않는다.
 
-운영 배포에서는 다음 값이 필요하다.
+- `POST /v1/sessions/create`: 토큰 없는 Kakao 에이전트가 pairing session 생성.
+- `GET /v1/events`: Kakao 워커가 SSE로 pairing/message 이벤트 수신.
+- `POST /openclaw/reply`: Kakao 워커가 OpenBuilder callback으로 최종 답변 전송.
+- `POST /kakao-talkchannel/webhook`: Kakao i OpenBuilder Skill URL.
+- `GET /v1/sessions/{sessionToken}/status`: pairing 상태 확인.
 
-- `DATABASE_URL`, `REDIS_URL`: 릴레이 서버용 PostgreSQL/Redis 연결.
-- `ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET`, `PORTAL_SESSION_SECRET`: 릴레이 Admin/Portal 인증.
-- `PORTAL_BASE_URL`: 사용자가 접근할 릴레이 외부 URL.
-- 선택: `KAKAO_SIGNATURE_SECRET`, `ENCRYPTION_KEY`, `QUEUE_TTL_SECONDS`, `CALLBACK_TTL_SECONDS`.
-
-현재 IDC GitOps 배포는 릴레이 외부 URL을 `https://kakao-relay.idc.hkyo.kr/`로 두고, hkclaw-lite Pod에는 아래 기본값을 주입한다.
+현재 IDC GitOps 배포는 릴레이 URL을 hkclaw-lite 자체 주소로 둔다.
 
 ```yaml
 env:
-  OPENCLAW_TALKCHANNEL_RELAY_URL: https://kakao-relay.idc.hkyo.kr/
+  OPENCLAW_TALKCHANNEL_RELAY_URL: https://hkclawtest.idc.hkyo.kr/
 ```
 
-카카오 i 오픈빌더 스킬 URL은 릴레이의 `/kakao-talkchannel/webhook` 엔드포인트로 설정한다. Admin UI에서 Account를 만들면 `relayToken`이 1회 표시되며, 토큰을 쓰지 않는 세션 기반 에이전트는 워커 시작 시 `/pair <code>` 페어링 코드로 연결한다.
+카카오 i 오픈빌더 스킬 URL은 hkclaw-lite의 `/kakao-talkchannel/webhook` 엔드포인트로 설정한다.
+
+```txt
+https://hkclawtest.idc.hkyo.kr/kakao-talkchannel/webhook
+```
+
+토큰을 비워 둔 Kakao 에이전트는 워커 시작 시 내장 릴레이에 session을 만들고 pairing code를 상태에 표시한다. 사용자가 카카오톡에서 `/pair <code>`를 입력하면 해당 대화가 session과 연결되고 이후 메시지는 `channel + role` 하네스로 라우팅된다. 외부 릴레이를 계속 쓰고 싶으면 에이전트의 `Kakao 릴레이 URL`을 별도 릴레이 주소로 직접 지정하면 된다.
 
 ## 채널, 에이전트, 하네스 관리 모델
 

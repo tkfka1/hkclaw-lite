@@ -10,6 +10,8 @@ const SQLITE_PROMISE = {
 };
 
 const DB_CACHE = new Map();
+const KAKAO_RELAY_SESSION_TTL_MS = 5 * 60 * 1000;
+const KAKAO_RELAY_PAIRING_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export async function startRuntimeRun(projectRoot, { channel, prompt, workdir }) {
   const db = await getRuntimeDb(projectRoot);
@@ -923,6 +925,366 @@ export async function markRuntimeOutboxEventDispatched(projectRoot, eventId) {
   ).run(timestamp(), eventId);
 }
 
+export async function createKakaoRelaySession(projectRoot) {
+  const db = await getRuntimeDb(projectRoot);
+  const sessionToken = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = hashKakaoRelayToken(sessionToken);
+  const pairingCode = createKakaoRelayPairingCode();
+  const now = timestamp();
+  const expiresAt = new Date(Date.now() + KAKAO_RELAY_SESSION_TTL_MS).toISOString();
+
+  db.prepare(
+    `
+      INSERT INTO kakao_relay_sessions (
+        token_hash,
+        pairing_code,
+        status,
+        expires_at,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, 'pending_pairing', ?, ?, ?)
+    `,
+  ).run(tokenHash, pairingCode, expiresAt, now, now);
+
+  return {
+    sessionToken,
+    tokenHash,
+    pairingCode,
+    expiresIn: Math.floor(KAKAO_RELAY_SESSION_TTL_MS / 1000),
+    status: 'pending_pairing',
+    expiresAt,
+  };
+}
+
+export async function findKakaoRelaySessionByToken(projectRoot, sessionToken) {
+  const tokenHash = hashKakaoRelayToken(sessionToken);
+  if (!tokenHash) {
+    return null;
+  }
+  const db = await getRuntimeDb(projectRoot);
+  expireKakaoRelaySessions(db);
+  const row = db
+    .prepare(
+      `
+        SELECT
+          token_hash,
+          pairing_code,
+          status,
+          paired_conversation_key,
+          expires_at,
+          paired_at,
+          created_at,
+          updated_at
+        FROM kakao_relay_sessions
+        WHERE token_hash = ?
+      `,
+    )
+    .get(tokenHash);
+  return row ? mapKakaoRelaySessionRow(row) : null;
+}
+
+export async function getKakaoRelaySessionStatus(projectRoot, sessionToken) {
+  const session = await findKakaoRelaySessionByToken(projectRoot, sessionToken);
+  if (!session) {
+    return null;
+  }
+  const userId = session.pairedConversationKey
+    ? session.pairedConversationKey.split(':').slice(1).join(':') || null
+    : null;
+  return {
+    status: session.status,
+    pairedAt: session.pairedAt,
+    kakaoUserId: userId,
+  };
+}
+
+export async function upsertKakaoRelayConversation(
+  projectRoot,
+  {
+    conversationKey,
+    channelId,
+    userId,
+    callbackUrl = null,
+    callbackExpiresAt = null,
+  },
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const now = timestamp();
+  const existing = db
+    .prepare(
+      `
+        SELECT
+          conversation_key,
+          channel_id,
+          user_id,
+          token_hash,
+          state,
+          last_callback_url,
+          last_callback_expires_at,
+          paired_at,
+          created_at,
+          updated_at
+        FROM kakao_relay_conversations
+        WHERE conversation_key = ?
+      `,
+    )
+    .get(conversationKey);
+
+  db.prepare(
+    `
+      INSERT INTO kakao_relay_conversations (
+        conversation_key,
+        channel_id,
+        user_id,
+        token_hash,
+        state,
+        last_callback_url,
+        last_callback_expires_at,
+        paired_at,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(conversation_key) DO UPDATE SET
+        channel_id = excluded.channel_id,
+        user_id = excluded.user_id,
+        last_callback_url = excluded.last_callback_url,
+        last_callback_expires_at = excluded.last_callback_expires_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    conversationKey,
+    normalizeNullableString(channelId) || 'default',
+    normalizeNullableString(userId),
+    existing?.token_hash || null,
+    existing?.state || 'unpaired',
+    normalizeNullableString(callbackUrl),
+    normalizeNullableString(callbackExpiresAt),
+    existing?.paired_at || null,
+    existing?.created_at || now,
+    now,
+  );
+
+  const row = db
+    .prepare(
+      `
+        SELECT
+          conversation_key,
+          channel_id,
+          user_id,
+          token_hash,
+          state,
+          last_callback_url,
+          last_callback_expires_at,
+          paired_at,
+          created_at,
+          updated_at
+        FROM kakao_relay_conversations
+        WHERE conversation_key = ?
+      `,
+    )
+    .get(conversationKey);
+  return row ? mapKakaoRelayConversationRow(row) : null;
+}
+
+export async function pairKakaoRelayConversation(projectRoot, { pairingCode, conversationKey }) {
+  const db = await getRuntimeDb(projectRoot);
+  expireKakaoRelaySessions(db);
+  const code = String(pairingCode || '').trim().toUpperCase();
+  if (!code) {
+    return null;
+  }
+  const session = db
+    .prepare(
+      `
+        SELECT
+          token_hash,
+          pairing_code,
+          status,
+          paired_conversation_key,
+          expires_at,
+          paired_at,
+          created_at,
+          updated_at
+        FROM kakao_relay_sessions
+        WHERE pairing_code = ?
+          AND status = 'pending_pairing'
+      `,
+    )
+    .get(code);
+  if (!session) {
+    return null;
+  }
+
+  const now = timestamp();
+  db.prepare(
+    `
+      UPDATE kakao_relay_sessions
+      SET status = 'paired',
+          paired_conversation_key = ?,
+          paired_at = ?,
+          updated_at = ?
+      WHERE token_hash = ?
+    `,
+  ).run(conversationKey, now, now, session.token_hash);
+
+  db.prepare(
+    `
+      UPDATE kakao_relay_conversations
+      SET token_hash = ?,
+          state = 'paired',
+          paired_at = COALESCE(paired_at, ?),
+          updated_at = ?
+      WHERE conversation_key = ?
+    `,
+  ).run(session.token_hash, now, now, conversationKey);
+
+  return {
+    ...mapKakaoRelaySessionRow(session),
+    status: 'paired',
+    pairedConversationKey: conversationKey,
+    pairedAt: now,
+  };
+}
+
+export async function unpairKakaoRelayConversation(projectRoot, conversationKey) {
+  const db = await getRuntimeDb(projectRoot);
+  const conversation = db
+    .prepare(
+      `
+        SELECT token_hash
+        FROM kakao_relay_conversations
+        WHERE conversation_key = ?
+      `,
+    )
+    .get(conversationKey);
+  const now = timestamp();
+  db.prepare(
+    `
+      UPDATE kakao_relay_conversations
+      SET state = 'unpaired',
+          token_hash = NULL,
+          updated_at = ?
+      WHERE conversation_key = ?
+    `,
+  ).run(now, conversationKey);
+  if (conversation?.token_hash) {
+    db.prepare(
+      `
+        UPDATE kakao_relay_sessions
+        SET status = 'disconnected',
+            updated_at = ?
+        WHERE token_hash = ?
+      `,
+    ).run(now, conversation.token_hash);
+  }
+}
+
+export async function createKakaoRelayInboundMessage(
+  projectRoot,
+  {
+    tokenHash,
+    conversationKey,
+    kakaoPayload,
+    normalized,
+    callbackUrl = null,
+    callbackExpiresAt = null,
+  },
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const id = crypto.randomUUID();
+  const now = timestamp();
+  db.prepare(
+    `
+      INSERT INTO kakao_relay_messages (
+        id,
+        token_hash,
+        conversation_key,
+        kakao_payload_json,
+        normalized_json,
+        callback_url,
+        callback_expires_at,
+        status,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+    `,
+  ).run(
+    id,
+    tokenHash,
+    conversationKey,
+    JSON.stringify(kakaoPayload || {}),
+    JSON.stringify(normalized || {}),
+    normalizeNullableString(callbackUrl),
+    normalizeNullableString(callbackExpiresAt),
+    now,
+  );
+
+  return {
+    id,
+    tokenHash,
+    conversationKey,
+    kakaoPayload: kakaoPayload || {},
+    normalized: normalized || {},
+    callbackUrl: normalizeNullableString(callbackUrl),
+    callbackExpiresAt: normalizeNullableString(callbackExpiresAt),
+    status: 'queued',
+    createdAt: now,
+  };
+}
+
+export async function getKakaoRelayInboundMessageForToken(projectRoot, { tokenHash, messageId }) {
+  const db = await getRuntimeDb(projectRoot);
+  const row = db
+    .prepare(
+      `
+        SELECT
+          id,
+          token_hash,
+          conversation_key,
+          kakao_payload_json,
+          normalized_json,
+          callback_url,
+          callback_expires_at,
+          status,
+          created_at,
+          replied_at,
+          error_text
+        FROM kakao_relay_messages
+        WHERE id = ?
+          AND token_hash = ?
+      `,
+    )
+    .get(messageId, tokenHash);
+  return row ? mapKakaoRelayMessageRow(row) : null;
+}
+
+export async function markKakaoRelayMessageReplied(projectRoot, messageId) {
+  const db = await getRuntimeDb(projectRoot);
+  db.prepare(
+    `
+      UPDATE kakao_relay_messages
+      SET status = 'sent',
+          replied_at = ?,
+          error_text = NULL
+      WHERE id = ?
+    `,
+  ).run(timestamp(), messageId);
+}
+
+export async function markKakaoRelayMessageFailed(projectRoot, { messageId, error }) {
+  const db = await getRuntimeDb(projectRoot);
+  db.prepare(
+    `
+      UPDATE kakao_relay_messages
+      SET status = 'failed',
+          error_text = ?
+      WHERE id = ?
+    `,
+  ).run(toErrorMessage(error), messageId);
+}
+
 export async function listRecentRoleSessionContext(
   projectRoot,
   {
@@ -1338,6 +1700,44 @@ async function getRuntimeDb(projectRoot) {
       cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
       recorded_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS kakao_relay_sessions (
+      token_hash TEXT PRIMARY KEY,
+      pairing_code TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL,
+      paired_conversation_key TEXT,
+      expires_at TEXT NOT NULL,
+      paired_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS kakao_relay_conversations (
+      conversation_key TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      user_id TEXT,
+      token_hash TEXT,
+      state TEXT NOT NULL,
+      last_callback_url TEXT,
+      last_callback_expires_at TEXT,
+      paired_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (token_hash) REFERENCES kakao_relay_sessions(token_hash) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS kakao_relay_messages (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      conversation_key TEXT NOT NULL,
+      kakao_payload_json TEXT NOT NULL,
+      normalized_json TEXT NOT NULL,
+      callback_url TEXT,
+      callback_expires_at TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      replied_at TEXT,
+      error_text TEXT,
+      FOREIGN KEY (token_hash) REFERENCES kakao_relay_sessions(token_hash) ON DELETE CASCADE,
+      FOREIGN KEY (conversation_key) REFERENCES kakao_relay_conversations(conversation_key) ON DELETE CASCADE
+    );
     CREATE INDEX IF NOT EXISTS runtime_runs_started_at_idx
       ON runtime_runs(started_at DESC);
     CREATE INDEX IF NOT EXISTS runtime_role_messages_run_id_idx
@@ -1354,6 +1754,14 @@ async function getRuntimeDb(projectRoot) {
       ON managed_service_env_snapshots(updated_at DESC);
     CREATE INDEX IF NOT EXISTS runtime_usage_events_agent_type_idx
       ON runtime_usage_events(agent_type, recorded_at DESC);
+    CREATE INDEX IF NOT EXISTS kakao_relay_sessions_pairing_code_idx
+      ON kakao_relay_sessions(pairing_code);
+    CREATE INDEX IF NOT EXISTS kakao_relay_sessions_status_idx
+      ON kakao_relay_sessions(status, expires_at);
+    CREATE INDEX IF NOT EXISTS kakao_relay_conversations_token_idx
+      ON kakao_relay_conversations(token_hash, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS kakao_relay_messages_token_idx
+      ON kakao_relay_messages(token_hash, created_at DESC);
   `);
 
   ensureRunColumn(db, 'active_role', 'TEXT');
@@ -1397,6 +1805,84 @@ function normalizeManagedServiceAgentName(agentName) {
   const normalized = String(agentName || '').trim();
   assert(normalized, 'agentName is required.');
   return normalized;
+}
+
+function hashKakaoRelayToken(token) {
+  const normalized = normalizeNullableString(token);
+  return normalized ? crypto.createHash('sha256').update(normalized).digest('hex') : '';
+}
+
+function createKakaoRelayPairingCode() {
+  let output = '';
+  for (let index = 0; index < 8; index += 1) {
+    const randomIndex = crypto.randomInt(0, KAKAO_RELAY_PAIRING_CODE_CHARS.length);
+    output += KAKAO_RELAY_PAIRING_CODE_CHARS[randomIndex];
+  }
+  return `${output.slice(0, 4)}-${output.slice(4)}`;
+}
+
+function expireKakaoRelaySessions(db) {
+  db.prepare(
+    `
+      UPDATE kakao_relay_sessions
+      SET status = 'expired',
+          updated_at = ?
+      WHERE status = 'pending_pairing'
+        AND expires_at <= ?
+    `,
+  ).run(timestamp(), timestamp());
+}
+
+function mapKakaoRelaySessionRow(row) {
+  return {
+    tokenHash: row.token_hash,
+    pairingCode: row.pairing_code,
+    status: row.status,
+    pairedConversationKey: row.paired_conversation_key ?? null,
+    expiresAt: row.expires_at,
+    pairedAt: row.paired_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapKakaoRelayConversationRow(row) {
+  return {
+    conversationKey: row.conversation_key,
+    channelId: row.channel_id,
+    userId: row.user_id ?? null,
+    tokenHash: row.token_hash ?? null,
+    state: row.state,
+    lastCallbackUrl: row.last_callback_url ?? null,
+    lastCallbackExpiresAt: row.last_callback_expires_at ?? null,
+    pairedAt: row.paired_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapKakaoRelayMessageRow(row) {
+  return {
+    id: row.id,
+    tokenHash: row.token_hash,
+    conversationKey: row.conversation_key,
+    kakaoPayload: parseRuntimeJson(row.kakao_payload_json, {}),
+    normalized: parseRuntimeJson(row.normalized_json, {}),
+    callbackUrl: row.callback_url ?? null,
+    callbackExpiresAt: row.callback_expires_at ?? null,
+    status: row.status,
+    createdAt: row.created_at,
+    repliedAt: row.replied_at ?? null,
+    errorText: row.error_text ?? null,
+  };
+}
+
+function parseRuntimeJson(value, fallback) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 
 function normalizeManagedServiceEnvSnapshot(env) {

@@ -29,6 +29,7 @@ import {
   buildKakaoServiceSnapshot,
   readKakaoAgentServiceStatus,
 } from '../src/kakao-runtime-state.js';
+import { parseKakaoSseChunk } from '../src/kakao-service.js';
 import {
   recordRuntimeRoleSession,
   recordRuntimeUsageEvent,
@@ -599,6 +600,75 @@ async function requestJson(url, options = {}) {
   return {
     response,
     payload,
+  };
+}
+
+async function openSse(url, token) {
+  const controller = new AbortController();
+  const events = [];
+  const waiters = [];
+  const stream = fetch(url, {
+    headers: {
+      accept: 'text/event-stream',
+      authorization: `Bearer ${token}`,
+    },
+    signal: controller.signal,
+  }).then(async (response) => {
+    if (response.status !== 200) {
+      assert.equal(response.status, 200, await response.text().catch(() => ''));
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (!controller.signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const parsed = parseKakaoSseChunk(buffer);
+      if (parsed.consumed > 0) {
+        buffer = buffer.slice(parsed.consumed);
+      }
+      for (const event of parsed.events) {
+        events.push(event);
+      }
+      for (const waiter of [...waiters]) {
+        const event = events.find((entry) => entry.event === waiter.eventName);
+        if (event) {
+          waiters.splice(waiters.indexOf(waiter), 1);
+          waiter.resolve(event);
+        }
+      }
+    }
+  });
+
+  return {
+    waitForEvent(eventName, { timeoutMs = 3_000 } = {}) {
+      const existing = events.find((event) => event.event === eventName);
+      if (existing) {
+        return Promise.resolve(existing);
+      }
+      return new Promise((resolve, reject) => {
+        const waiter = { eventName, resolve, reject };
+        waiters.push(waiter);
+        setTimeout(() => {
+          const index = waiters.indexOf(waiter);
+          if (index !== -1) {
+            waiters.splice(index, 1);
+            reject(new Error(`Timed out waiting for SSE event ${eventName}`));
+          }
+        }, timeoutMs);
+      });
+    },
+    async close() {
+      controller.abort();
+      await stream.catch((error) => {
+        if (error?.name !== 'AbortError') {
+          throw error;
+        }
+      });
+    },
   };
 }
 
@@ -1514,6 +1584,104 @@ test('admin server can start, restart, and stop Kakao service', async () => {
       process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = previousEntry;
     }
   }
+});
+
+test('admin server exposes embedded Kakao relay session, webhook, SSE, and reply APIs', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const session = await requestJson(`${url}/v1/sessions/create`, {
+      method: 'POST',
+      body: {},
+    });
+    assert.equal(session.response.status, 200, JSON.stringify(session.payload));
+    assert.equal(typeof session.payload.sessionToken, 'string');
+    assert.match(session.payload.pairingCode, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/u);
+
+    const sse = await openSse(`${url}/v1/events`, session.payload.sessionToken);
+    try {
+      const pair = await requestJson(`${url}/kakao-talkchannel/webhook`, {
+        method: 'POST',
+        body: {
+          bot: { id: 'talk-channel' },
+          userRequest: {
+            utterance: `/pair ${session.payload.pairingCode}`,
+            user: {
+              id: 'kakao-user',
+              properties: {
+                plusfriendUserKey: 'plusfriend-user',
+              },
+            },
+          },
+        },
+      });
+      assert.equal(pair.response.status, 200, JSON.stringify(pair.payload));
+      assert.match(pair.payload.template.outputs[0].simpleText.text, /연결되었습니다/u);
+
+      const paired = await sse.waitForEvent('pairing_complete');
+      assert.equal(paired.data.kakaoUserId, 'plusfriend-user');
+
+      let callbackPayload = null;
+      await withJsonServer((request, response) => {
+        let body = '';
+        request.on('data', (chunk) => {
+          body += chunk;
+        });
+        request.on('end', () => {
+          callbackPayload = JSON.parse(body || '{}');
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ ok: true }));
+        });
+      }, async (callbackUrl) => {
+        const webhook = await requestJson(`${url}/kakao-talkchannel/webhook`, {
+          method: 'POST',
+          body: {
+            bot: { id: 'talk-channel' },
+            userRequest: {
+              utterance: '안녕',
+              callbackUrl,
+              user: {
+                id: 'kakao-user',
+                properties: {
+                  plusfriendUserKey: 'plusfriend-user',
+                },
+              },
+            },
+          },
+        });
+        assert.equal(webhook.response.status, 200, JSON.stringify(webhook.payload));
+        assert.equal(webhook.payload.useCallback, true);
+
+        const message = await sse.waitForEvent('message');
+        assert.equal(message.data.normalized.text, '안녕');
+        assert.equal(message.data.normalized.channelId, 'talk-channel');
+
+        const replyBody = {
+          version: '2.0',
+          template: {
+            outputs: [{ simpleText: { text: '응답' } }],
+          },
+        };
+        const reply = await requestJson(`${url}/openclaw/reply`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${session.payload.sessionToken}`,
+          },
+          body: {
+            messageId: message.data.id,
+            response: replyBody,
+          },
+        });
+        assert.equal(reply.response.status, 200, JSON.stringify(reply.payload));
+        assert.equal(reply.payload.success, true);
+        await waitFor(() => callbackPayload);
+        assert.deepEqual(callbackPayload, replyBody);
+      });
+    } finally {
+      await sse.close();
+    }
+  });
 });
 
 test('admin server restores desired Telegram service on startup', async () => {
