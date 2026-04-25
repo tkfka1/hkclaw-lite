@@ -9,12 +9,14 @@ import {
   buildAdminSnapshot,
   deleteAgentByName,
   deleteChannelByName,
+  deleteConnectorByName,
   deleteDashboardByName,
   readWatcherLog,
   replaceLocalLlmConnections,
   resetChannelRuntimeSessionsByName,
   upsertAgent,
   upsertChannel,
+  upsertConnector,
   upsertDashboard,
 } from './admin-state.js';
 import {
@@ -488,6 +490,28 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
               action: 'reconnect-agent',
               agentName: name,
             }),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/connectors') {
+    const payload = await readJsonBody(request);
+    writeJson(response, 200, {
+      ok: true,
+      state: await upsertConnector(
+        projectRoot,
+        payload.currentName || null,
+        payload.definition || payload,
+      ),
+    });
+    return;
+  }
+
+  if (request.method === 'DELETE' && pathname.startsWith('/api/connectors/')) {
+    const name = decodeEntityPath(pathname, '/api/connectors/');
+    writeJson(response, 200, {
+      ok: true,
+      state: await deleteConnectorByName(projectRoot, name),
     });
     return;
   }

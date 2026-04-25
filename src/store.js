@@ -110,6 +110,7 @@ export function createDefaultConfig() {
       dashboardRefreshMs: DEFAULT_DASHBOARD_REFRESH_MS,
     },
     localLlmConnections: createDefaultLocalLlmConnections(),
+    connectors: {},
     agents: {},
     channels: {},
     dashboards: {},
@@ -131,6 +132,7 @@ export function loadConfig(projectRoot) {
   );
   assert(isPlainObject(config.defaults), 'Config defaults must be an object.');
   assert(isPlainObject(config.localLlmConnections), 'Config localLlmConnections must be an object.');
+  assert(isPlainObject(config.connectors), 'Config connectors must be an object.');
   assert(isPlainObject(config.agents), 'Config agents must be an object.');
   assert(isPlainObject(config.channels), 'Config channels must be an object.');
   assert(isPlainObject(config.dashboards), 'Config dashboards must be an object.');
@@ -153,6 +155,7 @@ function normalizeConfig(rawConfig) {
           rawConfig.defaults?.dashboardRefreshMs ?? DEFAULT_DASHBOARD_REFRESH_MS,
       },
       localLlmConnections: normalizeLocalLlmConnectionRecords(rawConfig.localLlmConnections),
+      connectors: normalizeMessagingConnectorRecords(rawConfig.connectors, rawAgents),
       agents: mergeLegacyBotTokensIntoAgents(
         normalizeLegacyAgentRecords(rawAgents),
         normalizeLegacyBotRecords(rawConfig.bots ?? {}),
@@ -175,6 +178,7 @@ function normalizeConfig(rawConfig) {
           rawConfig.defaults?.dashboardRefreshMs ?? DEFAULT_DASHBOARD_REFRESH_MS,
       },
       localLlmConnections: normalizeLocalLlmConnectionRecords(rawConfig.localLlmConnections),
+      connectors: normalizeMessagingConnectorRecords(rawConfig.connectors, rawAgents),
       agents: mergeLegacyBotTokensIntoAgents(
         normalizeLegacyAgentRecords(rawAgents),
         normalizeLegacyBotRecords(rawConfig.bots ?? {}),
@@ -196,6 +200,7 @@ function normalizeConfig(rawConfig) {
         dashboardRefreshMs: DEFAULT_DASHBOARD_REFRESH_MS,
       },
       localLlmConnections: normalizeLocalLlmConnectionRecords(rawConfig.localLlmConnections),
+      connectors: normalizeMessagingConnectorRecords(rawConfig.connectors, rawAgents),
       agents: normalizeLegacyAgentRecords(rawAgents),
       channels: {},
       dashboards: {},
@@ -207,6 +212,10 @@ function normalizeConfig(rawConfig) {
 
 function validateConfigReferences(projectRoot, config) {
   validateLocalLlmConnections(config.localLlmConnections);
+
+  for (const [name, connector] of Object.entries(config.connectors || {})) {
+    validateConnectorDefinition(name, connector);
+  }
 
   for (const [name, agent] of Object.entries(config.agents)) {
     validateAgentDefinition(projectRoot, { name, ...agent });
@@ -259,6 +268,23 @@ export function listLocalLlmConnections(config) {
   return Object.entries(config.localLlmConnections || {})
     .map(([name, connection]) => ({ name, ...connection }))
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function listConnectors(config) {
+  return Object.entries(config.connectors || {})
+    .map(([name, connector]) => ({ name, ...connector }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function getConnector(config, name) {
+  const connector = config.connectors?.[name];
+  assert(connector, `Unknown connector "${name}".`);
+  return { name, ...connector };
+}
+
+export function removeConnector(config, name) {
+  assert(config.connectors?.[name], `Unknown connector "${name}".`);
+  delete config.connectors[name];
 }
 
 export function listDashboards(config) {
@@ -431,6 +457,12 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
       input.platform ?? input['platform'] ?? existing.platform,
       existing,
     ),
+    connector: normalizeOptionalString(
+      input.connector ??
+        input.connectorName ??
+        input['connector-name'] ??
+        existing.connector,
+    ),
     mode: normalizeOptionalString(
       input.mode ??
         input['mode'] ??
@@ -537,6 +569,75 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
     merged.kakaoUserId = undefined;
   }
   validateChannelDefinition(projectRoot, config, merged);
+  return sortObjectKeys(merged);
+}
+
+export function buildConnectorDefinition(name, input = {}, existing = {}) {
+  assert(name, 'Connector name is required.');
+  assert(
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name),
+    'Connector name may only contain letters, numbers, dot, underscore, and dash.',
+  );
+
+  const connectorCredentials = {
+    discordToken: input.discordToken ?? input['discord-token'] ?? existing.discordToken,
+    telegramBotToken:
+      input.telegramBotToken ??
+      input['telegram-bot-token'] ??
+      existing.telegramBotToken,
+    kakaoRelayUrl:
+      input.kakaoRelayUrl ??
+      input['kakao-relay-url'] ??
+      input.relayUrl ??
+      input['relay-url'] ??
+      existing.kakaoRelayUrl,
+    kakaoRelayToken:
+      input.kakaoRelayToken ??
+      input['kakao-relay-token'] ??
+      input.relayToken ??
+      input['relay-token'] ??
+      existing.kakaoRelayToken,
+    kakaoSessionToken:
+      input.kakaoSessionToken ??
+      input['kakao-session-token'] ??
+      input.sessionToken ??
+      input['session-token'] ??
+      existing.kakaoSessionToken,
+  };
+
+  const merged = {
+    ...stripManagedFields(existing),
+    type: resolveMessagingPlatform(
+      input.type ?? input.platform ?? input['platform'] ?? existing.type,
+      {
+        ...existing,
+        ...connectorCredentials,
+      },
+    ),
+    description: normalizeOptionalString(input.description ?? existing.description),
+    discordToken: normalizeOptionalString(connectorCredentials.discordToken),
+    telegramBotToken: normalizeOptionalString(connectorCredentials.telegramBotToken),
+    kakaoRelayUrl: normalizeOptionalString(connectorCredentials.kakaoRelayUrl),
+    kakaoRelayToken: normalizeOptionalString(connectorCredentials.kakaoRelayToken),
+    kakaoSessionToken: normalizeOptionalString(connectorCredentials.kakaoSessionToken),
+  };
+
+  if (merged.type === 'telegram') {
+    merged.discordToken = undefined;
+    merged.kakaoRelayUrl = undefined;
+    merged.kakaoRelayToken = undefined;
+    merged.kakaoSessionToken = undefined;
+  } else if (merged.type === 'kakao') {
+    merged.discordToken = undefined;
+    merged.telegramBotToken = undefined;
+  } else {
+    merged.telegramBotToken = undefined;
+    merged.kakaoRelayUrl = undefined;
+    merged.kakaoRelayToken = undefined;
+    merged.kakaoSessionToken = undefined;
+  }
+
+  validateConnectorDefinition(name, merged);
   return sortObjectKeys(merged);
 }
 
@@ -728,6 +829,47 @@ function validateAgentDefinition(projectRoot, agent) {
 
 }
 
+function validateConnectorDefinition(name, connector) {
+  assert(
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name),
+    'Connector name may only contain letters, numbers, dot, underscore, and dash.',
+  );
+  assert(
+    MESSAGING_PLATFORM_CHOICES.some((entry) => entry.value === connector.type),
+    `Unsupported connector type "${connector.type}".`,
+  );
+  if (connector.discordToken !== undefined) {
+    assert(
+      typeof connector.discordToken === 'string' && connector.discordToken.trim().length > 0,
+      'discordToken must be a non-empty string.',
+    );
+  }
+  if (connector.telegramBotToken !== undefined) {
+    assert(
+      typeof connector.telegramBotToken === 'string' && connector.telegramBotToken.trim().length > 0,
+      'telegramBotToken must be a non-empty string.',
+    );
+  }
+  if (connector.kakaoRelayUrl !== undefined) {
+    assert(
+      typeof connector.kakaoRelayUrl === 'string' && connector.kakaoRelayUrl.trim().length > 0,
+      'kakaoRelayUrl must be a non-empty string.',
+    );
+  }
+  if (connector.kakaoRelayToken !== undefined) {
+    assert(
+      typeof connector.kakaoRelayToken === 'string' && connector.kakaoRelayToken.trim().length > 0,
+      'kakaoRelayToken must be a non-empty string.',
+    );
+  }
+  if (connector.kakaoSessionToken !== undefined) {
+    assert(
+      typeof connector.kakaoSessionToken === 'string' && connector.kakaoSessionToken.trim().length > 0,
+      'kakaoSessionToken must be a non-empty string.',
+    );
+  }
+}
+
 function validateChannelDefinition(projectRoot, config, channel) {
   assert(
     MESSAGING_PLATFORM_CHOICES.some((entry) => entry.value === channel.platform),
@@ -737,6 +879,14 @@ function validateChannelDefinition(projectRoot, config, channel) {
     CHANNEL_MODE_CHOICES.some((entry) => entry.value === channel.mode),
     `Unsupported channel mode "${channel.mode}".`,
   );
+  if (channel.connector) {
+    const connector = config.connectors?.[channel.connector];
+    assert(connector, `Channel references unknown connector "${channel.connector}".`);
+    assert(
+      connector.type === channel.platform,
+      `Channel connector "${channel.connector}" is ${connector.type}, not ${channel.platform}.`,
+    );
+  }
   if (channel.platform === 'telegram') {
     assert(
       typeof channel.telegramChatId === 'string' &&
@@ -889,6 +1039,63 @@ function normalizeDashboardMonitors(value) {
   return unique;
 }
 
+function normalizeMessagingConnectorRecords(connectors, rawAgents = {}) {
+  const next = normalizeConnectorRecords(connectors);
+  const agents = isPlainObject(rawAgents) ? rawAgents : {};
+
+  for (const [agentName, agent] of Object.entries(agents)) {
+    if (!isPlainObject(agent) || next[agentName]) {
+      continue;
+    }
+    const platform = resolveMessagingPlatform(agent.platform, agent);
+    const legacyConnector = buildLegacyAgentConnector(platform, agent);
+    if (legacyConnector) {
+      next[agentName] = buildConnectorDefinition(agentName, legacyConnector);
+    }
+  }
+
+  return next;
+}
+
+function normalizeConnectorRecords(connectors) {
+  if (!isPlainObject(connectors)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(connectors).map(([name, connector]) => [
+      name,
+      buildConnectorDefinition(name, connector),
+    ]),
+  );
+}
+
+function buildLegacyAgentConnector(platform, agent) {
+  if (platform === 'telegram' && typeof agent.telegramBotToken === 'string' && agent.telegramBotToken.trim()) {
+    return {
+      type: 'telegram',
+      telegramBotToken: agent.telegramBotToken.trim(),
+      description: 'Migrated from agent platform settings',
+    };
+  }
+  if (platform === 'kakao') {
+    return {
+      type: 'kakao',
+      kakaoRelayUrl: normalizeOptionalString(agent.kakaoRelayUrl),
+      kakaoRelayToken: normalizeOptionalString(agent.kakaoRelayToken),
+      kakaoSessionToken: normalizeOptionalString(agent.kakaoSessionToken),
+      description: 'Migrated from agent platform settings',
+    };
+  }
+  if (platform === 'discord' && typeof agent.discordToken === 'string' && agent.discordToken.trim()) {
+    return {
+      type: 'discord',
+      discordToken: agent.discordToken.trim(),
+      description: 'Migrated from agent platform settings',
+    };
+  }
+  return null;
+}
+
 function normalizeLegacyAgentRecords(agents) {
   if (!isPlainObject(agents)) {
     return {};
@@ -1027,6 +1234,9 @@ function resolveMessagingPlatform(value, existing = {}) {
     return 'kakao';
   }
   if (typeof existing?.kakaoSessionToken === 'string' && existing.kakaoSessionToken.trim()) {
+    return 'kakao';
+  }
+  if (typeof existing?.kakaoRelayUrl === 'string' && existing.kakaoRelayUrl.trim()) {
     return 'kakao';
   }
   if (typeof existing?.kakaoChannelId === 'string' && existing.kakaoChannelId.trim()) {

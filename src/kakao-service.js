@@ -468,15 +468,15 @@ async function handleInboundKakaoMessage({
 
 export function resolveKakaoChannelForMessage(config, message, inboundAgentName) {
   const normalized = message?.normalized || {};
-  return listChannels(config).find((entry) => {
-    if ((entry.platform || 'discord') !== 'kakao') {
-      return false;
-    }
-    if (resolveChannelInboundAgentName(entry) !== inboundAgentName) {
-      return false;
-    }
-    return matchesKakaoChannelTarget(entry, normalized);
-  });
+  const kakaoChannels = listChannels(config).filter((entry) => (entry.platform || 'discord') === 'kakao');
+  const matchesTarget = (entry) => matchesKakaoChannelTarget(entry, normalized);
+
+  return (
+    kakaoChannels.find((entry) => entry.connector === inboundAgentName && matchesTarget(entry)) ||
+    kakaoChannels.find(
+      (entry) => !entry.connector && resolveChannelInboundAgentName(entry) === inboundAgentName && matchesTarget(entry),
+    )
+  );
 }
 
 export function getDefaultKakaoRelayUrl() {
@@ -717,6 +717,7 @@ export async function flushKakaoOutboxForRun(
     try {
       const targetAgentName = resolveEventAgentName(channel, event.role);
       const client =
+        (channel?.connector ? clients[channel.connector] : null) ||
         clients[targetAgentName] ||
         (selectedAgentName ? clients[selectedAgentName] : null) ||
         clients[resolveChannelInboundAgentName(channel)] ||
@@ -805,21 +806,37 @@ export function stripMarkdown(text) {
 
 function resolveKakaoAgentConfigs(config, { agentName = null } = {}) {
   if (agentName) {
+    const connector = config?.connectors?.[agentName];
+    if (connector) {
+      assert(connector.type === 'kakao', `Connector "${agentName}" is not configured for Kakao.`);
+      return {
+        [agentName]: buildKakaoConnectorConfig(agentName, connector),
+      };
+    }
     const agent = config?.agents?.[agentName];
-    assert(agent, `Agent "${agentName}" does not exist.`);
+    assert(agent, `Agent or connector "${agentName}" does not exist.`);
     assert((agent?.platform || 'discord') === 'kakao', `Agent "${agentName}" is not configured for Kakao.`);
     return {
       [agentName]: buildKakaoAgentConfig(agentName, agent),
     };
   }
 
+  const configuredConnectors = config?.connectors || {};
+  const connectorEntries = Object.entries(configuredConnectors).filter(
+    ([, connector]) => connector?.type === 'kakao',
+  );
   const configuredAgents = config?.agents || {};
   const configuredAgentEntries = Object.entries(configuredAgents).filter(
-    ([, agent]) => (agent?.platform || 'discord') === 'kakao',
+    ([name, agent]) => (agent?.platform || 'discord') === 'kakao' && !configuredConnectors[name],
   );
-  return Object.fromEntries(
-    configuredAgentEntries.map(([name, agent]) => [name, buildKakaoAgentConfig(name, agent)]),
-  );
+  return {
+    ...Object.fromEntries(
+      connectorEntries.map(([name, connector]) => [name, buildKakaoConnectorConfig(name, connector)]),
+    ),
+    ...Object.fromEntries(
+      configuredAgentEntries.map(([name, agent]) => [name, buildKakaoAgentConfig(name, agent)]),
+    ),
+  };
 }
 
 function buildKakaoAgentConfig(name, agent) {
@@ -829,6 +846,16 @@ function buildKakaoAgentConfig(name, agent) {
     relayUrl: String(agent.kakaoRelayUrl || '').trim() || getDefaultKakaoRelayUrl(),
     relayToken: String(agent.kakaoRelayToken || '').trim(),
     sessionToken: String(agent.kakaoSessionToken || '').trim(),
+  };
+}
+
+function buildKakaoConnectorConfig(name, connector) {
+  return {
+    name,
+    agent: '',
+    relayUrl: String(connector.kakaoRelayUrl || '').trim() || getDefaultKakaoRelayUrl(),
+    relayToken: String(connector.kakaoRelayToken || '').trim(),
+    sessionToken: String(connector.kakaoSessionToken || '').trim(),
   };
 }
 

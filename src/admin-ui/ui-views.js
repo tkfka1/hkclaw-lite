@@ -86,9 +86,20 @@ export function renderAgentsView(ctx) {
 }
 
 export function renderChannelsView(ctx) {
-  const { state, getDashboardStats, escapeHtml, renderChannelList } = ctx;
+  const { state, getDashboardStats, escapeHtml, renderConnectorList, renderChannelList } = ctx;
   const stats = getDashboardStats();
   return `
+    <section class="panel section-panel">
+      <div class="section-head">
+        <div class="section-title-group">
+          <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
+          <h2>커넥터</h2>
+        </div>
+        <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}커넥터 추가</button>
+      </div>
+      <p class="field-hint">커넥터는 플랫폼 계정/토큰 연결이고, 하나의 커넥터를 여러 채널이 공유할 수 있습니다.</p>
+      ${renderConnectorList(state.data.connectors || [], state.data.channels || [])}
+    </section>
     <section class="panel section-panel">
       <div class="section-head">
         <div class="section-title-group">

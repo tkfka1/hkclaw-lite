@@ -293,7 +293,7 @@ async function handleInboundTelegramMessage({
   const threadId = message?.message_thread_id ? String(message.message_thread_id) : '';
 
   const config = loadConfig(projectRoot);
-  const channel = listChannels(config).find((entry) => {
+  const matchingChannels = listChannels(config).filter((entry) => {
     if ((entry.platform || 'discord') !== 'telegram') {
       return false;
     }
@@ -305,10 +305,12 @@ async function handleInboundTelegramMessage({
     }
     return true;
   });
+  const channel =
+    matchingChannels.find((entry) => entry.connector === inboundAgentName) ||
+    matchingChannels.find(
+      (entry) => !entry.connector && resolveChannelInboundAgentName(entry) === inboundAgentName,
+    );
   if (!channel) {
-    return;
-  }
-  if (resolveChannelInboundAgentName(channel) !== inboundAgentName) {
     return;
   }
 
@@ -530,10 +532,10 @@ export async function flushTelegramOutboxForRun(
   for (const event of events) {
     try {
       const targetAgentName = resolveEventAgentName(channel, event.role);
-      if (selectedAgentName && targetAgentName !== selectedAgentName) {
+      if (selectedAgentName && targetAgentName !== selectedAgentName && channel?.connector !== selectedAgentName) {
         continue;
       }
-      const client = clients[targetAgentName];
+      const client = (channel?.connector ? clients[channel.connector] : null) || clients[targetAgentName];
       assert(client, `${targetAgentName || event.role} telegram client is not configured.`);
       const chatId = channel?.telegramChatId || fallbackChatId;
       assert(chatId, `Telegram chat id is missing for run ${runId}.`);
@@ -570,10 +572,10 @@ export async function flushPendingTelegramOutbox(
         continue;
       }
       const targetAgentName = resolveEventAgentName(channel, event.role);
-      if (selectedAgentName && targetAgentName !== selectedAgentName) {
+      if (selectedAgentName && targetAgentName !== selectedAgentName && channel?.connector !== selectedAgentName) {
         continue;
       }
-      const client = clients[targetAgentName];
+      const client = (channel?.connector ? clients[channel.connector] : null) || clients[targetAgentName];
       assert(client, `${targetAgentName || event.role} telegram client is not configured.`);
       const chatId = String(channel.telegramChatId || '').trim();
       assert(chatId, `Telegram chat id is missing for queued event ${event.eventId}.`);
@@ -641,8 +643,21 @@ async function waitForShutdown(onShutdown) {
 
 function resolveTelegramAgentConfigs(config, { agentName = null } = {}) {
   if (agentName) {
+    const connector = config?.connectors?.[agentName];
+    if (connector) {
+      assert(connector.type === 'telegram', `Connector "${agentName}" is not configured for Telegram.`);
+      const token = String(connector?.telegramBotToken || '').trim();
+      assert(token, `Connector "${agentName}" does not configure a Telegram bot token.`);
+      return {
+        [agentName]: {
+          name: agentName,
+          agent: '',
+          token,
+        },
+      };
+    }
     const agent = config?.agents?.[agentName];
-    assert(agent, `Agent "${agentName}" does not exist.`);
+    assert(agent, `Agent or connector "${agentName}" does not exist.`);
     const token = String(agent?.telegramBotToken || '').trim();
     assert(token, `Agent "${agentName}" does not configure a Telegram bot token.`);
     return {
@@ -654,20 +669,36 @@ function resolveTelegramAgentConfigs(config, { agentName = null } = {}) {
     };
   }
 
+  const configuredConnectors = config?.connectors || {};
+  const configuredConnectorEntries = Object.entries(configuredConnectors).filter(
+    ([, connector]) => connector?.type === 'telegram' && String(connector?.telegramBotToken || '').trim(),
+  );
   const configuredAgents = config?.agents || {};
-  const configuredAgentEntries = Object.entries(configuredAgents).filter(([, agent]) =>
-    String(agent?.telegramBotToken || '').trim(),
+  const configuredAgentEntries = Object.entries(configuredAgents).filter(([name, agent]) =>
+    String(agent?.telegramBotToken || '').trim() && !configuredConnectors[name],
   );
-  return Object.fromEntries(
-    configuredAgentEntries.map(([name, agent]) => [
-      name,
-      {
+  return {
+    ...Object.fromEntries(
+      configuredConnectorEntries.map(([name, connector]) => [
         name,
-        agent: agent.agent,
-        token: String(agent.telegramBotToken || '').trim(),
-      },
-    ]),
-  );
+        {
+          name,
+          agent: '',
+          token: String(connector.telegramBotToken || '').trim(),
+        },
+      ]),
+    ),
+    ...Object.fromEntries(
+      configuredAgentEntries.map(([name, agent]) => [
+        name,
+        {
+          name,
+          agent: agent.agent,
+          token: String(agent.telegramBotToken || '').trim(),
+        },
+      ]),
+    ),
+  };
 }
 
 function buildTelegramAgentStatus(agentConfigs) {

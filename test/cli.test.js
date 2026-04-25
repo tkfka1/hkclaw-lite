@@ -8,7 +8,14 @@ import { spawnSync } from 'node:child_process';
 import { saveCiWatcher } from '../src/ci-watch-store.js';
 import { buildPromptEnvelope } from '../src/prompt.js';
 import { DEFAULT_CHANNEL_WORKSPACE } from '../src/constants.js';
-import { buildAgentDefinition } from '../src/store.js';
+import {
+  buildAgentDefinition,
+  buildChannelDefinition,
+  buildConnectorDefinition,
+  initProject,
+  loadConfig,
+  saveConfig,
+} from '../src/store.js';
 
 const repoRoot = process.cwd();
 const cliPath = path.join(repoRoot, 'bin', 'hkclaw-lite.js');
@@ -88,6 +95,7 @@ function buildChannelAnswers({
   guildId = '987654321098765432',
   telegramChatId = '-1001234567890',
   telegramThreadId = '',
+  connectorChoice = '',
   workspace = DEFAULT_CHANNEL_WORKSPACE,
   channelMode = '1',
   agentChoice = '1',
@@ -97,6 +105,7 @@ function buildChannelAnswers({
   description = '',
 } = {}) {
   const answers = [name, platformChoice];
+  answers.push(connectorChoice);
   if (platformChoice === '2') {
     answers.push(telegramChatId, telegramThreadId);
   } else {
@@ -119,9 +128,63 @@ test('init creates v3 project metadata', () => {
   assert.equal(fs.existsSync(configPath), true);
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   assert.equal(config.version, 3);
+  assert.deepEqual(config.connectors, {});
   assert.deepEqual(config.agents, {});
   assert.deepEqual(config.channels, {});
   assert.deepEqual(config.dashboards, {});
+});
+
+test('channels can reference a reusable messaging connector', () => {
+  const cwd = createProject();
+  initProject(cwd);
+  assert.equal(
+    buildConnectorDefinition('inferredKakao', {
+      kakaoRelayUrl: 'https://relay.example/',
+    }).type,
+    'kakao',
+  );
+  const config = loadConfig(cwd);
+  config.agents.owner = buildAgentDefinition(cwd, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'discord',
+  });
+  config.connectors.kakaoMain = buildConnectorDefinition('kakaoMain', {
+    type: 'kakao',
+    kakaoRelayUrl: 'https://relay.example/',
+  });
+  config.channels.kakao = buildChannelDefinition(cwd, config, 'kakao', {
+    name: 'kakao',
+    platform: 'kakao',
+    connector: 'kakaoMain',
+    kakaoChannelId: '*',
+    workspace: '~',
+    agent: 'owner',
+  });
+  saveConfig(cwd, config);
+
+  const loaded = loadConfig(cwd);
+  assert.equal(loaded.channels.kakao.connector, 'kakaoMain');
+  assert.equal(loaded.connectors.kakaoMain.type, 'kakao');
+
+  const blockedRemove = runCli(cwd, ['remove', 'connector', 'kakaoMain', '--yes']);
+  assert.notEqual(blockedRemove.status, 0);
+  assert.match(blockedRemove.stderr, /referenced by channels: kakao/u);
+
+  const editConnector = runCli(cwd, ['edit', 'connector', 'kakaoMain'], {
+    input: ['kakaoOps', '', 'Ops Kakao account', 'https://relay2.example/', '', ''].join('\n'),
+  });
+  assert.equal(editConnector.status, 0, editConnector.stderr);
+
+  const renamed = loadConfig(cwd);
+  assert.equal(renamed.channels.kakao.connector, 'kakaoOps');
+  assert.equal(renamed.connectors.kakaoOps.description, 'Ops Kakao account');
+  assert.equal(renamed.connectors.kakaoMain, undefined);
+
+  assert.equal(runCli(cwd, ['remove', 'channel', 'kakao', '--yes']).status, 0);
+  assert.equal(runCli(cwd, ['remove', 'connector', 'kakaoOps', '--yes']).status, 0);
+  assert.equal(loadConfig(cwd).connectors.kakaoOps, undefined);
 });
 
 test('add agent auto-initializes project metadata when missing', () => {

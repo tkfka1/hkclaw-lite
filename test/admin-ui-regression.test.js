@@ -63,6 +63,16 @@ test('channels page exposes role-scoped runtime session controls', () => {
   assert.match(appSource, /channel\.name.*session\.role/us);
 });
 
+test('channels page exposes reusable connector management', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
+
+  assert.match(viewsSource, /renderConnectorList/u);
+  assert.match(appSource, /data-form="connector"/u);
+  assert.match(appSource, /open-connector-modal/u);
+  assert.match(appSource, /\/api\/connectors/u);
+});
+
 test('form fields stay top-aligned when validation messages expand a row', () => {
   const styles = readRepoFile('src/admin-ui/styles.css');
 

@@ -41,20 +41,24 @@ import { inspectAgentRuntime } from './runners.js';
 import {
   buildAgentDefinition,
   buildChannelDefinition,
+  buildConnectorDefinition,
   buildDashboardDefinition,
   findProjectRoot,
   getAgent,
   getChannel,
+  getConnector,
   getDashboard,
   getDefaultChannelWorkspace,
   getProjectLayout,
   initProject,
   listAgents,
   listChannels,
+  listConnectors,
   listDashboards,
   loadConfig,
   removeAgent,
   removeChannel,
+  removeConnector,
   removeDashboard,
   resolveOrInitProjectRoot,
   resolveProjectPath,
@@ -241,6 +245,24 @@ async function handleAddCommand(projectRoot, argv) {
     return;
   }
 
+  if (kind === 'connector') {
+    const { positionals, flags } = parseArgs(tail);
+    const preset = buildConnectorPreset(positionals[0], flags);
+    const definition = await withPrompter((prompter) =>
+      promptForConnectorDefinition(prompter, config, {
+        mode: 'add',
+        initial: preset,
+      }),
+    );
+    config.connectors = config.connectors || {};
+    assert(!config.connectors[definition.name], `Connector "${definition.name}" already exists.`);
+    config.connectors[definition.name] = buildConnectorDefinition(definition.name, definition);
+    saveConfig(projectRoot, config);
+    console.log(`Added connector "${definition.name}".`);
+    console.log(`Next step: hkclaw-lite add channel --connector ${definition.name}`);
+    return;
+  }
+
   if (kind === 'channel') {
     assert(
       Object.keys(config.agents).length > 0,
@@ -268,7 +290,7 @@ async function handleAddCommand(projectRoot, argv) {
     return;
   }
 
-  throw new Error('Usage: hkclaw-lite add <agent|channel|dashboard>');
+  throw new Error('Usage: hkclaw-lite add <agent|connector|channel|dashboard>');
 }
 
 async function handleEditCommand(projectRoot, argv) {
@@ -354,6 +376,37 @@ async function handleEditCommand(projectRoot, argv) {
     return;
   }
 
+  if (kind === 'connector') {
+    const { positionals } = parseArgs(tail);
+    const name = positionals[0];
+    assert(name, 'Usage: hkclaw-lite edit connector <name>');
+    const existing = getConnector(config, name);
+    const definition = await withPrompter((prompter) =>
+      promptForConnectorDefinition(prompter, config, {
+        mode: 'edit',
+        initial: existing,
+      }),
+    );
+    if (definition.name !== name) {
+      assert(!config.connectors?.[definition.name], `Connector "${definition.name}" already exists.`);
+      for (const channel of Object.values(config.channels)) {
+        if (channel.connector === name) {
+          channel.connector = definition.name;
+        }
+      }
+      delete config.connectors[name];
+    }
+    config.connectors = config.connectors || {};
+    config.connectors[definition.name] = buildConnectorDefinition(
+      definition.name,
+      definition,
+      config.connectors[definition.name] || existing,
+    );
+    saveConfig(projectRoot, config);
+    console.log(`Updated connector "${definition.name}".`);
+    return;
+  }
+
   if (kind === 'channel') {
     const { positionals } = parseArgs(tail);
     const name = positionals[0];
@@ -382,7 +435,7 @@ async function handleEditCommand(projectRoot, argv) {
     return;
   }
 
-  throw new Error('Usage: hkclaw-lite edit <agent|channel|dashboard> <name>');
+  throw new Error('Usage: hkclaw-lite edit <agent|connector|channel|dashboard> <name>');
 }
 
 async function handleRemoveCommand(projectRoot, argv) {
@@ -472,6 +525,37 @@ async function handleRemoveCommand(projectRoot, argv) {
     return;
   }
 
+  if (kind === 'connector') {
+    assert(name, 'Usage: hkclaw-lite remove connector <name> [--yes]');
+    const connector = getConnector(config, name);
+    assert(
+      !isDerivedLegacyConnector(config, name, connector),
+      `Connector "${name}" is derived from legacy agent platform settings; edit the agent connection settings first.`,
+    );
+    const blockingChannels = listChannels(config)
+      .filter((channel) => channel.connector === name)
+      .map((channel) => channel.name);
+    assert(
+      blockingChannels.length === 0,
+      `Connector "${name}" is referenced by channels: ${blockingChannels.join(', ')}.`,
+    );
+    const confirmed = force
+      ? true
+      : await withPrompter((prompter) =>
+          prompter.askConfirm(`Remove connector "${name}"?`, {
+            defaultValue: false,
+          }),
+        );
+    if (!confirmed) {
+      console.log('Cancelled.');
+      return;
+    }
+    removeConnector(config, name);
+    saveConfig(projectRoot, config);
+    console.log(`Removed connector "${name}".`);
+    return;
+  }
+
   if (kind === 'channel') {
     assert(name, 'Usage: hkclaw-lite remove channel <name> [--yes]');
     getChannel(config, name);
@@ -492,7 +576,7 @@ async function handleRemoveCommand(projectRoot, argv) {
     return;
   }
 
-  throw new Error('Usage: hkclaw-lite remove <agent|channel|dashboard> <name>');
+  throw new Error('Usage: hkclaw-lite remove <agent|connector|channel|dashboard> <name>');
 }
 
 async function handleListCommand(projectRoot, argv) {
@@ -501,6 +585,8 @@ async function handleListCommand(projectRoot, argv) {
 
   if (!kind || kind === 'all') {
     printAgents(listAgents(config));
+    console.log('');
+    printConnectors(listConnectors(config));
     console.log('');
     printChannels(listChannels(config));
     console.log('');
@@ -518,12 +604,17 @@ async function handleListCommand(projectRoot, argv) {
     return;
   }
 
+  if (['connector', 'connectors'].includes(kind)) {
+    printConnectors(listConnectors(config));
+    return;
+  }
+
   if (['channel', 'channels'].includes(kind)) {
     printChannels(listChannels(config));
     return;
   }
 
-  throw new Error('Usage: hkclaw-lite list [agents|channels|dashboards|all]');
+  throw new Error('Usage: hkclaw-lite list [agents|connectors|channels|dashboards|all]');
 }
 
 async function handleShowCommand(projectRoot, argv) {
@@ -542,13 +633,19 @@ async function handleShowCommand(projectRoot, argv) {
     return;
   }
 
+  if (kind === 'connector') {
+    assert(name, 'Usage: hkclaw-lite show connector <name>');
+    console.log(JSON.stringify(getConnector(config, name), null, 2));
+    return;
+  }
+
   if (kind === 'channel') {
     assert(name, 'Usage: hkclaw-lite show channel <name>');
     console.log(JSON.stringify(getChannel(config, name), null, 2));
     return;
   }
 
-  throw new Error('Usage: hkclaw-lite show <agent|channel|dashboard> <name>');
+  throw new Error('Usage: hkclaw-lite show <agent|connector|channel|dashboard> <name>');
 }
 
 async function handleRunCommand(projectRoot, argv) {
@@ -779,7 +876,7 @@ async function handleDiscordCommand(projectRoot, argv) {
   const { flags } = parseArgs(tail);
   const { serveDiscord } = await import('./discord-service.js');
   await serveDiscord(projectRoot, {
-    agentName: getFlagValue(flags, 'agent'),
+    agentName: getFlagValue(flags, 'connector') || getFlagValue(flags, 'agent'),
   });
 }
 
@@ -792,7 +889,7 @@ async function handleTelegramCommand(projectRoot, argv) {
   const { flags } = parseArgs(tail);
   const { serveTelegram } = await import('./telegram-service.js');
   await serveTelegram(projectRoot, {
-    agentName: getFlagValue(flags, 'agent'),
+    agentName: getFlagValue(flags, 'connector') || getFlagValue(flags, 'agent'),
   });
 }
 
@@ -805,7 +902,7 @@ async function handleKakaoCommand(projectRoot, argv) {
   const { flags } = parseArgs(tail);
   const { serveKakao } = await import('./kakao-service.js');
   await serveKakao(projectRoot, {
-    agentName: getFlagValue(flags, 'agent'),
+    agentName: getFlagValue(flags, 'connector') || getFlagValue(flags, 'agent'),
   });
 }
 
@@ -1442,6 +1539,72 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
   return definition;
 }
 
+async function promptForConnectorDefinition(prompter, config, options) {
+  const initial = options.initial || {};
+  const existingConnectorNames = new Set(Object.keys(config.connectors || {}));
+  const name = await prompter.askText('Connector name', {
+    defaultValue: initial.name,
+    validate: (value) => {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+        return 'Use only letters, numbers, dot, underscore, and dash.';
+      }
+      if (
+        options.mode === 'add' &&
+        existingConnectorNames.has(value) &&
+        value !== initial.name
+      ) {
+        return `Connector "${value}" already exists.`;
+      }
+      if (
+        options.mode === 'edit' &&
+        value !== initial.name &&
+        existingConnectorNames.has(value)
+      ) {
+        return `Connector "${value}" already exists.`;
+      }
+      return true;
+    },
+  });
+  const type = await prompter.askChoice('Connector type', MESSAGING_PLATFORM_CHOICES, {
+    defaultValue: initial.type || initial.platform || 'kakao',
+  });
+  const description = await prompter.askText('Connector description (optional)', {
+    defaultValue: initial.description,
+    allowEmpty: true,
+  });
+  const definition = {
+    name,
+    type,
+    description,
+  };
+  if (type === 'telegram') {
+    definition.telegramBotToken = await prompter.askText('Telegram bot token', {
+      defaultValue: initial.telegramBotToken,
+    });
+  } else if (type === 'kakao') {
+    definition.kakaoRelayUrl = await prompter.askText('Kakao connection relay URL', {
+      defaultValue: initial.kakaoRelayUrl || getDefaultKakaoRelayUrl(),
+      allowEmpty: true,
+    });
+    definition.kakaoRelayToken = await prompter.askText(
+      'Kakao connection token (optional; empty creates a pairing session)',
+      {
+        defaultValue: initial.kakaoRelayToken,
+        allowEmpty: true,
+      },
+    );
+    definition.kakaoSessionToken = await prompter.askText('Kakao session token (optional)', {
+      defaultValue: initial.kakaoSessionToken,
+      allowEmpty: true,
+    });
+  } else {
+    definition.discordToken = await prompter.askText('Discord bot token', {
+      defaultValue: initial.discordToken,
+    });
+  }
+  return definition;
+}
+
 async function promptForDashboardDefinition(prompter, projectRoot, config, options) {
   void projectRoot;
   const initial = options.initial || {};
@@ -1567,6 +1730,30 @@ async function promptForChannelDefinition(prompter, config, options) {
       defaultValue: initial.platform || 'discord',
     },
   );
+  const connectorChoices = listConnectors(config)
+    .filter((connector) => connector.type === platform)
+    .map((connector) => ({
+      value: connector.name,
+      label: connector.name,
+      description: connector.description || `${platform} connector`,
+    }));
+  let connector = initial.connector || '';
+  if (connectorChoices.length > 0) {
+    connector = await prompter.askChoice(
+      'Connector for this channel',
+      [
+        {
+          value: '',
+          label: 'Legacy agent settings',
+          description: 'Use platform credentials stored on the selected agent for compatibility',
+        },
+        ...connectorChoices,
+      ],
+      {
+        defaultValue: initial.connector || '',
+      },
+    );
+  }
   let discordChannelId = '';
   let guildId = '';
   let telegramChatId = '';
@@ -1697,6 +1884,7 @@ async function promptForChannelDefinition(prompter, config, options) {
   return {
     name,
     platform,
+    connector,
     mode: channelMode,
     discordChannelId,
     guildId,
@@ -1815,6 +2003,7 @@ function renderChannelStatus(config, channel) {
   return [
     `channel=${channel.name}`,
     `platform=${channel.platform || 'discord'}`,
+    channel.connector ? `connector=${channel.connector}` : null,
     `mode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}`,
     ...renderChannelTargetStatusLines(channel),
     `workspace=${channel.workspace || channel.workdir}`,
@@ -1880,6 +2069,17 @@ function printAgents(agents) {
   }
 }
 
+function printConnectors(connectors) {
+  console.log('Connectors');
+  if (connectors.length === 0) {
+    console.log('  (none)');
+    return;
+  }
+  for (const connector of connectors) {
+    console.log(`  ${connector.name}\t${connector.type || 'discord'}${connector.description ? `\t${connector.description}` : ''}`);
+  }
+}
+
 function printChannels(channels) {
   console.log('Channels');
   if (channels.length === 0) {
@@ -1889,7 +2089,7 @@ function printChannels(channels) {
   for (const channel of channels) {
     const target = formatChannelListTarget(channel);
     console.log(
-      `  ${channel.name}\t${channel.platform || 'discord'}:${target}\tmode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}\tagent=${channel.agent}\tworkspace=${channel.workspace || channel.workdir}`,
+      `  ${channel.name}\t${channel.platform || 'discord'}:${target}\tconnector=${channel.connector || 'legacy'}\tmode=${channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')}\tagent=${channel.agent}\tworkspace=${channel.workspace || channel.workdir}`,
     );
   }
 }
@@ -1989,6 +2189,26 @@ function buildAgentPreset(name, flags) {
   };
 }
 
+function buildConnectorPreset(name, flags) {
+  return {
+    name,
+    type: getFlagValue(flags, 'type') || getFlagValue(flags, 'platform'),
+    description: getFlagValue(flags, 'description'),
+    discordToken: getFlagValue(flags, 'discord-token'),
+    telegramBotToken: getFlagValue(flags, 'telegram-bot-token'),
+    kakaoRelayUrl: getFlagValue(flags, 'kakao-relay-url'),
+    kakaoRelayToken: getFlagValue(flags, 'kakao-relay-token'),
+    kakaoSessionToken: getFlagValue(flags, 'kakao-session-token'),
+  };
+}
+
+function isDerivedLegacyConnector(config, name, connector) {
+  return Boolean(
+    config.agents?.[name] &&
+      connector?.description === 'Migrated from agent platform settings',
+  );
+}
+
 function buildDashboardPreset(name, flags) {
   return {
     name,
@@ -2002,6 +2222,7 @@ function buildChannelPreset(name, flags) {
   return {
     name,
     platform: getFlagValue(flags, 'platform'),
+    connector: getFlagValue(flags, 'connector') || getFlagValue(flags, 'connector-name'),
     mode: getFlagValue(flags, 'mode') || getFlagValue(flags, 'channel-mode'),
     discordChannelId: getFlagValue(flags, 'discord-channel-id'),
     guildId: getFlagValue(flags, 'guild-id'),
@@ -2042,23 +2263,27 @@ Execution model:
 Usage:
   hkclaw-lite init [--root DIR] [--force]
   hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
-  hkclaw-lite discord serve [--root DIR]
-  hkclaw-lite telegram serve [--root DIR]
-  hkclaw-lite kakao serve [--root DIR]
+  hkclaw-lite discord serve [--root DIR] [--connector <name>|--agent <legacy-agent-name>]
+  hkclaw-lite telegram serve [--root DIR] [--connector <name>|--agent <legacy-agent-name>]
+  hkclaw-lite kakao serve [--root DIR] [--connector <name>|--agent <legacy-agent-name>]
   hkclaw-lite backup export <file> [--root DIR] [--no-watchers] [--no-logs]
   hkclaw-lite backup import <file> [--root DIR] [--force]
   hkclaw-lite migrate --from <project-root> [--root DIR] [--force]
   hkclaw-lite add agent
+  hkclaw-lite add connector
   hkclaw-lite add channel
   hkclaw-lite add dashboard
   hkclaw-lite edit agent <name>
+  hkclaw-lite edit connector <name>
   hkclaw-lite edit channel <name>
   hkclaw-lite edit dashboard <name>
   hkclaw-lite remove agent <name> [--yes]
+  hkclaw-lite remove connector <name> [--yes]
   hkclaw-lite remove channel <name> [--yes]
   hkclaw-lite remove dashboard <name> [--yes]
-  hkclaw-lite list [agents|channels|dashboards|all]
+  hkclaw-lite list [agents|connectors|channels|dashboards|all]
   hkclaw-lite show agent <name>
+  hkclaw-lite show connector <name>
   hkclaw-lite show channel <name>
   hkclaw-lite show dashboard <name>
   hkclaw-lite run <agent> [--workdir DIR] [--message TEXT]
@@ -2080,13 +2305,14 @@ Usage:
 Examples:
   hkclaw-lite admin
   hkclaw-lite admin --host 0.0.0.0 --port ${DEFAULT_ADMIN_PORT}
-  hkclaw-lite discord serve
-  hkclaw-lite telegram serve
-  hkclaw-lite kakao serve
+  hkclaw-lite discord serve --connector discord-main
+  hkclaw-lite telegram serve --connector telegram-main
+  hkclaw-lite kakao serve --connector kakao-main
   hkclaw-lite backup export ./backups/project.json
   hkclaw-lite backup import ./backups/project.json --root ./restored
   hkclaw-lite migrate --from ../old-project --root ./new-project
   hkclaw-lite add agent
+  hkclaw-lite add connector
   hkclaw-lite add channel
   hkclaw-lite add dashboard
   hkclaw-lite run --channel discord-main --message "summarize the repo"

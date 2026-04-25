@@ -17,6 +17,7 @@ import {
 import {
   buildAgentDefinition,
   buildChannelDefinition,
+  buildConnectorDefinition,
   createDefaultConfig,
   initProject,
   saveConfig,
@@ -210,6 +211,79 @@ test('telegram service flushes pending outbox events after restart', async () =>
     limit: 10,
   });
   assert.equal(pending.length, 0);
+});
+
+test('telegram pending outbox can deliver through a channel connector', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: 'cat',
+  });
+  config.connectors.telegramMain = buildConnectorDefinition('telegramMain', {
+    type: 'telegram',
+    telegramBotToken: 'telegram-token',
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    platform: 'telegram',
+    connector: 'telegramMain',
+    telegramChatId: '-100123',
+    workspace: '~',
+    agent: 'owner',
+  });
+  saveConfig(projectRoot, config);
+
+  const run = await startRuntimeRun(projectRoot, {
+    channel: {
+      name: 'main',
+      platform: 'telegram',
+      connector: 'telegramMain',
+      telegramChatId: '-100123',
+      mode: 'single',
+      agent: 'owner',
+    },
+    prompt: 'recover connector outbox',
+    workdir: '/tmp/workspace',
+  });
+  await enqueueRuntimeOutboxEvent(projectRoot, {
+    runId: run.runId,
+    channel: {
+      name: 'main',
+      platform: 'telegram',
+      connector: 'telegramMain',
+      telegramChatId: '-100123',
+      mode: 'single',
+    },
+    entry: {
+      role: 'owner',
+      agent: { name: 'owner' },
+      content: 'connector text',
+      final: true,
+      round: 1,
+      maxRounds: 1,
+      mode: 'single',
+    },
+  });
+
+  const sent = [];
+  const clients = {
+    telegramMain: {
+      token: 'telegram-token',
+      async __send(method, payload) {
+        sent.push({ method, payload });
+        return { ok: true };
+      },
+    },
+  };
+
+  const flushed = await flushPendingTelegramOutbox(projectRoot, clients, { limit: 10 });
+  assert.equal(flushed, 1);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.text, 'connector text');
 });
 
 test('telegram outbox flush skips bad events and continues with valid ones', async () => {

@@ -216,3 +216,36 @@ test('kakao channel resolver matches wildcard channel and optional user', () => 
   );
   assert.equal(miss, undefined);
 });
+
+test('kakao channel resolver can route by connector instead of owner agent', () => {
+  const config = {
+    connectors: {
+      kakaoMain: {
+        type: 'kakao',
+      },
+    },
+    channels: {
+      main: {
+        name: 'main',
+        platform: 'kakao',
+        connector: 'kakaoMain',
+        kakaoChannelId: '*',
+        agent: 'owner',
+      },
+      legacy: {
+        name: 'legacy',
+        platform: 'kakao',
+        kakaoChannelId: '*',
+        agent: 'kakaoMain',
+      },
+    },
+  };
+
+  const connectorMatch = resolveKakaoChannelForMessage(
+    config,
+    { normalized: { userId: 'user-1', channelId: 'anything', text: 'hi' } },
+    'kakaoMain',
+  );
+
+  assert.equal(connectorMatch.name, 'main');
+});

@@ -230,13 +230,17 @@ async function handleInboundMessage({
   }
 
   const config = loadConfig(projectRoot);
-  const channel = listChannels(config).find(
-    (entry) => entry.discordChannelId === message.channelId,
+  const matchingChannels = listChannels(config).filter(
+    (entry) =>
+      (entry.platform || 'discord') === 'discord' &&
+      entry.discordChannelId === message.channelId,
   );
+  const channel =
+    matchingChannels.find((entry) => entry.connector === inboundAgentName) ||
+    matchingChannels.find(
+      (entry) => !entry.connector && resolveChannelInboundAgentName(entry) === inboundAgentName,
+    );
   if (!channel) {
-    return;
-  }
-  if (resolveChannelInboundAgentName(channel) !== inboundAgentName) {
     return;
   }
 
@@ -690,10 +694,10 @@ export async function flushDiscordOutboxForRun(
   for (const event of events) {
     try {
       const targetAgentName = resolveEventAgentName(channel, event.role);
-      if (selectedAgentName && targetAgentName !== selectedAgentName) {
+      if (selectedAgentName && targetAgentName !== selectedAgentName && channel?.connector !== selectedAgentName) {
         continue;
       }
-      const client = clients[targetAgentName];
+      const client = (channel?.connector ? clients[channel.connector] : null) || clients[targetAgentName];
       assert(client, `${targetAgentName || event.role} agent client is not configured.`);
       const channelId = event.discordChannelId || fallbackChannelId;
       assert(channelId, `Discord channel id is missing for run ${runId}.`);
@@ -732,10 +736,10 @@ export async function flushPendingDiscordOutbox(
           discordChannelId: event.discordChannelId,
         };
       const targetAgentName = resolveEventAgentName(channel, event.role);
-      if (selectedAgentName && targetAgentName !== selectedAgentName) {
+      if (selectedAgentName && targetAgentName !== selectedAgentName && channel?.connector !== selectedAgentName) {
         continue;
       }
-      const client = clients[targetAgentName];
+      const client = (channel?.connector ? clients[channel.connector] : null) || clients[targetAgentName];
       assert(client, `${targetAgentName || event.role} agent client is not configured.`);
       const channelId = event.discordChannelId || channel.discordChannelId;
       assert(channelId, `Discord channel id is missing for queued event ${event.eventId}.`);
@@ -799,8 +803,21 @@ function resolveDiscordAgentConfigs(
   { agentName = null } = {},
 ) {
   if (agentName) {
+    const connector = config?.connectors?.[agentName];
+    if (connector) {
+      assert(connector.type === 'discord', `Connector "${agentName}" is not configured for Discord.`);
+      const token = String(connector?.discordToken || '').trim();
+      assert(token, `Connector "${agentName}" does not configure a Discord token.`);
+      return {
+        [agentName]: {
+          name: agentName,
+          agent: '',
+          token,
+        },
+      };
+    }
     const agent = config?.agents?.[agentName];
-    assert(agent, `Agent "${agentName}" does not exist.`);
+    assert(agent, `Agent or connector "${agentName}" does not exist.`);
     const token = String(agent?.discordToken || '').trim();
     assert(token, `Agent "${agentName}" does not configure a Discord token.`);
     return {
@@ -812,21 +829,37 @@ function resolveDiscordAgentConfigs(
     };
   }
 
-  const configuredAgents = config?.agents || {};
-  const configuredAgentEntries = Object.entries(configuredAgents).filter(([, agent]) =>
-    String(agent?.discordToken || '').trim(),
+  const configuredConnectors = config?.connectors || {};
+  const configuredConnectorEntries = Object.entries(configuredConnectors).filter(
+    ([, connector]) => connector?.type === 'discord' && String(connector?.discordToken || '').trim(),
   );
-  if (configuredAgentEntries.length > 0) {
-    return Object.fromEntries(
-      configuredAgentEntries.map(([name, agent]) => [
-        name,
-        {
+  const configuredAgents = config?.agents || {};
+  const configuredAgentEntries = Object.entries(configuredAgents).filter(([name, agent]) =>
+    String(agent?.discordToken || '').trim() && !configuredConnectors[name],
+  );
+  if (configuredConnectorEntries.length > 0 || configuredAgentEntries.length > 0) {
+    return {
+      ...Object.fromEntries(
+        configuredConnectorEntries.map(([name, connector]) => [
           name,
-          agent: agent.agent,
-          token: String(agent.discordToken || '').trim(),
-        },
-      ]),
-    );
+          {
+            name,
+            agent: '',
+            token: String(connector.discordToken || '').trim(),
+          },
+        ]),
+      ),
+      ...Object.fromEntries(
+        configuredAgentEntries.map(([name, agent]) => [
+          name,
+          {
+            name,
+            agent: agent.agent,
+            token: String(agent.discordToken || '').trim(),
+          },
+        ]),
+      ),
+    };
   }
 
   assert(false, 'At least one Discord-enabled agent is required.');

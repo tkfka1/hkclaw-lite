@@ -17,6 +17,7 @@ import {
 import {
   buildAgentDefinition,
   buildChannelDefinition,
+  buildConnectorDefinition,
   createDefaultConfig,
   initProject,
   saveConfig,
@@ -226,6 +227,82 @@ test('discord service flushes pending outbox events after restart', async () => 
     limit: 10,
   });
   assert.equal(pending.length, 0);
+});
+
+test('discord pending outbox can deliver through a channel connector', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: 'cat',
+  });
+  config.connectors.discordMain = buildConnectorDefinition('discordMain', {
+    type: 'discord',
+    discordToken: 'discord-token',
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    connector: 'discordMain',
+    discordChannelId: '123',
+    workspace: '~',
+    agent: 'owner',
+  });
+  saveConfig(projectRoot, config);
+
+  const run = await startRuntimeRun(projectRoot, {
+    channel: {
+      name: 'main',
+      connector: 'discordMain',
+      discordChannelId: '123',
+      mode: 'single',
+      agent: 'owner',
+    },
+    prompt: 'recover connector outbox',
+    workdir: '/tmp/workspace',
+  });
+  await enqueueRuntimeOutboxEvent(projectRoot, {
+    runId: run.runId,
+    channel: {
+      name: 'main',
+      connector: 'discordMain',
+      discordChannelId: '123',
+      mode: 'single',
+    },
+    entry: {
+      role: 'owner',
+      agent: { name: 'owner' },
+      content: 'connector text',
+      final: true,
+      round: 1,
+      maxRounds: 1,
+      mode: 'single',
+    },
+  });
+
+  const sent = [];
+  const clients = {
+    discordMain: {
+      channels: {
+        async fetch(channelId) {
+          return {
+            isTextBased() {
+              return channelId === '123';
+            },
+            async send(text) {
+              sent.push(text);
+            },
+          };
+        },
+      },
+    },
+  };
+
+  const flushed = await flushPendingDiscordOutbox(projectRoot, clients, { limit: 10 });
+  assert.equal(flushed, 1);
+  assert.deepEqual(sent, ['connector text']);
 });
 
 test('discord outbox flush skips bad events and continues with valid ones', async () => {

@@ -38,26 +38,33 @@ export function getKakaoCommandQueuePath(projectRoot, agentName = null) {
 export function inspectKakaoAgentConfigs(config, channels, runtimeStatus = null) {
   const kakaoChannels = channels.filter((channel) => (channel?.platform || 'discord') === 'kakao');
   const agents = config?.agents || {};
+  const connectors = config?.connectors || {};
   const runtimeAgents = runtimeStatus?.agents || runtimeStatus?.accounts || {};
 
   return {
     kakaoChannelCount: kakaoChannels.length,
     agents: Object.fromEntries(
-      Object.entries(agents).map(([name, agent]) => {
+      Object.entries({ ...agents, ...connectors }).map(([name, entry]) => {
+        const connector = connectors[name];
+        const agent = agents[name];
+        const sourceConfig = connector || agent || {};
         const runtimeAgent = runtimeAgents[name] || {};
-        const hasConfiguredToken = Boolean(agent?.kakaoRelayToken || agent?.kakaoSessionToken);
-        const usesKakao = (agent?.platform || 'discord') === 'kakao';
+        const hasConfiguredToken = Boolean(sourceConfig?.kakaoRelayToken || sourceConfig?.kakaoSessionToken);
+        const usesKakao = connector ? connector.type === 'kakao' : (agent?.platform || 'discord') === 'kakao';
         return [
           name,
           {
             configured: usesKakao || hasConfiguredToken || Boolean(runtimeAgent.tokenConfigured),
             required: kakaoChannels.some(
               (channel) =>
-                channel.agent === name ||
-                channel.reviewer === name ||
-                channel.arbiter === name,
+                channel.connector === name ||
+                (!channel.connector &&
+                  (channel.agent === name ||
+                    channel.reviewer === name ||
+                    channel.arbiter === name)),
             ),
             agent: agent?.agent || '',
+            connector: Boolean(connector),
             source: hasConfiguredToken
               ? 'config'
               : runtimeAgent.tokenConfigured
@@ -67,11 +74,11 @@ export function inspectKakaoAgentConfigs(config, channels, runtimeStatus = null)
                   : '없음',
             tokenConfigured: usesKakao || hasConfiguredToken || Boolean(runtimeAgent.tokenConfigured),
             connected: Boolean(runtimeAgent.connected),
-            relayUrl: runtimeAgent.relayUrl || agent?.kakaoRelayUrl || '',
+            relayUrl: runtimeAgent.relayUrl || sourceConfig?.kakaoRelayUrl || '',
             pairingCode: runtimeAgent.pairingCode || '',
             pairingExpiresIn: runtimeAgent.pairingExpiresIn || null,
             pairedUserId: runtimeAgent.pairedUserId || '',
-            sessionTokenConfigured: Boolean(agent?.kakaoSessionToken || runtimeAgent.sessionTokenConfigured),
+            sessionTokenConfigured: Boolean(sourceConfig?.kakaoSessionToken || runtimeAgent.sessionTokenConfigured),
           },
         ];
       }),

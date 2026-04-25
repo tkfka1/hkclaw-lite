@@ -894,6 +894,19 @@ test('admin server saves config changes and can run a mapped channel', async () 
     });
     assert.equal(agentResponse.response.status, 200, JSON.stringify(agentResponse.payload));
 
+    const connectorResponse = await requestJson(`${url}/api/connectors`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'kakao-main',
+          type: 'kakao',
+          kakaoRelayUrl: 'https://relay.example/',
+        },
+      },
+    });
+    assert.equal(connectorResponse.response.status, 200, JSON.stringify(connectorResponse.payload));
+    assert.equal(connectorResponse.payload.state.connectors[0].name, 'kakao-main');
+
     const channelResponse = await requestJson(`${url}/api/channels`, {
       method: 'POST',
       body: {
@@ -911,6 +924,34 @@ test('admin server saves config changes and can run a mapped channel', async () 
       JSON.stringify(channelResponse.payload),
     );
     assert.equal(channelResponse.payload.state.channels[0].mode, 'single');
+
+    const kakaoChannelResponse = await requestJson(`${url}/api/channels`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'kakao-main',
+          platform: 'kakao',
+          connector: 'kakao-main',
+          kakaoChannelId: '*',
+          workspace: 'workspace',
+          agent: 'worker',
+        },
+      },
+    });
+    assert.equal(
+      kakaoChannelResponse.response.status,
+      200,
+      JSON.stringify(kakaoChannelResponse.payload),
+    );
+
+    const blockedConnectorDelete = await requestJson(
+      `${url}/api/connectors/${encodeURIComponent('kakao-main')}`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(blockedConnectorDelete.response.status, 400);
+    assert.match(blockedConnectorDelete.payload.error, /referenced by channels/u);
 
     const dashboardResponse = await requestJson(`${url}/api/dashboards`, {
       method: 'POST',
@@ -956,6 +997,22 @@ test('admin server saves config changes and can run a mapped channel', async () 
     );
     assert.equal(deleteChannel.response.status, 200, JSON.stringify(deleteChannel.payload));
 
+    const deleteKakaoChannel = await requestJson(
+      `${url}/api/channels/${encodeURIComponent('kakao-main')}`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(deleteKakaoChannel.response.status, 200, JSON.stringify(deleteKakaoChannel.payload));
+
+    const deleteConnector = await requestJson(
+      `${url}/api/connectors/${encodeURIComponent('kakao-main')}`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(deleteConnector.response.status, 200, JSON.stringify(deleteConnector.payload));
+
     const deleteDashboard = await requestJson(
       `${url}/api/dashboards/${encodeURIComponent('ops')}`,
       {
@@ -975,6 +1032,7 @@ test('admin server saves config changes and can run a mapped channel', async () 
 
   const config = loadConfig(projectRoot);
   assert.equal(config.channels['discord-main'], undefined);
+  assert.equal(config.connectors['kakao-main'], undefined);
   assert.equal(config.agents.worker, undefined);
   assert.equal(config.dashboards.ops, undefined);
 });

@@ -34,19 +34,23 @@ import {
 import {
   buildAgentDefinition,
   buildChannelDefinition,
+  buildConnectorDefinition,
   buildDashboardDefinition,
   buildLocalLlmConnectionDefinition,
   getDefaultChannelWorkspace,
   getAgent,
   getChannel,
+  getConnector,
   getDashboard,
   listAgents,
   listChannels,
+  listConnectors,
   listDashboards,
   listLocalLlmConnections,
   loadConfig,
   removeAgent,
   removeChannel,
+  removeConnector,
   removeDashboard,
   saveConfig,
 } from './store.js';
@@ -80,6 +84,7 @@ export async function buildAdminSnapshot(projectRoot) {
       kakaoRelayUrl: getDefaultKakaoRelayUrl(),
     },
     localLlmConnections: listLocalLlmConnections(config),
+    connectors: listConnectors(config),
     agents,
     channels: runtime.channels,
     dashboards,
@@ -307,6 +312,55 @@ export async function deleteAgentByName(projectRoot, name) {
   );
 
   removeAgent(config, name);
+  saveConfig(projectRoot, config);
+  return await buildAdminSnapshot(projectRoot);
+}
+
+export async function upsertConnector(projectRoot, currentName, input) {
+  const config = loadConfig(projectRoot);
+  const existing = currentName ? getConnector(config, currentName) : null;
+  const nextName = String(input?.name || '').trim();
+
+  assert(nextName, 'Connector name is required.');
+
+  if (currentName) {
+    if (nextName !== currentName) {
+      assert(!config.connectors?.[nextName], `Connector "${nextName}" already exists.`);
+      renameConnectorReferences(config, currentName, nextName);
+      delete config.connectors[currentName];
+    }
+  } else {
+    assert(!config.connectors?.[nextName], `Connector "${nextName}" already exists.`);
+  }
+
+  config.connectors = config.connectors || {};
+  config.connectors[nextName] = buildConnectorDefinition(
+    nextName,
+    input,
+    config.connectors[nextName] || existing || {},
+  );
+  saveConfig(projectRoot, config);
+  return await buildAdminSnapshot(projectRoot);
+}
+
+export async function deleteConnectorByName(projectRoot, name) {
+  const config = loadConfig(projectRoot);
+  const connector = getConnector(config, name);
+  assert(
+    !isDerivedLegacyConnector(config, name, connector),
+    `Connector "${name}" is derived from legacy agent platform settings; edit the agent connection settings first.`,
+  );
+
+  const blockingChannels = listChannels(config)
+    .filter((channel) => channel.connector === name)
+    .map((channel) => channel.name);
+
+  assert(
+    blockingChannels.length === 0,
+    `Connector "${name}" is referenced by channels: ${blockingChannels.join(', ')}.`,
+  );
+
+  removeConnector(config, name);
   saveConfig(projectRoot, config);
   return await buildAdminSnapshot(projectRoot);
 }
@@ -602,6 +656,21 @@ function renameAgentReferences(config, currentName, nextName) {
       agent.fallbackAgent = nextName;
     }
   }
+}
+
+function renameConnectorReferences(config, currentName, nextName) {
+  for (const channel of Object.values(config.channels || {})) {
+    if (channel.connector === currentName) {
+      channel.connector = nextName;
+    }
+  }
+}
+
+function isDerivedLegacyConnector(config, name, connector) {
+  return Boolean(
+    config.agents?.[name] &&
+      connector?.description === 'Migrated from agent platform settings',
+  );
 }
 
 function unique(values) {
