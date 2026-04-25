@@ -2,8 +2,8 @@ import {
   renderDetailList,
   renderMetricCard,
   renderShortcutCard,
-} from './ui-shell.js?v=20260425-02';
-import { renderIcon } from './icons.js?v=20260425-02';
+} from './ui-shell.js?v=20260425-03';
+import { renderIcon } from './icons.js?v=20260425-03';
 
 export function renderHomeView(ctx) {
   const { state, getDashboardStats, escapeHtml } = ctx;
