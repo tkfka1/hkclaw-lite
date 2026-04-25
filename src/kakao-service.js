@@ -868,10 +868,10 @@ function buildKakaoAgentStatus(agentConfigs) {
   );
 }
 
-function buildKakaoAgentStatusEntry(agentConfig, client) {
+export function buildKakaoAgentStatusEntry(agentConfig, client) {
   return {
     agent: agentConfig.agent || '',
-    tokenConfigured: Boolean(client?.tokenConfigured || agentConfig.relayToken || agentConfig.sessionToken || true),
+    tokenConfigured: Boolean(client?.tokenConfigured || agentConfig.relayToken || agentConfig.sessionToken),
     connected: Boolean(client?.connected),
     relayUrl: client?.relayUrl || agentConfig.relayUrl || DEFAULT_KAKAO_RELAY_URL,
     pairingCode: client?.pairingCode || '',

@@ -3510,7 +3510,10 @@ function refreshVisibleFormErrors(scope, errors = {}) {
 
 function renderFormError(scope, key) {
   const message = getFormErrors(scope)[key];
-  return message ? `<div class="form-error">${escapeHtml(message)}</div>` : '';
+  if (!message) {
+    return '<div class="form-error" aria-hidden="true">&nbsp;</div>';
+  }
+  return `<div class="form-error">${escapeHtml(message)}</div>`;
 }
 
 function renderFormErrorSummary(scope) {

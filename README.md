@@ -189,6 +189,26 @@ KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bar
 - 그래서 hkclaw-lite의 **Channel은 역할이 있다.** Kakao 연결 자체를 여는 것은 Connector/worker지만, 어떤 workspace, single/tribunal 모드, owner/reviewer/arbiter role 세션으로 실행할지는 Channel이 결정한다.
 - 기존처럼 에이전트에 Kakao 연결값이 붙어 있는 설정은 legacy 호환으로 계속 읽고, 로드 시 같은 이름의 Kakao 커넥터처럼 취급한다.
 
+### 빠른 FAQ (혼동 포인트 정리)
+
+- **Q. `*` 는 무엇인가요?**  
+  - `Kakao 수신 channelId 필터`에서 `*`는 `모든 channelId`를 허용합니다. 즉, 필터를 좁히지 않겠다는 뜻입니다.  
+  - 특정 채널만 받으려면 `channelId`를 정확히 지정하세요.
+- **Q. connector, channel, worker, 에이전트는 각각 뭐가 다른가요?**
+  - **Connector**: KakaoTalk 접속 계정/세션 정보(인증 수단)입니다.
+  - **Channel**: 어떤 메시지를 누구에게 보낼지(워크스페이스, mode, 역할 매핑, 필터) 결정하는 실행 규칙입니다.
+  - **Worker(`kakao serve`)**: 실제로 relay로부터 event를 받고 채널 규칙에 따라 실행을 위임합니다.
+  - **Agent**: 실제 응답을 생성하는 실행 모델(LLM/커맨드)이며, 채널의 role(owner/reviewer/arbiter) 기준으로 동작합니다.
+- **Q. "릴레이 서버를 별도로 배포해야 하나요?"**  
+  - 기본값은 **별도 배포가 필요 없습니다.** `admin` 서비스와 같은 HTTP 서버에 relay 엔드포인트가 내장되어 동작합니다.
+  - 외부 relay를 강제로 쓰고 싶다면 `Kakao 연결 릴레이 URL`을 별도 URL로 지정하면 됩니다.
+- **Q. 채널마다 worker를 하나씩 만들어야 하나요?**
+  - 기본적으로 **`kakao serve` 하나로 충분**합니다. 설정된 모든 Kakao Connector를 읽고 SSE를 연결해 처리할 수 있습니다.
+  - 여러 worker가 필요한 건 트래픽 분산/격리 정책, 혹은 완전 분리된 계정/토큰을 채널 단위가 아닌 **Connector 단위**로 분리해야 할 때입니다.
+- **Q. Tribu(tribunal)는 어디서 동작하나요?**
+  - 채널 설정에서 `mode`가 tribunal로 정해지면 `owner / reviewer / arbiter` 흐름으로 같은 채널에서 순차 협업합니다.  
+  - 에이전트별이 아니라 **채널:role** 조합(`channelName:owner` etc)으로 하네스 세션이 분리됩니다.
+
 ### 배포 단위
 
 - **릴레이 서버/엔드포인트는 hkclaw-lite 인스턴스당 하나면 된다.** Admin HTTP 서버가 `/kakao-talkchannel/webhook`, `/v1/events`, `/openclaw/reply`를 같이 제공한다.

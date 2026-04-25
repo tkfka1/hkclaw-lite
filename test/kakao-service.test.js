@@ -9,6 +9,7 @@ import {
   buildKakaoSkillResponses,
   formatKakaoRoleMessage,
   getDefaultKakaoRelayUrl,
+  buildKakaoAgentStatusEntry,
   parseKakaoSseChunk,
   resolveKakaoChannelForMessage,
   stripMarkdown,
@@ -248,4 +249,43 @@ test('kakao channel resolver can route by connector instead of owner agent', () 
   );
 
   assert.equal(connectorMatch.name, 'main');
+});
+
+test('buildKakaoAgentStatusEntry reflects configured kakao relay credentials', () => {
+  const connectorConfig = {
+    name: 'kakao-main',
+    agent: 'owner',
+    relayUrl: getDefaultKakaoRelayUrl(),
+    relayToken: '',
+    sessionToken: '',
+  };
+
+  const withToken = buildKakaoAgentStatusEntry(connectorConfig, { tokenConfigured: false, connected: false });
+  assert.equal(withToken.tokenConfigured, false);
+  assert.equal(withToken.connected, false);
+
+  const connectorWithClientToken = buildKakaoAgentStatusEntry(connectorConfig, {
+    tokenConfigured: true,
+    connected: false,
+  });
+  assert.equal(connectorWithClientToken.tokenConfigured, true);
+
+  const connectorWithRelayToken = buildKakaoAgentStatusEntry(connectorConfig, {
+    tokenConfigured: false,
+    connected: false,
+    relayUrl: getDefaultKakaoRelayUrl(),
+  });
+  assert.equal(connectorWithRelayToken.tokenConfigured, false);
+
+  const connectorWithAgentToken = buildKakaoAgentStatusEntry(
+    { ...connectorConfig, relayToken: 'agent-token' },
+    { tokenConfigured: false, connected: false },
+  );
+  assert.equal(connectorWithAgentToken.tokenConfigured, true);
+
+  const connectorWithSessionToken = buildKakaoAgentStatusEntry(
+    { ...connectorConfig, relayToken: '', sessionToken: 'session-token' },
+    { tokenConfigured: false, connected: false },
+  );
+  assert.equal(connectorWithSessionToken.tokenConfigured, true);
 });

@@ -98,6 +98,9 @@ h1 {
   line-height: 1.08;
   letter-spacing: -0.045em;
   text-wrap: balance;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 h2 {
@@ -1139,7 +1142,7 @@ strong,
   gap: 8px;
   align-items: flex-start;
   align-content: start;
-  justify-content: end;
+  justify-content: flex-end;
   min-width: 292px;
   max-width: 380px;
 }
@@ -1155,6 +1158,8 @@ strong,
   width: auto;
   flex: 0 0 auto;
   position: relative;
+  margin-left: 0;
+  align-self: stretch;
 }
 
 .agent-card-actions .card-actions-summary {
@@ -1165,6 +1170,8 @@ strong,
   background: rgba(15, 23, 42, 0.04);
   color: var(--ink);
   justify-content: center;
+  min-width: 82px;
+  font-weight: 700;
 }
 
 .agent-card-actions .card-actions-panel {
@@ -1534,6 +1541,7 @@ strong,
   padding: 12px 14px;
   font-size: 0.9rem;
   line-height: 1.5;
+  min-height: 1.1rem;
 }
 
 .form-error {
@@ -2059,6 +2067,9 @@ button:focus-visible {
 
   h1 {
     font-size: clamp(1.75rem, 9vw, 2rem);
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .workspace-header {
