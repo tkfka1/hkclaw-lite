@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   buildKakaoSkillResponses,
@@ -9,6 +13,66 @@ import {
   resolveKakaoChannelForMessage,
   stripMarkdown,
 } from '../src/kakao-service.js';
+import { initProject } from '../src/store.js';
+
+const repoRoot = process.cwd();
+const cliPath = path.join(repoRoot, 'bin', 'hkclaw-lite.js');
+
+function createProject() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-kakao-test-'));
+}
+
+function waitForProcessOutput(child, matcher, getOutput, timeoutMs = 3000) {
+  if (matcher.test(getOutput())) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for process output. Current output:\n${getOutput()}`));
+    }, timeoutMs);
+    const onData = () => {
+      if (matcher.test(getOutput())) {
+        cleanup();
+        resolve();
+      }
+    };
+    const onExit = (code, signal) => {
+      cleanup();
+      reject(new Error(`Process exited before expected output. code=${code} signal=${signal}\n${getOutput()}`));
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout.off('data', onData);
+      child.stderr.off('data', onData);
+      child.off('exit', onExit);
+    };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    child.on('exit', onExit);
+  });
+}
+
+function waitForProcessExit(child, timeoutMs = 3000) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for process exit.'));
+    }, timeoutMs);
+    const onExit = (code, signal) => {
+      cleanup();
+      resolve({ code, signal });
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.off('exit', onExit);
+    };
+    child.on('exit', onExit);
+  });
+}
 
 test('kakao default relay URL can be overridden by deployment environment', () => {
   const previous = process.env.OPENCLAW_TALKCHANNEL_RELAY_URL;
@@ -21,6 +85,47 @@ test('kakao default relay URL can be overridden by deployment environment', () =
       delete process.env.OPENCLAW_TALKCHANNEL_RELAY_URL;
     } else {
       process.env.OPENCLAW_TALKCHANNEL_RELAY_URL = previous;
+    }
+  }
+});
+
+test('kakao serve stays alive when no Kakao agents are configured yet', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const child = spawn(process.execPath, [cliPath, 'kakao', 'serve'], {
+    cwd: projectRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+
+  try {
+    await waitForProcessOutput(
+      child,
+      /Kakao TalkChannel service ready/u,
+      () => `${stdout}\n${stderr}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    assert.equal(child.exitCode, null, `stdout:\n${stdout}\nstderr:\n${stderr}`);
+    assert.equal(child.signalCode, null, `stdout:\n${stdout}\nstderr:\n${stderr}`);
+    assert.doesNotMatch(stderr, /unsettled top-level await/iu);
+
+    child.kill('SIGTERM');
+    const exit = await waitForProcessExit(child);
+    assert.equal(exit.code, 0, `stdout:\n${stdout}\nstderr:\n${stderr}`);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+      await waitForProcessExit(child).catch(() => {});
     }
   }
 });

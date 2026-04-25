@@ -85,7 +85,6 @@ export async function serveKakao(projectRoot, { agentName = null } = {}) {
       serviceStatus.heartbeatAt = timestamp();
       persistServiceStatus(serviceStatus);
     }, KAKAO_HEARTBEAT_INTERVAL_MS);
-    heartbeatTimer.unref?.();
 
     await enqueueOutboxFlush(() => flushPendingKakaoOutbox(projectRoot, clients, { agentName }));
     outboxTimer = setInterval(() => {
@@ -94,7 +93,6 @@ export async function serveKakao(projectRoot, { agentName = null } = {}) {
           console.error(`Kakao outbox flush error: ${toErrorMessage(error)}`);
         });
     }, KAKAO_OUTBOX_FLUSH_INTERVAL_MS);
-    outboxTimer.unref?.();
 
     commandTimer = setInterval(() => {
       void enqueueCommandProcessing(() =>
@@ -117,7 +115,6 @@ export async function serveKakao(projectRoot, { agentName = null } = {}) {
           console.error(`Kakao command error: ${toErrorMessage(error)}`);
         });
     }, KAKAO_COMMAND_POLL_INTERVAL_MS);
-    commandTimer.unref?.();
 
     printKakaoStartup(projectRoot, clients);
     await waitForShutdown(async () => {
