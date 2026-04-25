@@ -37,6 +37,7 @@ test('desktop layout can show the sidebar without always rendering the hamburger
   assert.match(shellSource, /showNavToggle/u);
   assert.match(shellSource, /desktopNavVisible/u);
   assert.match(shellSource, /nav-toggle-button/u);
+  assert.match(shellSource, /desktopNavVisible \|\| state\.navOpen \? '' : 'inert'/u);
 });
 
 test('agents page keeps operator controls visible and bookmarkable', () => {
@@ -101,6 +102,28 @@ test('mobile cards stack actions below content instead of squeezing labels', () 
 
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.card\s*\{[\s\S]*?flex-direction:\s*column;/u);
   assert.match(styles, /\.card\s*>\s*\.inline-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(auto-fit, minmax\(128px, 1fr\)\);/u);
+});
+
+test('mobile shell exposes a thumb-friendly bottom navigation dock', () => {
+  const shellSource = readRepoFile('src/admin-ui/ui-shell.js');
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(shellSource, /const NAV_TABS/u);
+  assert.match(shellSource, /function renderMobileTabBar/u);
+  assert.match(shellSource, /aria-label="빠른 관리 메뉴"/u);
+  assert.match(shellSource, /class="mobile-tabbar-link/u);
+  assert.match(shellSource, /getMobileNavBadge/u);
+  assert.match(styles, /\.mobile-tabbar\s*\{[\s\S]*?display:\s*none;/u);
+  assert.match(styles, /@media \(max-width: 1080px\)[\s\S]*?\.mobile-tabbar\s*\{[\s\S]*?position:\s*fixed;/u);
+  assert.match(styles, /grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\);/u);
+  assert.match(styles, /env\(safe-area-inset-bottom\)/u);
+});
+
+test('mobile modals use the dynamic viewport and safe-area padding', () => {
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(styles, /\.modal-shell\s*\{[\s\S]*?env\(safe-area-inset-top\)[\s\S]*?env\(safe-area-inset-bottom\)/u);
+  assert.match(styles, /\.modal-card\s*\{[\s\S]*?max-height:\s*calc\(100dvh - 24px\);/u);
 });
 
 test('channel modal does not show empty-field errors before submit', () => {

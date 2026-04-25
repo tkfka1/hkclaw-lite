@@ -1,6 +1,15 @@
-import { renderIcon } from './icons.js?v=20260425-07';
+import { renderIcon } from './icons.js?v=20260426-01';
 
 export const DESKTOP_NAV_MIN_WIDTH = 1081;
+
+const NAV_TABS = [
+  { view: 'home', label: '개요' },
+  { view: 'agents', label: '에이전트' },
+  { view: 'channels', label: '채널' },
+  { view: 'ai', label: 'AI' },
+  { view: 'tokens', label: '토큰' },
+  { view: 'all', label: '설정' },
+];
 
 export function shouldUseDesktopSidebar(viewportWidth) {
   return Number(viewportWidth) >= DESKTOP_NAV_MIN_WIDTH;
@@ -220,16 +229,8 @@ export function renderShortcutCard({ view, title, description, meta, state, esca
 }
 
 function renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible = false }) {
-  const tabs = [
-    { view: 'home', label: '개요' },
-    { view: 'agents', label: '에이전트' },
-    { view: 'channels', label: '채널' },
-    { view: 'ai', label: 'AI' },
-    { view: 'tokens', label: '토큰' },
-    { view: 'all', label: '설정' },
-  ];
   return `
-    <aside class="panel sidebar-panel ${state.navOpen || desktopNavVisible ? 'is-open' : ''} ${desktopNavVisible ? 'sidebar-panel--desktop' : ''}" aria-hidden="${desktopNavVisible || state.navOpen ? 'false' : 'true'}">
+    <aside class="panel sidebar-panel ${state.navOpen || desktopNavVisible ? 'is-open' : ''} ${desktopNavVisible ? 'sidebar-panel--desktop' : ''}" aria-hidden="${desktopNavVisible || state.navOpen ? 'false' : 'true'}" ${desktopNavVisible || state.navOpen ? '' : 'inert'}>
       <div class="sidebar-brand">
         <div class="sidebar-brand-mark">${renderIcon('sparkles', 'ui-icon')}</div>
         <div class="sidebar-brand-copy">
@@ -242,7 +243,7 @@ function renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible
         }
       </div>
       <nav class="side-nav" aria-label="관리 메뉴">
-        ${tabs
+        ${NAV_TABS
           .map(
             (tab) => `
               <button
@@ -275,6 +276,47 @@ function renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible
   `;
 }
 
+function getMobileNavBadge(view, stats) {
+  if (view === 'agents') {
+    return String(stats.agents.length);
+  }
+  if (view === 'channels') {
+    return String(stats.channels.length);
+  }
+  if (view === 'ai') {
+    return `${stats.readyAiCount}/${stats.availableAiCount}`;
+  }
+  return '';
+}
+
+function renderMobileTabBar({ state, stats, escapeHtml, escapeAttr }) {
+  return `
+    <nav class="mobile-tabbar" aria-label="빠른 관리 메뉴">
+      ${NAV_TABS.map((tab) => {
+        const active = state.activeView === tab.view;
+        const badge = getMobileNavBadge(tab.view, stats);
+        const visibleBadge = active ? badge : '';
+        const label = getViewMeta(tab.view).title;
+        return `
+          <button
+            type="button"
+            class="mobile-tabbar-link ${active ? 'is-active' : ''}"
+            data-action="switch-view"
+            data-view="${escapeAttr(tab.view)}"
+            aria-current="${active ? 'page' : 'false'}"
+            aria-label="${escapeAttr(`${label}${badge ? ` ${badge}` : ''}`)}"
+            ${state.busy ? 'disabled' : ''}
+          >
+            <span class="mobile-tabbar-icon">${renderIcon(resolveViewIcon(tab.view), 'ui-icon')}</span>
+            <span class="mobile-tabbar-label">${escapeHtml(tab.label)}</span>
+            ${visibleBadge ? `<span class="mobile-tabbar-badge">${escapeHtml(visibleBadge)}</span>` : ''}
+          </button>
+        `;
+      }).join('')}
+    </nav>
+  `;
+}
+
 export function renderFrame({
   content,
   className = '',
@@ -298,6 +340,7 @@ export function renderFrame({
           <div class="shell ${state.data ? 'shell--embedded' : ''}">${content}</div>
         </div>
       </div>
+      ${state.data && stats && !desktopNavVisible ? renderMobileTabBar({ state, stats, escapeHtml, escapeAttr }) : ''}
       ${renderNotice()}
     </div>
   `;
