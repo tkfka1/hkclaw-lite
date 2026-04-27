@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7 - 2026-04-27
+
+### Changed
+- Changed the Helm chart default deployment strategy to `Recreate` so RWO state/workspace PVCs are owned by only one hkclaw-lite Pod during rollouts.
+- Documented that `READY 2/2` means the single admin Pod has two ready containers, not that two Pods should run.
+
 ## 1.0.6 - 2026-04-27
 
 ### Changed

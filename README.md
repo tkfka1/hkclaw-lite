@@ -109,11 +109,14 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 - 기본 채널 워크스페이스는 `/home/hkclaw/workspace`
 - 별도 workspace PVC는 기본 비활성화
 - KakaoTalk 상시 수신은 `workers.kakao.enabled=true` 로 같은 Pod 안의 `kakao serve` sidecar를 켤 수 있다.
+- 기본 Deployment 전략은 `Recreate` 다. state/workspace PVC가 `ReadWriteOnce` 이고 runtime SQLite DB와 플랫폼 워커 상태를 한 Pod가 소유해야 하므로 배포 중에도 중복 Pod를 만들지 않는다.
 
 운영 주의:
 
 - 기본 동작은 단일 Pod 운영이다. 웹 어드민이 Discord/Telegram/KakaoTalk 워커를 같은 컨테이너 안에서 child process로 띄운다.
+- `READY 2/2` 는 Pod 두 개가 아니라 한 Pod 안의 웹 어드민 컨테이너와 Kakao sidecar 두 컨테이너가 모두 Ready라는 뜻이다.
 - GitOps로 KakaoTalk 수신을 항상 켜두려면 별도 Deployment보다 `workers.kakao.enabled=true` sidecar를 권장한다. 같은 Pod라서 state/workspace PVC를 안전하게 공유하고, `kakao serve` 하나가 설정된 Kakao 커넥터/legacy 에이전트 연결과 채널을 모두 처리한다.
+- RollingUpdate의 `maxSurge=1` 처럼 새 Pod와 기존 Pod가 동시에 뜨는 전략은 이 차트의 기본 운영 형태와 맞지 않는다. 정말 여러 Pod/Deployment로 분리하려면 각 Pod가 별도 state를 쓰거나, 워커별 소유 범위와 PVC 접근 방식을 명시적으로 설계해야 한다.
 - worker 재기동 복구는 runtime SQLite DB에 저장된 서비스 런타임 스냅샷을 우선 사용한다. sidecar worker는 Pod 재시작 시 Kubernetes가 직접 살린다. 웹 어드민 child-process worker를 새 배포 환경에 맞춰 반영하려면 웹 어드민에서 해당 워커를 한 번 다시 실행하거나 재시작하면 된다.
 - Helm 기본 배포는 단일 state PVC 안의 `/home/hkclaw/workspace` 를 채널 기본 workdir 로 사용한다.
 - 별도 작업용 볼륨을 쓰고 싶을 때만 `workspace.enabled=true` 로 켜고 원하는 마운트 경로를 준다.

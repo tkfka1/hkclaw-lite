@@ -2,10 +2,11 @@ replicaCount: 1
 revisionHistoryLimit: 3
 
 deploymentStrategy:
-  type: RollingUpdate
-  rollingUpdate:
-    maxUnavailable: 0
-    maxSurge: 1
+  # The default deployment is stateful: the admin container and optional
+  # sidecar workers share ReadWriteOnce state/workspace PVCs. Recreate avoids
+  # a rollout window where two Pods try to own the same runtime DB and workers.
+  type: Recreate
+  rollingUpdate: {}
 
 image:
   repository: ghcr.io/tkfka1/hkclaw-lite
