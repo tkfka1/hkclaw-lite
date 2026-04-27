@@ -186,14 +186,17 @@ test('AI auth manager explains the Claude and browser login flow before actions'
   assert.match(styles, /\.auth-step\.is-active/u);
 });
 
-test('admin login and password screens use clearer password-manager friendly copy', () => {
+test('admin login keeps the first screen focused on hkclaw-lite password entry', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
 
-  assert.match(appSource, /관리 화면 로그인/u);
+  assert.match(appSource, /id="login-title">hkclaw-lite/u);
+  assert.match(appSource, /renderRequiredLabel\('비밀번호'\)/u);
   assert.match(appSource, /autocomplete="current-password"/u);
   assert.match(appSource, /autofocus/u);
-  assert.match(appSource, /세션 유지/u);
+  assert.doesNotMatch(appSource, /관리 화면 로그인/u);
+  assert.doesNotMatch(appSource, /처음 설정한 환경 변수/u);
+  assert.doesNotMatch(appSource, /세션 유지/u);
   assert.match(appSource, /autocomplete="new-password"/u);
   assert.match(appSource, /보호 켜기/u);
   assert.match(viewsSource, /현재 비밀번호 변경/u);

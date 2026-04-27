@@ -161,6 +161,17 @@ test('ci check github prints completed run details', async () => {
   });
 });
 
+test('container publish workflow builds amd64 and arm64 images', () => {
+  const workflow = fs.readFileSync(path.resolve('.github/workflows/container-publish.yml'), 'utf8');
+  const dockerfile = fs.readFileSync(path.resolve('Dockerfile'), 'utf8');
+
+  assert.match(workflow, /docker\/setup-qemu-action@/u);
+  assert.match(workflow, /docker\/setup-buildx-action@/u);
+  assert.match(workflow, /platforms:\s*linux\/amd64,linux\/arm64/u);
+  assert.match(dockerfile, /ARG TARGETARCH/u);
+  assert.match(dockerfile, /case "\$\{arch\}" in amd64\|arm64\)/u);
+});
+
 test('ci watch gitlab polls until pipeline completes', async () => {
   let pipelineChecks = 0;
 

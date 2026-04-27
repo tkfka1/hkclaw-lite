@@ -4,6 +4,9 @@ ARG TARGETOS=linux
 ARG TARGETARCH
 ARG KUBECTL_VERSION=v1.35.0
 ARG ARGOCD_VERSION=v3.2.1
+ARG HKCLAW_LITE_CODEX_CLI_VERSION
+ARG HKCLAW_LITE_CLAUDE_AGENT_SDK_VERSION
+ARG HKCLAW_LITE_GEMINI_CLI_VERSION
 
 ENV APP_HOME=/app \
     NODE_ENV=production \
@@ -32,8 +35,19 @@ RUN set -eux; \
 WORKDIR ${APP_HOME}
 
 COPY package.json package-lock.json README.md LICENSE ./
-RUN npm ci --omit=dev \
-  && npm cache clean --force
+RUN set -eux; \
+  npm ci --omit=dev; \
+  if [ -n "${HKCLAW_LITE_CODEX_CLI_VERSION:-}" ]; then \
+    npm install --omit=dev --package-lock=false --save=false "@openai/codex@${HKCLAW_LITE_CODEX_CLI_VERSION}"; \
+  fi; \
+  if [ -n "${HKCLAW_LITE_CLAUDE_AGENT_SDK_VERSION:-}" ]; then \
+    npm install --omit=dev --package-lock=false --save=false "@anthropic-ai/claude-agent-sdk@${HKCLAW_LITE_CLAUDE_AGENT_SDK_VERSION}"; \
+  fi; \
+  if [ -n "${HKCLAW_LITE_GEMINI_CLI_VERSION:-}" ]; then \
+    npm install --omit=dev --package-lock=false --save=false "@google/gemini-cli@${HKCLAW_LITE_GEMINI_CLI_VERSION}"; \
+  fi; \
+  npm ls --omit=dev @openai/codex @anthropic-ai/claude-agent-sdk @google/gemini-cli --depth=0; \
+  npm cache clean --force
 
 COPY bin ./bin
 COPY src ./src

@@ -128,7 +128,7 @@ if (args[0] === 'login' && args[1] === 'status') {
 }
 
 if (args[0] === 'login' && args[1] === '--device-auth') {
-  process.stdout.write('Welcome to Codex [v0.120.0]\\n');
+  process.stdout.write('Welcome to Codex [v0.125.0]\\n');
   process.stdout.write('Follow these steps to sign in with ChatGPT using device code authorization:\\n\\n');
   process.stdout.write('1. Open this link in your browser and sign in to your account\\n');
   process.stdout.write('   https://example.test/codex/device\\u001b[0m\\n\\n');

@@ -1,7 +1,6 @@
 import {
   getDashboardStats as buildDashboardStats,
   getViewMeta as resolveViewMeta,
-  renderDetailList as buildDetailList,
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
   shouldUseDesktopSidebar,
@@ -1888,10 +1887,6 @@ function getDashboardStats() {
   });
 }
 
-function renderDetailList(rows, emptyText = '표시할 정보가 없습니다.') {
-  return buildDetailList(rows, escapeHtml, emptyText);
-}
-
 function renderHomeView() {
   return buildHomeView({
     state,
@@ -3686,32 +3681,25 @@ function renderLocalLlmConnectionEditor() {
 function renderLoginScreen() {
   return `
     <section class="login-shell">
-      <section class="panel login-panel">
-        <div class="login-mark">${renderIcon('shield', 'ui-icon')}</div>
-        <h1>관리 화면 로그인</h1>
-        <p class="hero-description">에이전트, 채널, AI 런타임 로그인을 다루는 화면입니다. 비밀번호만 넣으면 바로 콘솔로 들어갑니다.</p>
-        <div class="login-summary">
-          ${renderDetailList([
-            { label: '보호 변수', value: state.auth.passwordEnv || 'HKCLAW_LITE_ADMIN_PASSWORD' },
-            { label: '현재 상태', value: state.auth.enabled ? '로그인 필요' : '보호 비활성화' },
-            { label: '세션 유지', value: '기본 7일' },
-          ])}
+      <section class="panel login-panel" aria-labelledby="login-title">
+        <div class="login-brand">
+          <div class="login-mark">${renderIcon('shield', 'ui-icon')}</div>
+          <h1 id="login-title">hkclaw-lite</h1>
         </div>
-        <form data-form="login" class="form">
+        <form data-form="login" class="form login-form">
           <div class="field">
-            <label for="login-password">${renderRequiredLabel('관리자 비밀번호')}</label>
+            <label for="login-password">${renderRequiredLabel('비밀번호')}</label>
             <input
               id="login-password"
               name="password"
               type="password"
               autocomplete="current-password"
               autofocus
-              placeholder="관리자 비밀번호"
+              placeholder="비밀번호"
             />
-            <div class="field-hint">처음 설정한 환경 변수 비밀번호 또는 웹에서 변경한 비밀번호를 입력하세요.</div>
           </div>
           <div class="actions">
-            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('login', '관리 화면 열기')}</button>
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('login', '열기')}</button>
           </div>
         </form>
       </section>

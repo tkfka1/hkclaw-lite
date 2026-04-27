@@ -18,9 +18,9 @@
 
 기본 번들 버전:
 
-- `@openai/codex@0.120.0`
-- `@anthropic-ai/claude-agent-sdk@0.2.105`
-- `@google/gemini-cli@0.37.1`
+- `@openai/codex@0.125.0`
+- `@anthropic-ai/claude-agent-sdk@0.2.119`
+- `@google/gemini-cli@0.39.1`
 
 Claude 외부 CLI를 쓰고 싶다면:
 
@@ -80,10 +80,24 @@ docker run --rm \
 
 - `/home/hkclaw`는 로그인 상태와 런타임 상태를 유지하는 용도다.
 - `/workspace`는 Docker 실행 예시에서 실제 작업 디렉터리를 붙이는 용도다.
+- Docker는 호스트의 `~/.codex`, `~/.claude`, `~/.gemini`, `~/.kube` 권한을 자동으로 쓰지 않는다. 컨테이너 안의 `HOME=/home/hkclaw` 기준으로 별도 로그인/권한 상태를 저장한다.
+- `-v $(pwd):/workspace`로 마운트한 디렉터리는 컨테이너 안 작업 권한으로 접근한다. 프로세스는 기본 UID/GID `10001:10001`로 실행되므로 호스트 파일 권한이 맞아야 쓰기가 된다.
+- 호스트 로그인 상태를 꼭 공유하려면 해당 설정 디렉터리나 kubeconfig를 명시적으로 마운트해야 한다. 이 경우 컨테이너가 그 로컬 권한을 그대로 쓰므로 신뢰하는 환경에서만 사용한다.
 - 기본 Helm 배포는 단일 웹 어드민 Pod다. 웹 어드민에서 워커를 시작하면 같은 컨테이너 안에서 child process로 실행된다.
 - 컨테이너 이미지 기준 기본 채널 워크스페이스는 `/workspace` 다. `~` 는 명시적으로 썼을 때만 `HOME` 으로 해석된다.
 - 컨테이너는 자동으로 역할을 추측하지 않는다. `admin`, `run`, `discord serve`, `telegram serve`, `kakao serve` 중 어떤 명령을 띄울지 직접 넘겨야 한다.
 - 컨테이너에는 운영용 기본 도구로 `ssh`, `kubectl`, `argocd`, `git`, `ripgrep`가 같이 들어간다.
+- 이미지 빌드 기본값은 `package-lock.json`에 고정된 Codex/Claude/Gemini 번들을 설치한다. 빌드 시점 최신 번들을 받고 싶으면 아래처럼 build arg를 줄 수 있다. `latest` 대신 정확한 버전을 넣으면 재현 가능한 이미지가 된다.
+
+```bash
+docker build -t hkclaw-lite:ai-latest \
+  --build-arg HKCLAW_LITE_CODEX_CLI_VERSION=latest \
+  --build-arg HKCLAW_LITE_CLAUDE_AGENT_SDK_VERSION=latest \
+  --build-arg HKCLAW_LITE_GEMINI_CLI_VERSION=latest \
+  .
+```
+
+컨테이너 시작/배포 시점마다 CLI를 새로 다운로드하는 방식도 기술적으로는 가능하지만, 네트워크 장애와 비재현 배포 위험이 커서 기본값으로 두지 않는다. 운영에서는 CI나 로컬에서 이미지를 다시 빌드해 태그/다이제스트로 배포하는 방식을 권장한다.
 
 ## 3. Helm
 
@@ -433,6 +447,7 @@ curl -X DELETE \
 - `Publish Container` (`.github/workflows/container-publish.yml`)
   - `main` push 때 `latest`/`sha-*` 이미지 publish
   - `v*` 태그 push 때 `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X` 태그까지 함께 publish
+  - Docker Buildx/QEMU로 `linux/amd64`와 `linux/arm64` 멀티아키텍처 이미지를 하나의 manifest로 publish
 
 ### 필요한 GitHub Secrets
 
