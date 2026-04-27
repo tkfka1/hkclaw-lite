@@ -28,6 +28,8 @@ import {
 import {
   buildKakaoServiceSnapshot,
   readKakaoAgentServiceStatus,
+  readKakaoServiceStatus,
+  writeKakaoServiceStatus,
 } from '../src/kakao-runtime-state.js';
 import { parseKakaoSseChunk } from '../src/kakao-service.js';
 import {
@@ -38,6 +40,7 @@ import {
 import {
   buildAgentDefinition,
   buildChannelDefinition,
+  buildConnectorDefinition,
   buildDashboardDefinition,
   createDefaultConfig,
   getChannel,
@@ -607,6 +610,7 @@ async function openSse(url, token) {
   const controller = new AbortController();
   const events = [];
   const waiters = [];
+  const closeWaiters = [];
   const stream = fetch(url, {
     headers: {
       accept: 'text/event-stream',
@@ -641,6 +645,10 @@ async function openSse(url, token) {
         }
       }
     }
+  }).finally(() => {
+    for (const waiter of closeWaiters.splice(0)) {
+      waiter.resolve();
+    }
   });
 
   return {
@@ -660,6 +668,22 @@ async function openSse(url, token) {
           }
         }, timeoutMs);
       });
+    },
+    waitForClose({ timeoutMs = 3_000 } = {}) {
+      return Promise.race([
+        stream.then(() => undefined),
+        new Promise((resolve, reject) => {
+          const waiter = { resolve, reject };
+          closeWaiters.push(waiter);
+          setTimeout(() => {
+            const index = closeWaiters.indexOf(waiter);
+            if (index !== -1) {
+              closeWaiters.splice(index, 1);
+              reject(new Error('Timed out waiting for SSE stream to close'));
+            }
+          }, timeoutMs);
+        }),
+      ]);
     },
     async close() {
       controller.abort();
@@ -1809,6 +1833,126 @@ test('admin server can start, restart, and stop Kakao service', async () => {
   }
 });
 
+test('admin Kakao channel worker starts one platform process for connector-only channels', async () => {
+  const projectRoot = createProject();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = fakeKakaoServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+  });
+  config.connectors.kakaoMain = buildConnectorDefinition('kakaoMain', {
+    type: 'kakao',
+    kakaoRelayUrl: 'https://relay.example/',
+    kakaoSessionToken: 'session-token',
+  });
+  config.channels.support = buildChannelDefinition(projectRoot, config, 'support', {
+    platform: 'kakao',
+    connector: 'kakaoMain',
+    kakaoChannelId: '*',
+    workspace: workspacePath,
+    agent: 'owner',
+  });
+  saveConfig(projectRoot, config);
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const startResponse = await requestJson(`${url}/api/kakao-service/start`, {
+        method: 'POST',
+      });
+      assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
+      assert.equal(startResponse.payload.result.action, 'start');
+      assert.equal(startResponse.payload.result.platform, 'kakao');
+      assert.equal(startResponse.payload.result.agentName, null);
+
+      const running = await waitFor(() => {
+        const snapshot = buildKakaoServiceSnapshot(projectRoot);
+        return snapshot.running ? snapshot : null;
+      });
+      assert.equal(Boolean(running?.running), true);
+      assert.equal(Number.isInteger(running?.pid), true);
+      assert.equal(readKakaoServiceStatus(projectRoot)?.agentName, null);
+
+      const stopResponse = await requestJson(`${url}/api/kakao-service/stop`, {
+        method: 'POST',
+      });
+      assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
+      assert.equal(stopResponse.payload.result.action, 'stop');
+      assert.equal(stopResponse.payload.result.platform, 'kakao');
+      assert.equal(stopResponse.payload.result.agentName, null);
+
+      const stopped = await waitFor(() => {
+        const snapshot = buildKakaoServiceSnapshot(projectRoot);
+        return !snapshot.running && !snapshot.pidAlive ? snapshot : null;
+      });
+      assert.equal(stopped?.running, false);
+      assert.equal(readKakaoServiceStatus(projectRoot)?.desiredRunning, false);
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
+test('admin blocks Kakao agent worker when the platform worker already owns Kakao', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = fakeKakaoServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'kakao',
+    kakaoRelayUrl: 'https://relay.example/',
+  });
+  saveConfig(projectRoot, config);
+  writeKakaoServiceStatus(projectRoot, {
+    version: 1,
+    projectRoot,
+    agentName: null,
+    pid: 999_999_999,
+    running: true,
+    desiredRunning: true,
+    startedAt: new Date().toISOString(),
+    stoppedAt: null,
+    heartbeatAt: new Date().toISOString(),
+    lastError: null,
+    agents: {
+      worker: {
+        tokenConfigured: true,
+        connected: true,
+        relayUrl: 'https://relay.example/',
+      },
+    },
+  });
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const startResponse = await requestJson(`${url}/api/agents/worker/start`, {
+        method: 'POST',
+      });
+      assert.equal(startResponse.response.status, 400, JSON.stringify(startResponse.payload));
+      assert.match(startResponse.payload.error, /Kakao.*worker.*already running|Kakao.*이미 실행/u);
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
 test('admin server exposes embedded Kakao relay session, webhook, SSE, and reply APIs', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
@@ -1925,6 +2069,52 @@ test('admin server exposes embedded Kakao relay session, webhook, SSE, and reply
       });
     } finally {
       await sse.close();
+    }
+  });
+});
+
+test('embedded Kakao relay keeps only one SSE consumer per session token', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const session = await requestJson(`${url}/v1/sessions/create`, {
+      method: 'POST',
+      body: {},
+    });
+    assert.equal(session.response.status, 200, JSON.stringify(session.payload));
+
+    const first = await openSse(`${url}/v1/events`, session.payload.sessionToken);
+    await first.waitForEvent('connected');
+    const second = await openSse(`${url}/v1/events`, session.payload.sessionToken);
+    try {
+      await second.waitForEvent('connected');
+      await first.waitForClose();
+
+      const health = await requestJson(`${url}/v1/healthz`);
+      assert.equal(health.response.status, 200, JSON.stringify(health.payload));
+      assert.equal(health.payload.activeEventStreams, 1);
+
+      const pair = await requestJson(`${url}/kakao-talkchannel/webhook`, {
+        method: 'POST',
+        body: {
+          bot: { id: 'talk-channel' },
+          userRequest: {
+            utterance: `/pair ${session.payload.pairingCode}`,
+            user: {
+              id: 'kakao-user',
+              properties: {
+                plusfriendUserKey: 'plusfriend-user',
+              },
+            },
+          },
+        },
+      });
+      assert.equal(pair.response.status, 200, JSON.stringify(pair.payload));
+      const paired = await second.waitForEvent('pairing_complete');
+      assert.equal(paired.data.kakaoUserId, 'plusfriend-user');
+    } finally {
+      await Promise.allSettled([first.close(), second.close()]);
     }
   });
 });

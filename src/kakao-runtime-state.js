@@ -127,6 +127,8 @@ export function buildKakaoServiceSnapshot(projectRoot, rawStatus = undefined) {
     return buildSingleKakaoServiceSnapshot(rawStatus);
   }
 
+  rawStatus = readKakaoServiceStatus(projectRoot);
+  const platformService = buildSingleKakaoServiceSnapshot(rawStatus);
   const agentStatuses = listKakaoAgentServiceStatuses(projectRoot);
   const agentNames = Object.keys(agentStatuses);
   if (agentNames.length > 0) {
@@ -138,51 +140,62 @@ export function buildKakaoServiceSnapshot(projectRoot, rawStatus = undefined) {
     );
     const runningAgentNames = agentNames.filter((agentName) => agentServices[agentName].running);
     const staleAgentNames = agentNames.filter((agentName) => agentServices[agentName].stale);
-    const agents = Object.fromEntries(
-      agentNames.map((agentName) => [
-        agentName,
-        buildServiceAgentSummary(agentStatuses[agentName]?.agents || agentStatuses[agentName]?.accounts || {})[agentName] || {
-          tokenConfigured: false,
-          connected: false,
-          relayUrl: '',
-          pairingCode: '',
-          pairingExpiresIn: null,
-          pairedUserId: '',
-          sessionTokenConfigured: false,
-          agent: '',
-        },
-      ]),
-    );
+    const platformAgents = buildServiceAgentSummary(rawStatus?.agents || rawStatus?.accounts || {});
+    const agents = {
+      ...platformAgents,
+      ...Object.fromEntries(
+        agentNames.map((agentName) => [
+          agentName,
+          buildServiceAgentSummary(agentStatuses[agentName]?.agents || agentStatuses[agentName]?.accounts || {})[agentName] || {
+            tokenConfigured: false,
+            connected: false,
+            relayUrl: '',
+            pairingCode: '',
+            pairingExpiresIn: null,
+            pairedUserId: '',
+            sessionTokenConfigured: false,
+            agent: '',
+          },
+        ]),
+      ),
+    };
+    const platformRunningCount = platformService.running || platformService.starting ? 1 : 0;
+    const platformStaleCount = platformService.stale ? 1 : 0;
+    const runningCount = runningAgentNames.length + platformRunningCount;
+    const staleCount = staleAgentNames.length + platformStaleCount;
+    const totalCount = agentNames.length + (rawStatus ? 1 : 0);
     const state =
-      runningAgentNames.length > 0 ? 'running' : staleAgentNames.length > 0 ? 'stale' : 'stopped';
+      runningCount > 0 ? 'running' : staleCount > 0 ? 'stale' : 'stopped';
 
     return {
       state,
       label: buildAggregateKakaoServiceLabel({
         state,
-        runningCount: runningAgentNames.length,
-        totalCount: agentNames.length,
-        staleCount: staleAgentNames.length,
+        runningCount,
+        totalCount,
+        staleCount,
       }),
-      running: runningAgentNames.length > 0,
-      stale: staleAgentNames.length > 0,
+      running: runningCount > 0,
+      stale: staleCount > 0,
       desiredRunning: agentNames.some(
         (agentName) => Boolean(agentStatuses[agentName]?.desiredRunning ?? agentStatuses[agentName]?.running),
-      ),
-      pid: null,
-      startedAt: null,
-      stoppedAt: null,
-      heartbeatAt: null,
-      lastError: null,
+      ) || platformService.desiredRunning,
+      pid: platformService.pid,
+      pidAlive: platformService.pidAlive,
+      heartbeatFresh: platformService.heartbeatFresh,
+      startedAt: platformService.startedAt,
+      stoppedAt: platformService.stoppedAt,
+      heartbeatAt: platformService.heartbeatAt,
+      lastError: platformService.lastError,
       agents,
+      platformService,
       agentServices,
-      runningAgentCount: runningAgentNames.length,
-      totalAgentCount: agentNames.length,
+      runningAgentCount: runningCount,
+      totalAgentCount: totalCount,
     };
   }
 
-  rawStatus = readKakaoServiceStatus(projectRoot);
-  return buildSingleKakaoServiceSnapshot(rawStatus);
+  return platformService;
 }
 
 export function buildKakaoAgentServiceSnapshot(
@@ -222,7 +235,7 @@ function buildSingleKakaoServiceSnapshot(rawStatus) {
   const heartbeatFresh = isHeartbeatFresh(rawStatus.heartbeatAt);
 
   let state = 'stopped';
-  if (rawStatus.running && pidAlive && heartbeatFresh) {
+  if (rawStatus.running && heartbeatFresh) {
     state = 'running';
   } else if (
     Boolean(rawStatus.desiredRunning ?? rawStatus.running) &&
@@ -276,7 +289,10 @@ export function enqueueKakaoServiceCommand(projectRoot, input = {}) {
   assert(action, 'Kakao service command action is required.');
   const agentName =
     input?.agentName || input?.accountName ? String(input.agentName || input.accountName).trim() : null;
-  assert(agentName, 'Kakao service command agentName is required.');
+  assert(
+    agentName || action === 'reload-config',
+    'Kakao service command agentName is required.',
+  );
 
   const command = {
     version: 1,

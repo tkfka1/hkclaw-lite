@@ -134,6 +134,7 @@ async function handleKakaoRelayEvents(projectRoot, request, response) {
     response,
     closed: false,
   };
+  closeExistingSseClients(session.tokenHash);
   const clients = sseClientsByTokenHash.get(session.tokenHash) || new Set();
   clients.add(client);
   sseClientsByTokenHash.set(session.tokenHash, clients);
@@ -153,10 +154,28 @@ async function handleKakaoRelayEvents(projectRoot, request, response) {
     clearInterval(heartbeat);
     client.closed = true;
     clients.delete(client);
-    if (clients.size === 0) {
+    if (clients.size === 0 && sseClientsByTokenHash.get(session.tokenHash) === clients) {
       sseClientsByTokenHash.delete(session.tokenHash);
     }
   });
+}
+
+function closeExistingSseClients(tokenHash) {
+  const clients = sseClientsByTokenHash.get(tokenHash);
+  if (!clients || clients.size === 0) {
+    return;
+  }
+  for (const client of clients) {
+    if (client.closed) {
+      continue;
+    }
+    client.closed = true;
+    sendSse(client.response, 'replaced', {
+      reason: 'another_worker_connected',
+    });
+    client.response.end();
+  }
+  sseClientsByTokenHash.delete(tokenHash);
 }
 
 async function handleKakaoRelayReply(projectRoot, request, response) {

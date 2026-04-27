@@ -217,7 +217,7 @@ KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bar
 - **릴레이 서버/엔드포인트는 hkclaw-lite 인스턴스당 하나면 된다.** Admin HTTP 서버가 `/kakao-talkchannel/webhook`, `/v1/events`, `/openclaw/reply`를 같이 제공한다.
 - **`Kakao 수신 channelId 필터`는 Kubernetes 배포 단위가 아니라 라우팅 필터다.** 보통은 `*`로 두고, 특정 OpenBuilder/릴레이 channelId만 받을 때만 값을 좁힌다.
 - **worker도 보통 하나면 충분하다.** `kakao serve` 하나가 설정된 모든 KakaoTalk 커넥터를 읽고 커넥터별 SSE 세션을 만든 뒤, 들어온 메시지를 `connector`, `kakaoChannelId`, `kakaoUserId` 기준으로 채널에 라우팅한다.
-- 채널마다 Pod/Deployment를 하나씩 만들 필요는 없다. 같은 session/channel을 여러 worker가 동시에 처리하면 중복 응답이나 pairing token 혼선이 생길 수 있다.
+- 채널마다 Pod/Deployment를 하나씩 만들 필요는 없다. 내장 릴레이는 같은 session token에 마지막 SSE consumer만 유지하고, 웹 어드민은 전체 Kakao 플랫폼 worker와 scoped worker가 겹쳐 뜨는 것을 막는다. 외부 릴레이나 직접 분리 배포를 쓸 때도 담당 커넥터가 겹치지 않게 나눠야 한다.
 - 여러 worker가 필요한 경우는 트래픽/장애 격리, 서로 다른 Kakao 계정/토큰을 완전히 분리해야 하는 운영 요구가 있을 때다. 이 경우에도 보통 “채널별”보다 “커넥터/계정별”로 분리하고 `kakao serve --connector <connector-name>`처럼 담당 범위를 명확히 나눈다.
 - GitOps 운영에서는 `workers.kakao.enabled=true`로 같은 Pod 안의 sidecar를 켜는 구성을 권장한다. 별도 Pod로 분리하면 ReadWriteOnce state PVC와 AI 로그인 상태 공유 문제가 생길 수 있다.
 
