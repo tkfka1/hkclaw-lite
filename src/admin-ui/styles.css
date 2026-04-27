@@ -1042,7 +1042,60 @@ strong,
 }
 
 .service-worker-list {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.channel-intake-panel {
+  background:
+    radial-gradient(circle at 8% 0%, rgba(53, 92, 255, 0.10), transparent 34%),
+    radial-gradient(circle at 92% 12%, rgba(20, 145, 155, 0.10), transparent 32%),
+    rgba(255, 255, 255, 0.88);
+}
+
+.channel-intake-list {
+  gap: 12px;
+}
+
+.channel-intake-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 158px;
+  border-color: rgba(216, 225, 234, 0.9);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 251, 255, 0.88));
+}
+
+.channel-intake-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: rgba(47, 91, 216, 0.28);
+}
+
+.channel-intake-card.is-live {
+  border-color: rgba(31, 157, 101, 0.24);
+  box-shadow: 0 18px 34px rgba(31, 157, 101, 0.10);
+}
+
+.channel-intake-card.is-live::before {
+  background: linear-gradient(180deg, var(--emerald), rgba(20, 145, 155, 0.74));
+}
+
+.channel-intake-card.is-warning::before {
+  background: var(--amber);
+}
+
+.channel-intake-card.is-empty {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.channel-intake-copy {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 
 .agent-list {
@@ -1791,6 +1844,21 @@ button:focus-visible {
 
 .empty-inline {
   padding: 18px;
+}
+
+.empty-inline--action {
+  display: grid;
+  gap: 6px;
+}
+
+.empty-inline--action strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+}
+
+.empty-inline--action span {
+  color: var(--ink-soft);
+  line-height: 1.5;
 }
 
 .usage-summary-card,

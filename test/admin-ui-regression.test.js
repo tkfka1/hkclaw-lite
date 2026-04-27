@@ -73,6 +73,13 @@ test('channels page exposes reusable connector management', () => {
   assert.match(viewsSource, /renderConnectorList/u);
   assert.match(viewsSource, /renderChannelWorkerPanel/u);
   assert.match(viewsSource, /start-kakao-service/u);
+  assert.match(viewsSource, /<h2>채널<\/h2>/u);
+  assert.match(viewsSource, /<h2>메시지 수신<\/h2>/u);
+  assert.match(viewsSource, /<h2>채널 연결<\/h2>/u);
+  assert.match(viewsSource, /수신 켜짐/u);
+  assert.match(viewsSource, /채널 먼저 추가/u);
+  assert.doesNotMatch(viewsSource, />채널 워커</u);
+  assert.doesNotMatch(viewsSource, /가동 중/u);
   assert.match(appSource, /data-form="connector"/u);
   assert.match(appSource, /open-connector-modal/u);
   assert.match(appSource, /\/api\/connectors/u);
@@ -86,9 +93,9 @@ test('agent cards distinguish connector-managed channels from legacy agent token
   assert.match(adminStateSource, /platform:\s*channel\.platform/u);
   assert.match(adminStateSource, /connector:\s*channel\.connector/u);
   assert.match(appSource, /connectorOnly/u);
-  assert.match(appSource, /커넥터 사용/u);
-  assert.match(appSource, /채널 워커 사용/u);
-  assert.match(appSource, /채널 탭에서 관리/u);
+  assert.match(appSource, /채널 연결 사용/u);
+  assert.match(appSource, /채널 수신 사용/u);
+  assert.match(appSource, /채널 화면에서 관리/u);
   assert.match(appSource, /function\s+unique\s*\(/u);
 });
 

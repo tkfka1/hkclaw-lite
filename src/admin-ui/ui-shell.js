@@ -1,4 +1,4 @@
-import { renderIcon } from './icons.js?v=20260426-02';
+import { renderIcon } from './icons.js?v=20260427-02';
 
 export const DESKTOP_NAV_MIN_WIDTH = 1081;
 
@@ -25,12 +25,12 @@ export function getViewMeta(view = 'home') {
     agents: {
       eyebrow: 'Agents',
       title: '에이전트 운영',
-      description: '워커 제어',
+      description: '실행 상태',
     },
     channels: {
       eyebrow: 'Channels',
-      title: '채널 구성',
-      description: '채널 관리',
+      title: '채널 관리',
+      description: '연결과 수신',
     },
     ai: {
       eyebrow: 'AI Runtime',

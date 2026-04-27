@@ -2,8 +2,8 @@ import {
   renderDetailList,
   renderMetricCard,
   renderShortcutCard,
-} from './ui-shell.js?v=20260426-02';
-import { renderIcon } from './icons.js?v=20260426-02';
+} from './ui-shell.js?v=20260427-02';
+import { renderIcon } from './icons.js?v=20260427-02';
 
 export function renderHomeView(ctx) {
   const { state, getDashboardStats, escapeHtml } = ctx;
@@ -77,7 +77,7 @@ export function renderAgentsView(ctx) {
         <div class="agent-toolbar-summary" aria-label="에이전트 요약">
           <span class="mini-chip">${renderIcon('agents', 'ui-icon')}${escapeHtml(`전체 ${stats.agents.length}`)}</span>
           <span class="mini-chip mini-chip--ok">${renderIcon('link', 'ui-icon')}${escapeHtml(`연결 ${stats.connectedAgentCount}`)}</span>
-          <span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`워커 ${stats.activeWorkerCount}`)}</span>
+          <span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`수신 ${stats.activeWorkerCount}`)}</span>
         </div>
       </div>
       ${renderAgentList(state.data.agents, discordService, telegramService, kakaoService)}
@@ -89,27 +89,27 @@ export function renderChannelsView(ctx) {
   const { state, getDashboardStats, escapeHtml, renderConnectorList, renderChannelList } = ctx;
   const stats = getDashboardStats();
   return `
+    <section class="panel section-panel">
+      <div class="section-head">
+        <div class="section-title-group">
+          <span class="section-title-icon">${renderIcon('channels', 'ui-icon')}</span>
+          <h2>채널</h2>
+        </div>
+        <button type="button" class="btn-primary" data-action="open-channel-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}채널 추가</button>
+      </div>
+      ${renderChannelList(state.data.channels, state.data.agents)}
+    </section>
     ${renderChannelWorkerPanel({ state, stats, escapeHtml })}
     <section class="panel section-panel">
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
-          <h2>커넥터</h2>
+          <h2>채널 연결</h2>
         </div>
-        <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}커넥터 추가</button>
+        <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}연결 추가</button>
       </div>
-      <p class="field-hint">커넥터는 플랫폼 계정/토큰 연결이고, 하나의 커넥터를 여러 채널이 공유할 수 있습니다.</p>
+      <p class="field-hint">플랫폼 계정·토큰 설정입니다. 보통은 채널 하나에 연결 하나만 고르면 됩니다.</p>
       ${renderConnectorList(state.data.connectors || [], state.data.channels || [])}
-    </section>
-    <section class="panel section-panel">
-      <div class="section-head">
-        <div class="section-title-group">
-          <span class="section-title-icon">${renderIcon('channels', 'ui-icon')}</span>
-          <h2>채널 목록</h2>
-        </div>
-        <button type="button" class="btn-primary" data-action="open-channel-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}추가</button>
-      </div>
-      ${renderChannelList(state.data.channels, state.data.agents)}
     </section>
   `;
 }
@@ -146,15 +146,15 @@ function renderChannelWorkerPanel({ state, stats, escapeHtml }) {
   ];
 
   return `
-    <section class="panel section-panel">
+    <section class="panel section-panel channel-intake-panel">
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('server', 'ui-icon')}</span>
-          <h2>채널 워커</h2>
+          <h2>메시지 수신</h2>
         </div>
       </div>
-      <p class="field-hint">커넥터 기반 채널은 에이전트별 토큰이 아니라 플랫폼 워커가 수신을 담당합니다.</p>
-      <div class="card-list card-list--compact service-worker-list">
+      <p class="field-hint">채널을 만든 뒤 수신을 켜면 Discord/Telegram/KakaoTalk 메시지가 해당 채널로 들어옵니다.</p>
+      <div class="card-list card-list--compact service-worker-list channel-intake-list">
         ${services.map((entry) => renderChannelWorkerCard(entry, state, escapeHtml)).join('')}
       </div>
     </section>
@@ -166,40 +166,79 @@ function renderChannelWorkerCard(entry, state, escapeHtml) {
   const running = Boolean(service.running);
   const starting = Boolean(service.starting);
   const stale = Boolean(service.stale);
-  const label = service.label || '중지';
-  const statusClass = stale ? 'mini-chip--danger' : running ? 'mini-chip--ok' : '';
+  const hasChannels = entry.count > 0;
+  const label = resolveChannelIntakeLabel({ running, starting, stale, hasChannels });
+  const statusClass = stale ? 'mini-chip--danger' : running && hasChannels ? 'mini-chip--ok' : '';
+  const cardStateClass = stale ? 'is-warning' : running && hasChannels ? 'is-live' : !hasChannels ? 'is-empty' : '';
   const disabled = state.busy || starting || entry.count === 0;
   const lastError = service.lastError
     ? `<p class="field-hint field-hint--danger">${escapeHtml(service.lastError)}</p>`
     : '';
+  const countLabel = hasChannels ? `${entry.count}개 채널` : '채널 없음';
+  const copy = hasChannels
+    ? `${entry.label} 메시지를 받을 채널이 준비되어 있습니다.`
+    : running || starting || stale
+      ? `${entry.label} 수신은 켜져 있지만 받을 채널이 없습니다. 채널을 추가하거나 수신을 꺼도 됩니다.`
+      : `${entry.label} 메시지를 받으려면 먼저 채널을 하나 추가하세요.`;
+  const primaryAction = renderChannelIntakePrimaryAction({
+    entry,
+    state,
+    running,
+    stale,
+    disabled,
+    hasChannels,
+  });
+  const stopAction =
+    running || stale || starting
+      ? `<button type="button" class="btn-secondary" data-action="${entry.stopAction}" ${state.busy || (!running && !stale && !starting) ? 'disabled' : ''}>${renderIcon('stop', 'ui-icon')}수신 끄기</button>`
+      : '';
 
   return `
-    <article class="card card--stack service-worker-card">
+    <article class="card card--stack service-worker-card channel-intake-card ${cardStateClass}">
       <div class="card-main">
         <div class="card-title-row">
           ${renderIcon('server', 'ui-icon')}
-          <strong>${escapeHtml(entry.label)}</strong>
+          <strong>${escapeHtml(`${entry.label} 채널`)}</strong>
         </div>
+        <p class="channel-intake-copy">${escapeHtml(copy)}</p>
         <div class="card-tags">
           <span class="mini-chip ${statusClass}">${escapeHtml(label)}</span>
-          <span class="mini-chip">${escapeHtml(`채널 ${entry.count}개`)}</span>
+          <span class="mini-chip">${escapeHtml(countLabel)}</span>
         </div>
         ${lastError}
       </div>
       <div class="inline-actions">
-        ${
-          running || stale
-            ? `<button type="button" class="btn-secondary" data-action="${entry.restartAction}" ${state.busy || (!running && !stale) ? 'disabled' : ''}>${renderIcon('refresh', 'ui-icon')}재시작</button>`
-            : `<button type="button" class="btn-secondary" data-action="${entry.startAction}" ${disabled ? 'disabled' : ''}>${renderIcon('play', 'ui-icon')}시작</button>`
-        }
-        ${
-          running || stale || starting
-            ? `<button type="button" class="btn-secondary" data-action="${entry.stopAction}" ${state.busy || (!running && !stale && !starting) ? 'disabled' : ''}>${renderIcon('stop', 'ui-icon')}중지</button>`
-            : ''
-        }
+        ${primaryAction}
+        ${stopAction}
       </div>
     </article>
   `;
+}
+
+function renderChannelIntakePrimaryAction({ entry, state, running, stale, disabled, hasChannels }) {
+  if (!hasChannels && (running || stale)) {
+    return '';
+  }
+  if (running || stale) {
+    return `<button type="button" class="btn-secondary" data-action="${entry.restartAction}" ${state.busy || (!running && !stale) ? 'disabled' : ''}>${renderIcon('refresh', 'ui-icon')}다시 연결</button>`;
+  }
+  return `<button type="button" class="btn-secondary" data-action="${entry.startAction}" ${disabled ? 'disabled' : ''}>${renderIcon('play', 'ui-icon')}${hasChannels ? '수신 켜기' : '채널 추가 필요'}</button>`;
+}
+
+function resolveChannelIntakeLabel({ running, starting, stale, hasChannels }) {
+  if (!hasChannels) {
+    return '채널 먼저 추가';
+  }
+  if (stale) {
+    return '확인 필요';
+  }
+  if (starting) {
+    return '연결 중';
+  }
+  if (running) {
+    return '수신 켜짐';
+  }
+  return '수신 꺼짐';
 }
 
 export function renderAllView(ctx) {
