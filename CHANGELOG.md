@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.6 - 2026-04-27
+
+### Changed
+- Simplified the admin password modal render-state cleanup while preserving the password field typing fix.
+
 ## 1.0.5 - 2026-04-27
 
 ### Fixed

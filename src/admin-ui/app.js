@@ -28,6 +28,7 @@ const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
 const FALLBACK_KAKAO_RELAY_URL = 'https://k.tess.dev/';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'ai', 'tokens', 'all']);
+const ADMIN_PASSWORD_FIELD_NAMES = ['currentPassword', 'newPassword', 'confirmPassword'];
 let noticeTimer = null;
 let aiManagerStatusPollTimer = null;
 let aiManagerStatusPollSession = 0;
@@ -1693,15 +1694,13 @@ function captureAdminPasswordFormValues() {
     return null;
   }
 
-  return {
-    currentPassword: getInputValue(form, 'currentPassword'),
-    newPassword: getInputValue(form, 'newPassword'),
-    confirmPassword: getInputValue(form, 'confirmPassword'),
-  };
+  return Object.fromEntries(
+    ADMIN_PASSWORD_FIELD_NAMES.map((name) => [name, getNamedInputValue(form, name)]),
+  );
 }
 
 function restoreAdminPasswordFormValues(values) {
-  if (!values) {
+  if (!values || typeof values !== 'object') {
     return;
   }
 
@@ -1710,20 +1709,20 @@ function restoreAdminPasswordFormValues(values) {
     return;
   }
 
-  setInputValue(form, 'currentPassword', values.currentPassword);
-  setInputValue(form, 'newPassword', values.newPassword);
-  setInputValue(form, 'confirmPassword', values.confirmPassword);
+  for (const name of ADMIN_PASSWORD_FIELD_NAMES) {
+    setNamedInputValue(form, name, values[name]);
+  }
 }
 
-function getInputValue(form, name) {
+function getNamedInputValue(form, name) {
   const element = form.elements.namedItem(name);
   return element instanceof HTMLInputElement ? element.value : '';
 }
 
-function setInputValue(form, name, value) {
+function setNamedInputValue(form, name, value) {
   const element = form.elements.namedItem(name);
   if (element instanceof HTMLInputElement) {
-    element.value = value || '';
+    element.value = value ?? '';
   }
 }
 

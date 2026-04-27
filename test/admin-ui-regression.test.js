@@ -159,10 +159,13 @@ test('admin password modal keeps typed values across validation re-renders', () 
 
   assert.match(appSource, /adminPasswordFormValues:\s*captureAdminPasswordFormValues\(\)/u);
   assert.match(appSource, /restoreAdminPasswordFormValues\(viewState\?\.adminPasswordFormValues\);/u);
+  assert.match(appSource, /ADMIN_PASSWORD_FIELD_NAMES/u);
+  assert.match(appSource, /Object\.fromEntries\(/u);
+  assert.match(appSource, /for \(const name of ADMIN_PASSWORD_FIELD_NAMES\)/u);
   assert.match(appSource, /function\s+captureAdminPasswordFormValues\s*\(/u);
   assert.match(appSource, /function\s+restoreAdminPasswordFormValues\s*\(/u);
-  assert.match(appSource, /getInputValue\(form,\s*'newPassword'\)/u);
-  assert.match(appSource, /setInputValue\(form,\s*'confirmPassword',\s*values\.confirmPassword\)/u);
+  assert.match(appSource, /getNamedInputValue\(form,\s*name\)/u);
+  assert.match(appSource, /setNamedInputValue\(form,\s*name,\s*values\[name\]\)/u);
   assert.doesNotMatch(appSource, /name="newPassword"[^>]*value=/u);
   assert.doesNotMatch(appSource, /name="confirmPassword"[^>]*value=/u);
 });
