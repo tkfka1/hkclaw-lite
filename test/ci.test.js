@@ -164,12 +164,20 @@ test('ci check github prints completed run details', async () => {
 test('container publish workflow builds amd64 and arm64 images', () => {
   const workflow = fs.readFileSync(path.resolve('.github/workflows/container-publish.yml'), 'utf8');
   const dockerfile = fs.readFileSync(path.resolve('Dockerfile'), 'utf8');
+  const readme = fs.readFileSync(path.resolve('README.md'), 'utf8');
 
   assert.match(workflow, /docker\/setup-qemu-action@/u);
   assert.match(workflow, /docker\/setup-buildx-action@/u);
   assert.match(workflow, /platforms:\s*linux\/amd64,linux\/arm64/u);
+  assert.match(workflow, /id:\s*build/u);
+  assert.match(workflow, /GITOPS_REPOSITORY:\s*git@gitlab\.com:hkyo\/infra\/helm\/infra-values\.git/u);
+  assert.match(workflow, /GITOPS_VALUES_FILE:\s*hkclaw-lite\/values-idc\.yaml/u);
+  assert.match(workflow, /IMAGE_DIGEST:\s*\$\{\{\s*steps\.build\.outputs\.digest\s*\}\}/u);
+  assert.match(workflow, /git push origin HEAD:main/u);
   assert.match(dockerfile, /ARG TARGETARCH/u);
   assert.match(dockerfile, /case "\$\{arch\}" in amd64\|arm64\)/u);
+  assert.match(readme, /GITOPS_DEPLOY_KEY/u);
+  assert.match(readme, /ArgoCD가 GitOps desired state로 배포/u);
 });
 
 test('ci watch gitlab polls until pipeline completes', async () => {

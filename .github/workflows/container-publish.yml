@@ -19,6 +19,8 @@ concurrency:
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   PACKAGE_NAME: ${{ github.event.repository.name }}
+  GITOPS_REPOSITORY: git@gitlab.com:hkyo/infra/helm/infra-values.git
+  GITOPS_VALUES_FILE: hkclaw-lite/values-idc.yaml
 
 jobs:
   publish:
@@ -55,6 +57,7 @@ jobs:
             type=sha,format=short,prefix=sha-
 
       - name: Build and push container image
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -65,6 +68,65 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Update GitOps deployment values
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITOPS_DEPLOY_KEY: ${{ secrets.GITOPS_DEPLOY_KEY }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GITOPS_DEPLOY_KEY}" ]; then
+            echo "::warning::GITOPS_DEPLOY_KEY is not configured; skipping GitOps values update."
+            exit 0
+          fi
+
+          short_sha="$(git rev-parse --short HEAD)"
+          image_ref="sha-${short_sha}@${IMAGE_DIGEST}"
+          export image_ref
+
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${GITOPS_DEPLOY_KEY}" > ~/.ssh/gitops_deploy_key
+          chmod 600 ~/.ssh/gitops_deploy_key
+          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/gitops_deploy_key -o IdentitiesOnly=yes"
+
+          workdir="$(mktemp -d)"
+          git clone --depth 1 "${GITOPS_REPOSITORY}" "${workdir}/infra-values"
+          cd "${workdir}/infra-values"
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path(os.environ['GITOPS_VALUES_FILE'])
+          image_ref = os.environ['image_ref']
+          text = path.read_text()
+          next_text, count = re.subn(r'tag: "sha-[^" ]+@sha256:[0-9a-f]{64}"', f'tag: "{image_ref}"', text, count=1)
+          if count != 1:
+              raise SystemExit(f'expected exactly one pinned image tag in {path}')
+          path.write_text(next_text)
+          PY
+
+          if git diff --quiet -- "${GITOPS_VALUES_FILE}"; then
+            echo "GitOps values already point at ${image_ref}."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${GITOPS_VALUES_FILE}"
+          git commit -m "Deploy hkclaw-lite ${short_sha}" \
+            -m "Pin hkclaw-lite to the multi-architecture image manifest built from ${GITHUB_SHA}." \
+            -m "Constraint: hkclaw-lite is reconciled by ArgoCD from this values repository." \
+            -m "Rejected: Deploy latest directly | mutable tags hide what Kubernetes is running." \
+            -m "Confidence: high" \
+            -m "Scope-risk: narrow" \
+            -m "Tested: docker/build-push-action published ${IMAGE_DIGEST}"
+          git push origin HEAD:main
 
       - name: Make GHCR package public
         env:
