@@ -153,3 +153,16 @@ test('channel modal does not show empty-field errors before submit', () => {
     /if \(action === 'open-channel-modal'\) \{[\s\S]*?setFormErrors\('channel', collectChannelDraftErrors/u,
   );
 });
+
+test('admin password modal keeps typed values across validation re-renders', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+
+  assert.match(appSource, /adminPasswordFormValues:\s*captureAdminPasswordFormValues\(\)/u);
+  assert.match(appSource, /restoreAdminPasswordFormValues\(viewState\?\.adminPasswordFormValues\);/u);
+  assert.match(appSource, /function\s+captureAdminPasswordFormValues\s*\(/u);
+  assert.match(appSource, /function\s+restoreAdminPasswordFormValues\s*\(/u);
+  assert.match(appSource, /getInputValue\(form,\s*'newPassword'\)/u);
+  assert.match(appSource, /setInputValue\(form,\s*'confirmPassword',\s*values\.confirmPassword\)/u);
+  assert.doesNotMatch(appSource, /name="newPassword"[^>]*value=/u);
+  assert.doesNotMatch(appSource, /name="confirmPassword"[^>]*value=/u);
+});

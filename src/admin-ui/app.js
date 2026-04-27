@@ -1673,6 +1673,7 @@ function render() {
 function restoreRenderState(viewState) {
   window.requestAnimationFrame(() => {
     window.scrollTo(viewState?.scrollX || 0, viewState?.scrollY || 0);
+    restoreAdminPasswordFormValues(viewState?.adminPasswordFormValues);
     restoreFocusedElement(viewState?.focus);
   });
 }
@@ -1682,7 +1683,48 @@ function captureRenderState() {
     scrollX: window.scrollX,
     scrollY: window.scrollY,
     focus: captureFocusedElement(),
+    adminPasswordFormValues: captureAdminPasswordFormValues(),
   };
+}
+
+function captureAdminPasswordFormValues() {
+  const form = app.querySelector('[data-form="admin-password"]');
+  if (!(form instanceof HTMLFormElement)) {
+    return null;
+  }
+
+  return {
+    currentPassword: getInputValue(form, 'currentPassword'),
+    newPassword: getInputValue(form, 'newPassword'),
+    confirmPassword: getInputValue(form, 'confirmPassword'),
+  };
+}
+
+function restoreAdminPasswordFormValues(values) {
+  if (!values) {
+    return;
+  }
+
+  const form = app.querySelector('[data-form="admin-password"]');
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+
+  setInputValue(form, 'currentPassword', values.currentPassword);
+  setInputValue(form, 'newPassword', values.newPassword);
+  setInputValue(form, 'confirmPassword', values.confirmPassword);
+}
+
+function getInputValue(form, name) {
+  const element = form.elements.namedItem(name);
+  return element instanceof HTMLInputElement ? element.value : '';
+}
+
+function setInputValue(form, name, value) {
+  const element = form.elements.namedItem(name);
+  if (element instanceof HTMLInputElement) {
+    element.value = value || '';
+  }
 }
 
 function captureFocusedElement() {

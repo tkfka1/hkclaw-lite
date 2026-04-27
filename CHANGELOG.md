@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.5 - 2026-04-27
+
+### Fixed
+- Fixed the admin password modal so typed password fields survive live validation re-renders instead of appearing blank while entering text.
+
 ## 1.0.4 - 2026-04-25
 
 ### Added
