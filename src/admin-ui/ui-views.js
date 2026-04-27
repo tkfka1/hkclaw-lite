@@ -223,7 +223,7 @@ export function renderAllView(ctx) {
         >
           <div class="card-main">
             <strong class="card-title">관리자 비밀번호</strong>
-            <span class="card-meta">${escapeHtml(state.auth.enabled ? '설정됨' : '')}</span>
+            <span class="card-meta">${escapeHtml(state.auth.enabled ? '현재 비밀번호 변경' : '관리 화면 보호 켜기')}</span>
           </div>
         </article>
         <article
@@ -235,7 +235,7 @@ export function renderAllView(ctx) {
         >
           <div class="card-main">
             <strong class="card-title">로그아웃</strong>
-            <span class="card-meta">${escapeHtml(state.auth.enabled ? '' : '비활성화됨')}</span>
+            <span class="card-meta">${escapeHtml(state.auth.enabled ? '현재 브라우저 세션 종료' : '로그인 보호 비활성화됨')}</span>
           </div>
         </article>
       </div>
@@ -268,6 +268,17 @@ export function renderAiView(ctx) {
               </button>`
             : ''
         }
+      </div>
+      <div class="auth-overview-card">
+        <div>
+          <strong>로그인부터 테스트까지 한 화면에서 끝냅니다.</strong>
+          <p class="field-hint">Codex, Claude, Gemini 로그인은 이 서버의 HOME에 저장됩니다. 먼저 상태를 확인하고, 필요한 계정만 로그인한 뒤 응답 테스트로 바로 검증하세요.</p>
+        </div>
+        <div class="auth-overview-steps" aria-label="AI 인증 순서">
+          <span class="mini-chip">${renderIcon('server', 'ui-icon')}상태 확인</span>
+          <span class="mini-chip">${renderIcon('login', 'ui-icon')}로그인</span>
+          <span class="mini-chip mini-chip--ok">${renderIcon('play', 'ui-icon')}응답 테스트</span>
+        </div>
       </div>
       ${renderAiList()}
     </section>

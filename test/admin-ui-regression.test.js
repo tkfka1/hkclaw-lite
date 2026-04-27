@@ -169,3 +169,33 @@ test('admin password modal keeps typed values across validation re-renders', () 
   assert.doesNotMatch(appSource, /name="newPassword"[^>]*value=/u);
   assert.doesNotMatch(appSource, /name="confirmPassword"[^>]*value=/u);
 });
+
+test('AI auth manager explains the Claude and browser login flow before actions', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(viewsSource, /class="auth-overview-card"/u);
+  assert.match(appSource, /function\s+renderAiManagerGuide\s*\(/u);
+  assert.match(appSource, /class="auth-steps"/u);
+  assert.match(appSource, /Claude Code CLI 로그인 흐름/u);
+  assert.match(appSource, /3\. 브라우저 완료 후 주소 붙여넣기/u);
+  assert.match(appSource, /외부 Claude CLI는 웹 callback 단계가 없습니다/u);
+  assert.match(appSource, /showCompleteLoginButton/u);
+  assert.match(styles, /\.modal-card--ai\s*\{/u);
+  assert.match(styles, /\.auth-step\.is-active/u);
+});
+
+test('admin login and password screens use clearer password-manager friendly copy', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
+
+  assert.match(appSource, /관리 화면 로그인/u);
+  assert.match(appSource, /autocomplete="current-password"/u);
+  assert.match(appSource, /autofocus/u);
+  assert.match(appSource, /세션 유지/u);
+  assert.match(appSource, /autocomplete="new-password"/u);
+  assert.match(appSource, /보호 켜기/u);
+  assert.match(viewsSource, /현재 비밀번호 변경/u);
+  assert.match(viewsSource, /현재 브라우저 세션 종료/u);
+});

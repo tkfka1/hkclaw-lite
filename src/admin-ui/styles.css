@@ -1500,6 +1500,17 @@ strong,
   color: var(--accent-strong);
   text-decoration: none;
   word-break: break-all;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(53, 92, 255, 0.07);
+  border: 1px solid rgba(53, 92, 255, 0.12);
+}
+
+.result-link span {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
 }
 
 .result-code,
@@ -1959,6 +1970,125 @@ button:focus-visible {
   color: var(--accent);
 }
 
+.auth-overview-card,
+.auth-guide,
+.auth-guide-card {
+  border: 1px solid rgba(216, 225, 234, 0.92);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 251, 255, 0.86));
+}
+
+.auth-overview-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+}
+
+.auth-overview-card strong,
+.auth-guide-copy strong,
+.auth-guide-card strong {
+  display: block;
+  margin-bottom: 4px;
+  letter-spacing: -0.02em;
+}
+
+.auth-overview-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.auth-guide {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.auth-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 10px;
+}
+
+.auth-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid transparent;
+}
+
+.auth-step.is-active {
+  background: rgba(53, 92, 255, 0.08);
+  border-color: rgba(53, 92, 255, 0.18);
+}
+
+.auth-step.is-done {
+  background: var(--emerald-soft);
+  border-color: rgba(31, 157, 101, 0.16);
+}
+
+.auth-step-index {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.auth-step.is-active .auth-step-index {
+  background: var(--accent);
+  color: #fff;
+}
+
+.auth-step.is-done .auth-step-index {
+  background: var(--emerald);
+  color: #fff;
+}
+
+.auth-step strong,
+.auth-step small {
+  display: block;
+}
+
+.auth-step small {
+  margin-top: 3px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.auth-guide-card {
+  padding: 14px;
+}
+
+.auth-action-hint {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(53, 92, 255, 0.07);
+}
+
+.modal-card--ai {
+  width: min(720px, calc(100vw - 24px));
+}
+
+.auth-form-grid {
+  align-items: stretch;
+}
+
 @media (max-width: 1080px) {
   .app-shell:not(.app-shell--auth) {
     padding-bottom: calc(78px + env(safe-area-inset-bottom));
@@ -2011,6 +2141,14 @@ button:focus-visible {
 
   .token-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .auth-overview-card {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-overview-steps {
+    justify-content: flex-start;
   }
 
   .token-column-chart {

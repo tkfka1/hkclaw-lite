@@ -2074,9 +2074,9 @@ function renderMetricCard(label, value, tone = '', meta = '') {
 function getAiActionLabels(agentType) {
   return agentType === 'claude-code' || agentType === 'gemini-cli'
     ? {
-        login: '브라우저 로그인',
-        complete: '인증 반영',
-        status: '연결 확인',
+        login: '로그인 시작',
+        complete: '로그인 완료',
+        status: '상태 다시 확인',
         test: '응답 테스트',
       }
     : {
@@ -2085,6 +2085,185 @@ function getAiActionLabels(agentType) {
         status: '상태 확인',
         test: '테스트 호출',
       };
+}
+
+function renderAiManagerGuide(agentType, ready, authResult, testResult) {
+  const steps = getAiManagerSteps(agentType, ready, authResult, testResult);
+  if (!steps.length) {
+    return '';
+  }
+
+  const details = authResult?.details || {};
+  const title = agentType === 'claude-code'
+    ? 'Claude Code CLI 로그인 흐름'
+    : agentType === 'gemini-cli'
+      ? 'Gemini CLI 로그인 흐름'
+      : agentType === 'codex'
+        ? 'Codex 로그인 흐름'
+        : 'AI 연결 점검 흐름';
+  const summary = details.externalCli
+    ? '외부 Claude CLI 모드입니다. 웹에서 브라우저를 억지로 띄우지 않고, 같은 서버 터미널의 claude 로그인 상태를 읽습니다.'
+    : ready
+      ? '로그인과 응답 테스트가 끝났습니다. 이제 에이전트에서 바로 사용할 수 있습니다.'
+      : '왼쪽부터 순서대로 처리하면 됩니다. 막히면 상태 다시 확인을 누르면 현재 서버 기준으로 다시 읽습니다.';
+
+  return `
+    <section class="auth-guide" aria-label="${escapeAttr(title)}">
+      <div class="auth-guide-copy">
+        <strong>${escapeHtml(title)}</strong>
+        <p class="field-hint">${escapeHtml(summary)}</p>
+      </div>
+      <ol class="auth-steps">
+        ${steps
+          .map(
+            (step, index) => `
+              <li class="auth-step ${step.done ? 'is-done' : ''} ${step.active ? 'is-active' : ''}">
+                <span class="auth-step-index">${escapeHtml(String(index + 1))}</span>
+                <span>
+                  <strong>${escapeHtml(step.title)}</strong>
+                  <small>${escapeHtml(step.description)}</small>
+                </span>
+              </li>
+            `,
+          )
+          .join('')}
+      </ol>
+    </section>
+  `;
+}
+
+function getAiManagerSteps(agentType, ready, authResult, testResult) {
+  if (agentType === 'local-llm') {
+    return [];
+  }
+
+  const details = authResult?.details || {};
+  const loggedIn = Boolean(details.loggedIn || ready);
+  const pendingLogin = Boolean(details.pendingLogin);
+  const testDone = Boolean(testResult?.details?.success);
+  const callbackReady = agentType === 'claude-code'
+    ? Boolean(optionalDraftText(state.aiManager?.authConfig?.callbackUrl))
+    : agentType === 'gemini-cli'
+      ? Boolean(optionalDraftText(state.aiManager?.authConfig?.authorizationCode))
+      : false;
+
+  if (agentType === 'codex') {
+    return [
+      {
+        title: '기기 코드 로그인',
+        description: '로그인 버튼을 누르고 브라우저에서 코드를 입력합니다.',
+        done: loggedIn,
+        active: !loggedIn,
+      },
+      {
+        title: '상태 확인',
+        description: '서버가 로그인 완료를 감지할 때까지 자동으로 다시 확인합니다.',
+        done: loggedIn,
+        active: pendingLogin,
+      },
+      {
+        title: '응답 테스트',
+        description: '실제 CLI 호출이 되는지 짧게 검증합니다.',
+        done: testDone,
+        active: loggedIn && !testDone,
+      },
+    ];
+  }
+
+  if (agentType === 'claude-code' && details.externalCli) {
+    return [
+      {
+        title: '터미널 로그인',
+        description: '같은 서버 환경에서 claude auth login을 실행합니다.',
+        done: loggedIn,
+        active: !loggedIn,
+      },
+      {
+        title: '상태 다시 확인',
+        description: '웹이 로컬 Claude 로그인 상태를 다시 읽습니다.',
+        done: loggedIn,
+        active: !loggedIn,
+      },
+      {
+        title: '응답 테스트',
+        description: 'Claude CLI가 hkclaw-lite에서 실행되는지 확인합니다.',
+        done: testDone,
+        active: loggedIn && !testDone,
+      },
+    ];
+  }
+
+  if (agentType === 'claude-code') {
+    return [
+      {
+        title: '계정 종류 선택',
+        description: '개인 Claude 구독이면 claude.ai, 조직/API 계정이면 console을 고릅니다.',
+        done: true,
+        active: !pendingLogin && !loggedIn,
+      },
+      {
+        title: '브라우저 로그인',
+        description: '로그인 시작을 누르고 새 창에서 인증을 완료합니다.',
+        done: pendingLogin || loggedIn,
+        active: !pendingLogin && !loggedIn,
+      },
+      {
+        title: 'callback URL 붙여넣기',
+        description: '최종 주소 전체를 붙여넣고 로그인 완료를 누릅니다.',
+        done: loggedIn,
+        active: pendingLogin && !callbackReady,
+      },
+      {
+        title: '응답 테스트',
+        description: '실제 Claude Code CLI 호출을 검증합니다.',
+        done: testDone,
+        active: loggedIn && !testDone,
+      },
+    ];
+  }
+
+  if (agentType === 'gemini-cli') {
+    return [
+      {
+        title: '브라우저 로그인',
+        description: '로그인 시작을 눌러 Google 인증 링크를 엽니다.',
+        done: pendingLogin || loggedIn,
+        active: !pendingLogin && !loggedIn,
+      },
+      {
+        title: 'Authorization code 붙여넣기',
+        description: '표시된 코드를 그대로 붙여넣고 로그인 완료를 누릅니다.',
+        done: loggedIn,
+        active: pendingLogin && !callbackReady,
+      },
+      {
+        title: '응답 테스트',
+        description: 'Gemini CLI가 hkclaw-lite에서 실행되는지 확인합니다.',
+        done: testDone,
+        active: loggedIn && !testDone,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function renderAiActionHint(agentType, authResult, ready) {
+  const details = authResult?.details || {};
+  if (ready) {
+    return '<p class="field-hint auth-action-hint">로그인은 완료됐습니다. 설정을 바꿨다면 상태 다시 확인 후 응답 테스트를 다시 실행하세요.</p>';
+  }
+  if (agentType === 'claude-code' && details.externalCli) {
+    return '<p class="field-hint auth-action-hint">외부 Claude CLI는 웹 callback 단계가 없습니다. 터미널에서 로그인한 뒤 상태 다시 확인을 누르세요.</p>';
+  }
+  if ((agentType === 'claude-code' || agentType === 'gemini-cli') && details.pendingLogin) {
+    return '<p class="field-hint auth-action-hint">브라우저 인증을 끝냈다면 아래 입력칸에 결과를 붙여넣고 로그인 완료를 누르세요.</p>';
+  }
+  return '<p class="field-hint auth-action-hint">처음이면 로그인 시작을 누르세요. 이미 로그인했다면 상태 다시 확인으로 현재 서버 상태를 읽을 수 있습니다.</p>';
+}
+
+function getClaudeLoginModeLabel(loginMode) {
+  return loginMode === 'console' ? 'Anthropic Console' : 'claude.ai';
 }
 
 function renderMetaText(text) {
@@ -2679,6 +2858,26 @@ function renderChannelRuntimeSessions(channel, sessions) {
   `;
 }
 
+function buildAiListStatusChip(agentType, status, ready) {
+  const details = status?.authResult?.details || {};
+  if (ready) {
+    return '<span class="mini-chip mini-chip--ok">사용 가능</span>';
+  }
+  if (!status?.authResult) {
+    return `<span class="mini-chip">${renderIcon('server', 'ui-icon')}상태 확인 필요</span>`;
+  }
+  if (details.runtimeReady === false) {
+    return `<span class="mini-chip mini-chip--danger">${renderIcon('server', 'ui-icon')}런타임 미설치</span>`;
+  }
+  if (isAiAuthSupported(agentType) && !details.loggedIn) {
+    return `<span class="mini-chip mini-chip--danger">${renderIcon('login', 'ui-icon')}로그인 필요</span>`;
+  }
+  if (agentType === 'local-llm' && details.configured === false) {
+    return `<span class="mini-chip mini-chip--danger">${renderIcon('ai', 'ui-icon')}연결 필요</span>`;
+  }
+  return `<span class="mini-chip">${renderIcon('play', 'ui-icon')}테스트 전</span>`;
+}
+
 function renderAiList() {
   const baseEntries = (state.data.choices.agentTypes || []).filter(
     (entry) => !['command', 'local-llm'].includes(entry.value),
@@ -2698,6 +2897,7 @@ function renderAiList() {
             entry.value,
             status.authResult?.details || {},
           );
+          const statusChip = buildAiListStatusChip(entry.value, status, ready);
           return `
             <article
               class="card card--clickable"
@@ -2711,11 +2911,7 @@ function renderAiList() {
               <div class="card-main">
                 ${renderCardTitle(resolveAgentTypeIcon(entry.value), localizeOptionLabel(entry), 'violet')}
                 ${renderMetaText(localizeAiMeta(entry.value))}
-                ${
-                  ready || runtimeChip
-                    ? `<div class="card-tags">${ready ? '<span class="mini-chip mini-chip--ok">사용 가능</span>' : ''}${runtimeChip}</div>`
-                    : ''
-                }
+                <div class="card-tags">${statusChip}${runtimeChip}</div>
               </div>
             </article>
           `;
@@ -2725,6 +2921,7 @@ function renderAiList() {
         .map((connection) => {
           const status = state.aiStatuses['local-llm'] || {};
           const ready = isAiReady('local-llm', status);
+          const statusChip = buildAiListStatusChip('local-llm', status, ready);
           return `
             <article
               class="card card--clickable"
@@ -2742,11 +2939,7 @@ function renderAiList() {
                 <div class="card-tags">
                   <span class="mini-chip ${connection.apiKey ? 'mini-chip--ok' : ''}">${renderIcon('shield', 'ui-icon')}${escapeHtml(connection.apiKey ? 'API 키' : 'API 키 없음')}</span>
                 </div>
-                ${
-                  ready
-                    ? `<div class="card-tags"><span class="mini-chip mini-chip--ok">사용 가능</span></div>`
-                    : ''
-                }
+                <div class="card-tags">${statusChip}</div>
               </div>
             </article>
           `;
@@ -2830,11 +3023,17 @@ function renderAiModal() {
     testResult,
   });
   const labels = getAiActionLabels(entry.value);
+  const loginButtonClass = ready ? 'btn-secondary' : 'btn-primary';
+  const testButtonClass = ready ? 'btn-primary' : 'btn-secondary';
+  const completeLoginDisabled = isAiCompleteLoginDisabled(entry.value, authResult);
+  const showCompleteLoginButton =
+    entry.value === 'gemini-cli' ||
+    (entry.value === 'claude-code' && !authResult?.details?.externalCli);
 
   return `
     <section class="modal-shell" aria-modal="true" role="dialog" aria-label="AI 관리">
       <div class="modal-backdrop" data-action="close-ai-modal"></div>
-      <div class="panel modal-card modal-card--small">
+      <div class="panel modal-card modal-card--ai">
         <div class="section-head">
           <div class="section-title-group">
             <span class="section-title-icon">${renderIcon(entry.value === 'local-llm' ? 'ai' : resolveAgentTypeIcon(entry.value), 'ui-icon')}</span>
@@ -2850,6 +3049,7 @@ function renderAiModal() {
           </div>
         </div>
         <div data-form="ai-manager" class="form">
+          ${renderAiManagerGuide(entry.value, ready, authResult, testResult)}
           <div class="ai-modal-body">${renderAiStatusChips(entry.value, authResult, testResult, ready)}</div>
           ${renderAiUsageSummary(entry.value, usageSummary)}
           ${renderAiAuthFields(entry.value)}
@@ -2859,14 +3059,14 @@ function renderAiModal() {
             authSupported
               ? `<div class="wizard-auth-action-stack">
                   <div class="wizard-auth-actions">
-                    <button type="button" class="btn-secondary" data-action="ai-auth-login" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('login', labels.login)}</button>
+                    <button type="button" class="${loginButtonClass}" data-action="ai-auth-login" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('login', labels.login)}</button>
                     ${
-                      entry.value === 'claude-code' || entry.value === 'gemini-cli'
+                      showCompleteLoginButton
                         ? `<button
                             type="button"
                             class="btn-secondary"
                             data-action="ai-auth-complete-login"
-                            ${isAiCompleteLoginDisabled(entry.value, authResult) || state.busy ? 'disabled' : ''}
+                            ${completeLoginDisabled || state.busy ? 'disabled' : ''}
                           >
                             ${renderButtonLabel('shield', labels.complete)}
                           </button>`
@@ -2877,7 +3077,7 @@ function renderAiModal() {
                     </button>
                     <button
                       type="button"
-                      class="btn-primary"
+                      class="${testButtonClass}"
                       data-action="ai-auth-test"
                       ${state.busy || !testSupported || !isAiTestReady(entry.value, ready) ? 'disabled' : ''}
                     >
@@ -2904,6 +3104,7 @@ function renderAiModal() {
                         : ''
                     }
                   </div>
+                  ${renderAiActionHint(entry.value, authResult, ready)}
                 </div>`
               : ''
           }
@@ -3104,18 +3305,24 @@ function buildAiPrimaryStatusChip(agentType, authResult) {
 function renderAdminPasswordModal() {
   const hasErrors = Object.keys(getFormErrors('adminPassword')).length > 0;
   const errorText = getFirstFormError('adminPassword');
+  const title = state.auth.enabled ? '관리자 비밀번호 변경' : '관리자 비밀번호 만들기';
+  const submitLabel = state.auth.enabled ? '비밀번호 변경' : '보호 켜기';
   return `
-    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="관리자 비밀번호 설정">
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="${escapeAttr(title)}">
       <div class="modal-backdrop" data-action="close-admin-password-modal"></div>
       <div class="panel modal-card modal-card--small">
         <div class="section-head">
           <div class="section-title-group">
             <span class="section-title-icon">${renderIcon('shield', 'ui-icon')}</span>
-            <h2>관리자 비밀번호 설정</h2>
+            <h2>${escapeHtml(title)}</h2>
           </div>
           <button type="button" class="btn-secondary" data-action="close-admin-password-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
         </div>
         <form data-form="admin-password" class="form">
+          <div class="auth-guide-card">
+            <strong>${escapeHtml(state.auth.enabled ? '현재 세션은 유지됩니다.' : '이 브라우저 관리 화면을 비밀번호로 잠급니다.')}</strong>
+            <p class="field-hint">저장 후에는 런타임 DB의 비밀번호가 기준입니다. 환경 변수 ${escapeHtml(state.auth.passwordEnv || 'HKCLAW_LITE_ADMIN_PASSWORD')}는 최초 bootstrap 용도로만 쓰입니다.</p>
+          </div>
           ${renderFormErrorSummary('adminPassword')}
           <div class="form-grid">
             ${
@@ -3123,7 +3330,7 @@ function renderAdminPasswordModal() {
                 ? `
                     <div class="field field-full ${fieldErrorClass('adminPassword', 'currentPassword')}">
                       <label for="admin-current-password">${renderRequiredLabel('현재 비밀번호')}</label>
-                      <input id="admin-current-password" type="password" name="currentPassword" />
+                      <input id="admin-current-password" type="password" name="currentPassword" autocomplete="current-password" />
                       ${renderFormError('adminPassword', 'currentPassword')}
                     </div>
                   `
@@ -3131,17 +3338,18 @@ function renderAdminPasswordModal() {
             }
             <div class="field field-full ${fieldErrorClass('adminPassword', 'newPassword')}">
               <label for="admin-new-password">${renderRequiredLabel('새 비밀번호')}</label>
-              <input id="admin-new-password" type="password" name="newPassword" />
+              <input id="admin-new-password" type="password" name="newPassword" autocomplete="new-password" minlength="1" />
+              <div class="field-hint">이 값은 서버 밖으로 표시하지 않습니다. 배포 환경에서는 충분히 긴 비밀번호를 쓰세요.</div>
               ${renderFormError('adminPassword', 'newPassword')}
             </div>
             <div class="field field-full ${fieldErrorClass('adminPassword', 'confirmPassword')}">
               <label for="admin-confirm-password">${renderRequiredLabel('새 비밀번호 확인')}</label>
-              <input id="admin-confirm-password" type="password" name="confirmPassword" />
+              <input id="admin-confirm-password" type="password" name="confirmPassword" autocomplete="new-password" minlength="1" />
               ${renderFormError('adminPassword', 'confirmPassword')}
             </div>
           </div>
           <div class="actions">
-            <button type="submit" class="btn-primary" ${state.busy || hasErrors ? 'disabled' : ''}${hasErrors && errorText ? ` title="${escapeAttr(errorText)}"` : ''}>${renderButtonLabel('edit', '저장')}</button>
+            <button type="submit" class="btn-primary" ${state.busy || hasErrors ? 'disabled' : ''}${hasErrors && errorText ? ` title="${escapeAttr(errorText)}"` : ''}>${renderButtonLabel('edit', submitLabel)}</button>
           </div>
         </form>
       </div>
@@ -3480,21 +3688,30 @@ function renderLoginScreen() {
     <section class="login-shell">
       <section class="panel login-panel">
         <div class="login-mark">${renderIcon('shield', 'ui-icon')}</div>
-        <h1>관리 화면</h1>
-        <p class="hero-description">콘솔 접근은 비밀번호로 보호됩니다. 로그인 후 에이전트, 채널, AI 런타임 구성을 바로 관리할 수 있습니다.</p>
+        <h1>관리 화면 로그인</h1>
+        <p class="hero-description">에이전트, 채널, AI 런타임 로그인을 다루는 화면입니다. 비밀번호만 넣으면 바로 콘솔로 들어갑니다.</p>
         <div class="login-summary">
           ${renderDetailList([
             { label: '보호 변수', value: state.auth.passwordEnv || 'HKCLAW_LITE_ADMIN_PASSWORD' },
             { label: '현재 상태', value: state.auth.enabled ? '로그인 필요' : '보호 비활성화' },
+            { label: '세션 유지', value: '기본 7일' },
           ])}
         </div>
         <form data-form="login" class="form">
           <div class="field">
-            <label for="login-password">${renderRequiredLabel('비밀번호')}</label>
-            <input id="login-password" name="password" type="password" autocomplete="current-password" />
+            <label for="login-password">${renderRequiredLabel('관리자 비밀번호')}</label>
+            <input
+              id="login-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              autofocus
+              placeholder="관리자 비밀번호"
+            />
+            <div class="field-hint">처음 설정한 환경 변수 비밀번호 또는 웹에서 변경한 비밀번호를 입력하세요.</div>
           </div>
           <div class="actions">
-            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('login', '로그인')}</button>
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('login', '관리 화면 열기')}</button>
           </div>
         </form>
       </section>
@@ -3836,6 +4053,19 @@ function renderAgentWizardRuntimeStep(draft) {
   return `<div class="form-grid">${blocks.join('')}</div>`;
 }
 
+function renderResultLink(url, label) {
+  const safeUrl = optionalDraftText(url);
+  if (!safeUrl) {
+    return '';
+  }
+  return `
+    <a class="result-link" href="${escapeAttr(safeUrl)}" target="_blank" rel="noreferrer" title="${escapeAttr(safeUrl)}">
+      <strong>${escapeHtml(label)}</strong>
+      <span>${escapeHtml(safeUrl)}</span>
+    </a>
+  `;
+}
+
 function renderAgentWizardResult(result) {
   if (!result) {
     return '';
@@ -3845,19 +4075,13 @@ function renderAgentWizardResult(result) {
   const runtimeHints = getClaudeRuntimeSourceHintLines(details);
   const links = [];
   if (details.url) {
-    links.push(
-      `<a class="result-link" href="${escapeAttr(details.url)}" target="_blank" rel="noreferrer">${escapeHtml(details.url)}</a>`,
-    );
+    links.push(renderResultLink(details.url, '브라우저 로그인 열기'));
   }
   if (details.manualUrl && details.manualUrl !== details.url) {
-    links.push(
-      `<a class="result-link" href="${escapeAttr(details.manualUrl)}" target="_blank" rel="noreferrer">manual: ${escapeHtml(details.manualUrl)}</a>`,
-    );
+    links.push(renderResultLink(details.manualUrl, '수동 로그인 링크'));
   }
   if (details.automaticUrl) {
-    links.push(
-      `<a class="result-link" href="${escapeAttr(details.automaticUrl)}" target="_blank" rel="noreferrer">automatic: ${escapeHtml(details.automaticUrl)}</a>`,
-    );
+    links.push(renderResultLink(details.automaticUrl, '자동 callback 주소'));
   }
   return `
     <div class="wizard-result">
@@ -4598,33 +4822,58 @@ function renderAiCredentialFields(agentType) {
 
 function renderAiAuthFields(agentType) {
   const authConfig = state.aiManager?.authConfig || buildAiAuthDraft(agentType);
+  const details = state.aiManager?.authResult?.details || {};
   if (agentType === 'claude-code') {
-    return `
-      <div class="form-grid">
-        <div class="field">
-          <label for="ai-manager-claude-login-mode">로그인 방식</label>
-          <select id="ai-manager-claude-login-mode" name="claudeLoginMode" data-ai-auth-key="loginMode">
-            <option value="claudeai" ${authConfig.loginMode !== 'console' ? 'selected' : ''}>claude.ai</option>
-            <option value="console" ${authConfig.loginMode === 'console' ? 'selected' : ''}>console</option>
-          </select>
-          <div class="field-hint">claude.ai 는 개인 Claude 구독 계정이고, console 은 Anthropic Console 조직/API 계정입니다.</div>
+    const loginMode = authConfig.loginMode === 'console' ? 'console' : 'claudeai';
+    const commandHint = optionalDraftText(details.commandHint) || `claude auth login ${loginMode === 'console' ? '--console' : '--claudeai'}`;
+    const externalCliGuide = details.externalCli
+      ? `
+        <div class="auth-guide-card field-full">
+          <strong>외부 Claude CLI 모드</strong>
+          <p class="field-hint">이 설정은 웹 세션을 따로 만들지 않습니다. hkclaw-lite가 실행되는 같은 머신과 같은 HOME에서 아래 명령을 실행한 뒤 상태 다시 확인을 누르세요.</p>
+          <div class="result-code">${escapeHtml(commandHint)}</div>
         </div>
+      `
+      : `
         <div class="field field-full">
-          <label for="ai-manager-claude-callback-url">callback URL 전체 붙여넣기</label>
+          <label for="ai-manager-claude-callback-url">3. 브라우저 완료 후 주소 붙여넣기</label>
           <textarea
             id="ai-manager-claude-callback-url"
             name="claudeCallbackUrl"
             data-ai-auth-key="callbackUrl"
-            placeholder="브라우저 로그인 완료 후 최종 callback URL 전체"
+            placeholder="http://localhost:.../callback?code=...&state=..."
+            autocomplete="off"
+            spellcheck="false"
           >${escapeHtml(authConfig.callbackUrl || '')}</textarea>
-          <div class="field-hint">번들 Claude Code CLI 로그인에서는 브라우저 인증 뒤 최종 callback URL 전체를 붙여넣습니다. 외부 CLI를 쓰는 경우에는 터미널에서 <code>claude auth login</code> 후 상태 확인만 누르면 됩니다.</div>
+          <div class="field-hint">로그인 창이 마지막에 이동한 callback URL 전체를 붙여넣으세요. code와 state가 들어간 주소여야 합니다.</div>
         </div>
+      `;
+
+    return `
+      <div class="form-grid auth-form-grid">
+        <div class="field">
+          <label for="ai-manager-claude-login-mode">1. Claude 계정 종류</label>
+          <select id="ai-manager-claude-login-mode" name="claudeLoginMode" data-ai-auth-key="loginMode">
+            <option value="claudeai" ${loginMode !== 'console' ? 'selected' : ''}>claude.ai 개인/Pro 계정</option>
+            <option value="console" ${loginMode === 'console' ? 'selected' : ''}>Anthropic Console 조직/API 계정</option>
+          </select>
+          <div class="field-hint">현재 선택: ${escapeHtml(getClaudeLoginModeLabel(loginMode))}. 잘못 고르면 브라우저 로그인은 되지만 CLI 상태가 이어지지 않습니다.</div>
+        </div>
+        <div class="auth-guide-card">
+          <strong>2. 로그인 시작</strong>
+          <p class="field-hint">아래 로그인 시작 버튼을 누르면 브라우저가 열립니다. 팝업이 막히면 결과 카드의 링크를 직접 여세요.</p>
+        </div>
+        ${externalCliGuide}
       </div>
     `;
   }
   if (agentType === 'gemini-cli') {
     return `
-      <div class="form-grid">
+      <div class="form-grid auth-form-grid">
+        <div class="auth-guide-card field-full">
+          <strong>Google 브라우저 로그인</strong>
+          <p class="field-hint">로그인 시작을 누른 뒤 표시되는 authorization code를 아래에 붙여넣으면 됩니다. 이 값은 저장하지 않고 Gemini CLI 로그인 완료에만 사용합니다.</p>
+        </div>
         <div class="field field-full">
           <label for="ai-manager-gemini-authorization-code">Authorization code 붙여넣기</label>
           <textarea
@@ -4632,8 +4881,10 @@ function renderAiAuthFields(agentType) {
             name="geminiAuthorizationCode"
             data-ai-auth-key="authorizationCode"
             placeholder="브라우저 로그인 완료 후 표시된 authorization code"
+            autocomplete="off"
+            spellcheck="false"
           >${escapeHtml(authConfig.authorizationCode || '')}</textarea>
-          <div class="field-hint">로그인 버튼을 누른 뒤 Google 브라우저 인증을 마치면 authorization code가 표시됩니다. 그 코드를 그대로 붙여넣고 로그인 완료를 누르세요.</div>
+          <div class="field-hint">앞뒤 공백은 자동으로 제거합니다. 코드를 붙여넣은 뒤 로그인 완료를 누르세요.</div>
         </div>
       </div>
     `;

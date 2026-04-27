@@ -49,8 +49,8 @@ test('Claude runtime UI helpers distinguish bundled and external CLI labels', ()
       runtimeDetail: 'external Claude CLI (/usr/bin/claude)',
     }),
     {
-      label: '외부 Claude CLI',
-      ok: false,
+      label: '로컬 Claude CLI',
+      ok: true,
       title: 'external Claude CLI (/usr/bin/claude)',
     },
   );
@@ -61,8 +61,9 @@ test('Claude runtime UI helpers distinguish bundled and external CLI labels', ()
       runtimeDetail: 'external Claude CLI (/usr/bin/claude)',
     }),
     [
-      '런타임: 외부 Claude CLI',
-      '세부: external Claude CLI (/usr/bin/claude)',
+      '런타임: 로컬 Claude CLI',
+      '로컬 터미널의 Claude 로그인 상태를 공유합니다. 웹에서는 상태 확인과 테스트만 실행합니다.',
+      '경로: external Claude CLI (/usr/bin/claude)',
     ],
   );
 });
