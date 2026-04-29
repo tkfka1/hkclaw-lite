@@ -149,9 +149,14 @@ function canAutoRefreshState() {
       !state.channelModalOpen &&
       !state.localLlmModalOpen &&
       !state.adminPasswordModalOpen &&
+      !hasOpenActionDrawer() &&
       !state.agentWizard &&
       !state.aiManager,
   );
+}
+
+function hasOpenActionDrawer() {
+  return Boolean(app.querySelector('.card-actions-drawer[open]'));
 }
 
 async function refreshAiStatuses() {
@@ -1755,9 +1760,23 @@ function render() {
 function restoreRenderState(viewState) {
   window.requestAnimationFrame(() => {
     window.scrollTo(viewState?.scrollX || 0, viewState?.scrollY || 0);
+    restoreOpenActionDrawers(viewState?.openActionDrawerIds);
     restoreAdminPasswordFormValues(viewState?.adminPasswordFormValues);
     restoreFocusedElement(viewState?.focus);
   });
+}
+
+function restoreOpenActionDrawers(drawerIds) {
+  if (!Array.isArray(drawerIds) || drawerIds.length === 0) {
+    return;
+  }
+
+  const openIds = new Set(drawerIds);
+  for (const drawer of app.querySelectorAll('.card-actions-drawer[data-drawer-id]')) {
+    if (openIds.has(drawer.dataset.drawerId)) {
+      drawer.open = true;
+    }
+  }
 }
 
 function captureRenderState() {
@@ -1765,8 +1784,15 @@ function captureRenderState() {
     scrollX: window.scrollX,
     scrollY: window.scrollY,
     focus: captureFocusedElement(),
+    openActionDrawerIds: captureOpenActionDrawerIds(),
     adminPasswordFormValues: captureAdminPasswordFormValues(),
   };
+}
+
+function captureOpenActionDrawerIds() {
+  return Array.from(app.querySelectorAll('.card-actions-drawer[open][data-drawer-id]'))
+    .map((element) => element.dataset.drawerId)
+    .filter(Boolean);
 }
 
 function captureAdminPasswordFormValues() {
@@ -2323,13 +2349,14 @@ function renderCardActionDrawer({
   title = '관리',
   body = '',
   actions = [],
+  drawerId = '',
 }) {
   const items = actions.filter(Boolean);
   if (!items.length && !body) {
     return '';
   }
   return `
-    <details class="card-actions-drawer">
+    <details class="card-actions-drawer"${drawerId ? ` data-drawer-id="${escapeAttr(drawerId)}"` : ''}>
       <summary class="card-actions-summary">${renderIcon('settings', 'ui-icon')}${escapeHtml(title)}</summary>
       <div class="card-actions-panel">
         ${body}
@@ -2415,6 +2442,7 @@ function renderAgentCard(agent, context) {
         ${renderTelegramAgentGetUpdatesLink(agent, context)}
         <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
         ${renderCardActionDrawer({
+          drawerId: `agent:${agent.name}`,
           title: '더보기',
           body: renderAgentDetailPanel(agent, context),
           actions: [

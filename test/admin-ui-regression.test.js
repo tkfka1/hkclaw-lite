@@ -92,10 +92,22 @@ test('admin state auto-refresh keeps recovered worker status from looking stuck'
   assert.match(appSource, /function startStateAutoRefresh/u);
   assert.match(appSource, /refreshState\(\{ silent: true \}\)/u);
   assert.match(appSource, /function canAutoRefreshState/u);
+  assert.match(appSource, /function hasOpenActionDrawer/u);
+  assert.match(appSource, /!hasOpenActionDrawer\(\)/u);
   assert.match(appSource, /function localizeWorkerError/u);
   assert.match(appSource, /외부 API 연결이 잠시 실패했습니다/u);
   assert.doesNotMatch(appSource, /escapeHtml\(worker\.lastError\)/u);
   assert.doesNotMatch(appSource, /value: context\.agentService\.lastError/u);
+});
+
+test('agent more drawers stay open across unavoidable re-renders', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+
+  assert.match(appSource, /openActionDrawerIds:\s*captureOpenActionDrawerIds\(\)/u);
+  assert.match(appSource, /function restoreOpenActionDrawers/u);
+  assert.match(appSource, /drawer\.open\s*=\s*true/u);
+  assert.match(appSource, /data-drawer-id="\$\{escapeAttr\(drawerId\)\}"/u);
+  assert.match(appSource, /drawerId:\s*`agent:\$\{agent\.name\}`/u);
 });
 
 test('channels page exposes reusable connector management', () => {
