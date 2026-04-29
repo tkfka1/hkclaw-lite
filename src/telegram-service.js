@@ -905,7 +905,6 @@ export function lookupTelegramApiHost(hostname, options, callback) {
     {
       ...options,
       family: 4,
-      all: false,
     },
     callback,
   );

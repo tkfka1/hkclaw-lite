@@ -35,26 +35,27 @@ function sleep(ms) {
 
 test('telegram API lookup forces IPv4 for cluster networks without IPv6 egress', async (t) => {
   const lookupCalls = [];
+  const ipv4Addresses = [{ address: '149.154.166.110', family: 4 }];
   t.mock.method(dns, 'lookup', (hostname, options, callback) => {
     lookupCalls.push({ hostname, options });
-    callback(null, '149.154.166.110', 4);
+    callback(null, options.all ? ipv4Addresses : ipv4Addresses[0].address, 4);
   });
 
   const result = await new Promise((resolve, reject) => {
-    lookupTelegramApiHost('api.telegram.org', { all: true }, (error, address, family) => {
+    lookupTelegramApiHost('api.telegram.org', { all: true }, (error, addresses) => {
       if (error) {
         reject(error);
         return;
       }
-      resolve({ address, family });
+      resolve(addresses);
     });
   });
 
-  assert.deepEqual(result, { address: '149.154.166.110', family: 4 });
+  assert.deepEqual(result, ipv4Addresses);
   assert.equal(lookupCalls.length, 1);
   assert.equal(lookupCalls[0].hostname, 'api.telegram.org');
   assert.equal(lookupCalls[0].options.family, 4);
-  assert.equal(lookupCalls[0].options.all, false);
+  assert.equal(lookupCalls[0].options.all, true);
 });
 
 test('telegram formatter labels tribunal roles clearly', () => {
