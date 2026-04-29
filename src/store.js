@@ -480,6 +480,29 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
     discordChannelId: normalizeOptionalString(
       input.discordChannelId ?? input['discord-channel-id'] ?? existing.discordChannelId,
     ),
+    discordUserId: normalizeOptionalString(
+      input.discordUserId ??
+        input['discord-user-id'] ??
+        input.userId ??
+        input['user-id'] ??
+        existing.discordUserId,
+    ),
+    targetType: normalizeChannelTargetType(
+      input.targetType ??
+        input['target-type'] ??
+        input.messageTarget ??
+        input['message-target'] ??
+        existing.targetType,
+      {
+        platform: input.platform ?? input['platform'] ?? existing.platform,
+        discordUserId:
+          input.discordUserId ??
+          input['discord-user-id'] ??
+          input.userId ??
+          input['user-id'] ??
+          existing.discordUserId,
+      },
+    ),
     guildId: normalizeOptionalString(input.guildId ?? input['guild-id'] ?? existing.guildId),
     telegramChatId: normalizeOptionalString(
       input.telegramChatId ??
@@ -558,21 +581,36 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
   if (merged.platform === 'telegram') {
     merged.connector = undefined;
     merged.discordChannelId = undefined;
+    merged.discordUserId = undefined;
     merged.guildId = undefined;
     merged.kakaoChannelId = undefined;
     merged.kakaoUserId = undefined;
+    if (merged.targetType === 'direct') {
+      merged.telegramThreadId = undefined;
+    } else {
+      merged.targetType = undefined;
+    }
   } else if (merged.platform === 'kakao') {
     merged.discordChannelId = undefined;
+    merged.discordUserId = undefined;
     merged.guildId = undefined;
     merged.telegramChatId = undefined;
     merged.telegramThreadId = undefined;
     merged.kakaoChannelId = merged.kakaoChannelId || '*';
+    merged.targetType = undefined;
   } else {
     merged.connector = undefined;
     merged.telegramChatId = undefined;
     merged.telegramThreadId = undefined;
     merged.kakaoChannelId = undefined;
     merged.kakaoUserId = undefined;
+    if (merged.targetType === 'direct') {
+      merged.discordChannelId = undefined;
+      merged.guildId = undefined;
+    } else {
+      merged.discordUserId = undefined;
+      merged.targetType = undefined;
+    }
   }
   validateChannelDefinition(projectRoot, config, merged);
   validateKakaoChannelRouteUniqueness(config, { name, ...merged });
@@ -886,6 +924,12 @@ function validateChannelDefinition(projectRoot, config, channel) {
       `Channel connector "${channel.connector}" is ${connector.type}, not ${channel.platform}.`,
     );
   }
+  if (channel.targetType !== undefined) {
+    assert(
+      ['direct', 'channel'].includes(channel.targetType),
+      `Unsupported channel target type "${channel.targetType}".`,
+    );
+  }
   if (channel.platform === 'telegram') {
     assert(
       typeof channel.telegramChatId === 'string' &&
@@ -897,6 +941,12 @@ function validateChannelDefinition(projectRoot, config, channel) {
       typeof channel.kakaoChannelId === 'string' &&
         channel.kakaoChannelId.trim().length > 0,
       'kakaoChannelId is required.',
+    );
+  } else if (channel.targetType === 'direct') {
+    assert(
+      typeof channel.discordUserId === 'string' &&
+        channel.discordUserId.trim().length > 0,
+      'discordUserId is required.',
     );
   } else {
     assert(
@@ -1360,6 +1410,9 @@ function normalizeLegacyChannelRecords(channels, rawAgents, rawBots = {}) {
               ? 'telegram'
               : 'discord';
       }
+      if (!next.targetType && typeof next.discordUserId === 'string' && next.discordUserId.trim()) {
+        next.targetType = 'direct';
+      }
       if (typeof next.ownerBot === 'string' && !next.bot) {
         next.bot = next.ownerBot;
       }
@@ -1406,6 +1459,17 @@ function resolveMessagingPlatform(value, existing = {}) {
     return 'kakao';
   }
   return 'discord';
+}
+
+function normalizeChannelTargetType(value, context = {}) {
+  const normalized = normalizeOptionalString(value);
+  if (normalized) {
+    return normalized;
+  }
+  if (normalizeOptionalString(context.discordUserId)) {
+    return 'direct';
+  }
+  return undefined;
 }
 
 function resolveOptionalChannelAgentName(explicitAgentName) {

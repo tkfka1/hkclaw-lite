@@ -46,7 +46,9 @@ export function buildPromptEnvelope({
           ? `- discord channel: ${channel.name}`
           : null,
       channel?.platform ? `- channel platform: ${channel.platform}` : null,
+      channel?.targetType ? `- message target: ${channel.targetType}` : null,
       channel?.discordChannelId ? `- discord channel id: ${channel.discordChannelId}` : null,
+      channel?.discordUserId ? `- discord user id: ${channel.discordUserId}` : null,
       channel?.guildId ? `- discord guild id: ${channel.guildId}` : null,
       channel?.telegramChatId ? `- telegram chat id: ${channel.telegramChatId}` : null,
       channel?.telegramThreadId ? `- telegram thread id: ${channel.telegramThreadId}` : null,

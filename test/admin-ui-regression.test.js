@@ -83,6 +83,8 @@ test('channels page exposes reusable connector management', () => {
   assert.match(appSource, /data-form="connector"/u);
   assert.match(appSource, /커넥터는 KakaoTalk 전용입니다/u);
   assert.match(appSource, /connector-agent-note/u);
+  assert.match(appSource, /channel-target-type/u);
+  assert.match(appSource, /Discord 사용자 ID/u);
   assert.match(appSource, /open-connector-modal/u);
   assert.match(appSource, /\/api\/connectors/u);
   assert.match(appSource, /findKakaoChannelRouteConflict/u);

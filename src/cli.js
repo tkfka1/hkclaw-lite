@@ -28,6 +28,7 @@ import {
 import { executeChannelTurn } from './channel-runtime.js';
 import {
   AGENT_TYPE_CHOICES,
+  CHANNEL_TARGET_TYPE_CHOICES,
   CLAUDE_PERMISSION_MODE_CHOICES,
   CHANNEL_MODE_CHOICES,
   CONNECTOR_PLATFORM_CHOICES,
@@ -1799,20 +1800,39 @@ async function promptForChannelDefinition(prompter, config, options) {
       },
     );
   }
+  let targetType =
+    initial.targetType || (initial.discordUserId ? 'direct' : 'channel');
+  if (platform !== 'kakao') {
+    targetType = await prompter.askChoice(
+      'Message target',
+      CHANNEL_TARGET_TYPE_CHOICES,
+      {
+        defaultValue: targetType,
+      },
+    );
+  } else {
+    targetType = '';
+  }
   let discordChannelId = '';
+  let discordUserId = '';
   let guildId = '';
   let telegramChatId = '';
   let telegramThreadId = '';
   let kakaoChannelId = '';
   let kakaoUserId = '';
   if (platform === 'telegram') {
-    telegramChatId = await prompter.askText('Telegram chat ID', {
-      defaultValue: initial.telegramChatId,
-    });
-    telegramThreadId = await prompter.askText('Telegram thread ID (optional)', {
-      defaultValue: initial.telegramThreadId,
-      allowEmpty: true,
-    });
+    telegramChatId = await prompter.askText(
+      targetType === 'direct' ? 'Telegram 1:1 chat ID' : 'Telegram group/channel chat ID',
+      {
+        defaultValue: initial.telegramChatId,
+      },
+    );
+    if (targetType !== 'direct') {
+      telegramThreadId = await prompter.askText('Telegram thread ID (optional)', {
+        defaultValue: initial.telegramThreadId,
+        allowEmpty: true,
+      });
+    }
   } else if (platform === 'kakao') {
     kakaoChannelId = await prompter.askText('Kakao inbound channelId filter (* allows any paired channel)', {
       defaultValue: initial.kakaoChannelId || '*',
@@ -1822,13 +1842,19 @@ async function promptForChannelDefinition(prompter, config, options) {
       allowEmpty: true,
     });
   } else {
-    discordChannelId = await prompter.askText('Discord channel ID', {
-      defaultValue: initial.discordChannelId,
-    });
-    guildId = await prompter.askText('Discord guild ID (optional)', {
-      defaultValue: initial.guildId,
-      allowEmpty: true,
-    });
+    if (targetType === 'direct') {
+      discordUserId = await prompter.askText('Discord user ID for DM', {
+        defaultValue: initial.discordUserId,
+      });
+    } else {
+      discordChannelId = await prompter.askText('Discord channel ID', {
+        defaultValue: initial.discordChannelId,
+      });
+      guildId = await prompter.askText('Discord guild ID (optional)', {
+        defaultValue: initial.guildId,
+        allowEmpty: true,
+      });
+    }
   }
   const workspace = await prompter.askText('Channel workspace directory', {
     defaultValue: initial.workspace ?? initial.workdir ?? getDefaultChannelWorkspace(),
@@ -1930,8 +1956,10 @@ async function promptForChannelDefinition(prompter, config, options) {
     name,
     platform,
     connector,
+    targetType,
     mode: channelMode,
     discordChannelId,
+    discordUserId,
     guildId,
     telegramChatId,
     telegramThreadId,
@@ -2069,6 +2097,7 @@ function renderChannelStatus(config, channel) {
 function renderChannelTargetStatusLines(channel) {
   if (channel.platform === 'telegram') {
     return [
+      channel.targetType ? `targetType=${channel.targetType}` : null,
       `telegramChatId=${channel.telegramChatId}`,
       channel.telegramThreadId ? `telegramThreadId=${channel.telegramThreadId}` : null,
     ];
@@ -2077,6 +2106,12 @@ function renderChannelTargetStatusLines(channel) {
     return [
       `kakaoChannelId=${channel.kakaoChannelId || '*'}`,
       channel.kakaoUserId ? `kakaoUserId=${channel.kakaoUserId}` : null,
+    ];
+  }
+  if (channel.targetType === 'direct') {
+    return [
+      'targetType=direct',
+      `discordUserId=${channel.discordUserId}`,
     ];
   }
   return [
@@ -2141,14 +2176,18 @@ function printChannels(channels) {
 
 function formatChannelListTarget(channel) {
   if (channel.platform === 'telegram') {
+    const prefix = channel.targetType === 'direct' ? 'dm:' : '';
     return channel.telegramThreadId
-      ? `${channel.telegramChatId}/${channel.telegramThreadId}`
-      : channel.telegramChatId;
+      ? `${prefix}${channel.telegramChatId}/${channel.telegramThreadId}`
+      : `${prefix}${channel.telegramChatId}`;
   }
   if (channel.platform === 'kakao') {
     return channel.kakaoUserId
       ? `${channel.kakaoChannelId || '*'}/${channel.kakaoUserId}`
       : channel.kakaoChannelId || '*';
+  }
+  if (channel.targetType === 'direct') {
+    return `dm:${channel.discordUserId || '-'}`;
   }
   return channel.discordChannelId;
 }
@@ -2268,8 +2307,10 @@ function buildChannelPreset(name, flags) {
     name,
     platform: getFlagValue(flags, 'platform'),
     connector: getFlagValue(flags, 'connector') || getFlagValue(flags, 'connector-name'),
+    targetType: getFlagValue(flags, 'target-type') || getFlagValue(flags, 'target'),
     mode: getFlagValue(flags, 'mode') || getFlagValue(flags, 'channel-mode'),
     discordChannelId: getFlagValue(flags, 'discord-channel-id'),
+    discordUserId: getFlagValue(flags, 'discord-user-id') || getFlagValue(flags, 'user-id'),
     guildId: getFlagValue(flags, 'guild-id'),
     telegramChatId: getFlagValue(flags, 'telegram-chat-id'),
     telegramThreadId: getFlagValue(flags, 'telegram-thread-id'),

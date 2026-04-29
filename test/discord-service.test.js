@@ -298,6 +298,77 @@ test('discord pending outbox can deliver through an agent platform route', async
   assert.deepEqual(sent, ['agent route text']);
 });
 
+test('discord pending outbox can deliver through a direct DM route', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: 'cat',
+    discordToken: 'discord-token',
+  });
+  config.channels.dm = buildChannelDefinition(projectRoot, config, 'dm', {
+    name: 'dm',
+    targetType: 'direct',
+    discordUserId: 'user-123',
+    workspace: '~',
+    agent: 'owner',
+  });
+  saveConfig(projectRoot, config);
+
+  const run = await startRuntimeRun(projectRoot, {
+    channel: {
+      name: 'dm',
+      targetType: 'direct',
+      discordUserId: 'user-123',
+      mode: 'single',
+      agent: 'owner',
+    },
+    prompt: 'recover dm outbox',
+    workdir: '/tmp/workspace',
+  });
+  await enqueueRuntimeOutboxEvent(projectRoot, {
+    runId: run.runId,
+    channel: {
+      name: 'dm',
+      targetType: 'direct',
+      discordUserId: 'user-123',
+      mode: 'single',
+    },
+    entry: {
+      role: 'owner',
+      agent: { name: 'owner' },
+      content: 'dm route text',
+      final: true,
+      round: 1,
+      maxRounds: 1,
+      mode: 'single',
+    },
+  });
+
+  const sent = [];
+  const clients = {
+    owner: {
+      users: {
+        async fetch(userId) {
+          assert.equal(userId, 'user-123');
+          return {
+            async send(text) {
+              sent.push(text);
+            },
+          };
+        },
+      },
+    },
+  };
+
+  const flushed = await flushPendingDiscordOutbox(projectRoot, clients, { limit: 10 });
+  assert.equal(flushed, 1);
+  assert.deepEqual(sent, ['dm route text']);
+});
+
 test('discord outbox flush skips bad events and continues with valid ones', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);

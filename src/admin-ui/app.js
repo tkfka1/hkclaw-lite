@@ -742,13 +742,19 @@ function handleInput(event) {
           state.channelDraft.platform === 'kakao'
             ? getDefaultConnectorNameForPlatform(state.channelDraft.platform)
             : '';
+        state.channelDraft.targetType =
+          state.channelDraft.platform === 'kakao'
+            ? 'channel'
+            : getChannelTargetType(state.channelDraft);
         if (state.channelDraft.platform === 'telegram') {
           state.channelDraft.discordChannelId = '';
+          state.channelDraft.discordUserId = '';
           state.channelDraft.guildId = '';
           state.channelDraft.kakaoChannelId = '';
           state.channelDraft.kakaoUserId = '';
         } else if (state.channelDraft.platform === 'kakao') {
           state.channelDraft.discordChannelId = '';
+          state.channelDraft.discordUserId = '';
           state.channelDraft.guildId = '';
           state.channelDraft.telegramChatId = '';
           state.channelDraft.telegramThreadId = '';
@@ -758,6 +764,18 @@ function handleInput(event) {
           state.channelDraft.telegramThreadId = '';
           state.channelDraft.kakaoChannelId = '';
           state.channelDraft.kakaoUserId = '';
+        }
+        refreshVisibleFormErrors('channel', collectChannelDraftErrors());
+        render();
+        return;
+      }
+      if (target.name === 'targetType') {
+        if (state.channelDraft.targetType === 'direct') {
+          state.channelDraft.discordChannelId = '';
+          state.channelDraft.guildId = '';
+          state.channelDraft.telegramThreadId = '';
+        } else {
+          state.channelDraft.discordUserId = '';
         }
         refreshVisibleFormErrors('channel', collectChannelDraftErrors());
         render();
@@ -1105,18 +1123,34 @@ async function saveChannel(form) {
   }
   const currentName = optionalText(values, 'currentName');
   const platform = requiredText(values, 'platform');
+  const targetType =
+    platform === 'discord' || platform === 'telegram'
+      ? optionalText(values, 'targetType') || 'channel'
+      : undefined;
   const definition = {
     name: requiredText(values, 'name'),
     platform,
+    targetType,
     connector: platform === 'kakao' ? optionalText(values, 'connector') : undefined,
     mode: requiredText(values, 'mode'),
     discordChannelId:
-      platform === 'discord' ? requiredText(values, 'discordChannelId') : undefined,
-    guildId: platform === 'discord' ? optionalText(values, 'guildId') : undefined,
+      platform === 'discord' && targetType !== 'direct'
+        ? requiredText(values, 'discordChannelId')
+        : undefined,
+    discordUserId:
+      platform === 'discord' && targetType === 'direct'
+        ? requiredText(values, 'discordUserId')
+        : undefined,
+    guildId:
+      platform === 'discord' && targetType !== 'direct'
+        ? optionalText(values, 'guildId')
+        : undefined,
     telegramChatId:
       platform === 'telegram' ? requiredText(values, 'telegramChatId') : undefined,
     telegramThreadId:
-      platform === 'telegram' ? optionalText(values, 'telegramThreadId') : undefined,
+      platform === 'telegram' && targetType !== 'direct'
+        ? optionalText(values, 'telegramThreadId')
+        : undefined,
     kakaoChannelId:
       platform === 'kakao' ? requiredText(values, 'kakaoChannelId') : undefined,
     kakaoUserId:
@@ -3735,12 +3769,39 @@ function renderChannelConnectorField(platform, selectedConnector) {
   `;
 }
 
+function renderChannelTargetTypeField(platform, selectedTargetType) {
+  if (platform === 'kakao') {
+    return '';
+  }
+  const choices = state.data?.choices?.channelTargetTypes || [
+    {
+      value: 'channel',
+      label: '서버/그룹 채널',
+      description: 'Discord 서버 채널 또는 Telegram 그룹/채널',
+    },
+    {
+      value: 'direct',
+      label: '개인 대화/DM',
+      description: 'Discord DM 또는 Telegram 봇 1:1 대화',
+    },
+  ];
+  return `
+    <div class="field">
+      <label for="channel-target-type">${renderRequiredLabel('사용 방식')}</label>
+      <select id="channel-target-type" name="targetType">${renderOptions(choices, selectedTargetType || 'channel')}</select>
+      <div class="field-hint">서버 방에 붙일지, 봇과 1:1로 직접 쓸지 먼저 고릅니다.</div>
+    </div>
+  `;
+}
+
 function renderChannelModal() {
   const current = state.channelDraft || createBlankChannel();
   const isTribunal = current.mode === 'tribunal';
   const platform = current.platform || 'kakao';
   const isTelegram = platform === 'telegram';
   const isKakao = platform === 'kakao';
+  const targetType = getChannelTargetType(current);
+  const isDirectTarget = targetType === 'direct';
   const agentNames = (state.data.agents || []).map((entry) => entry.name);
   const isEditing = Boolean(optionalDraftText(current.currentName));
   const visibleErrors = getFormErrors('channel');
@@ -3765,6 +3826,7 @@ function renderChannelModal() {
               <label for="channel-platform">${renderRequiredLabel('플랫폼')}</label>
               <select id="channel-platform" name="platform">${renderOptions(state.data.choices.messagingPlatforms, current.platform || 'kakao')}</select>
             </div>
+            ${renderChannelTargetTypeField(platform, targetType)}
             ${renderChannelConnectorField(platform, current.connector)}
             <div class="field ${fieldErrorClass('channel', 'name')}">
               <label for="channel-name">${renderRequiredLabel('이름')}</label>
@@ -3775,14 +3837,21 @@ function renderChannelModal() {
               isTelegram
                 ? `
                     <div class="field ${fieldErrorClass('channel', 'telegramChatId')}">
-                      <label for="channel-telegram-chat">${renderRequiredLabel('Telegram 채팅 ID')}</label>
+                      <label for="channel-telegram-chat">${renderRequiredLabel(isDirectTarget ? 'Telegram 개인 chat_id' : 'Telegram 그룹/채널 chat_id')}</label>
                       <input id="channel-telegram-chat" name="telegramChatId" value="${escapeAttr(current.telegramChatId)}" />
+                      <div class="field-hint">${escapeHtml(isDirectTarget ? '사용자가 봇에게 한 번 말을 걸면 Telegram getUpdates 또는 수신 로그에서 확인할 수 있는 1:1 chat_id입니다.' : '그룹, 슈퍼그룹, 채널의 chat_id입니다. 토픽을 쓰면 아래 thread ID도 넣으세요.')}</div>
                       ${renderFormError('channel', 'telegramChatId')}
                     </div>
-                    <div class="field">
-                      <label for="channel-telegram-thread">Telegram 스레드 ID</label>
-                      <input id="channel-telegram-thread" name="telegramThreadId" value="${escapeAttr(current.telegramThreadId)}" />
-                    </div>
+                    ${
+                      isDirectTarget
+                        ? ''
+                        : `
+                          <div class="field">
+                            <label for="channel-telegram-thread">Telegram 스레드 ID</label>
+                            <input id="channel-telegram-thread" name="telegramThreadId" value="${escapeAttr(current.telegramThreadId)}" />
+                          </div>
+                        `
+                    }
                   `
                 : isKakao
                   ? `
@@ -3798,15 +3867,28 @@ function renderChannelModal() {
                     </div>
                   `
                 : `
-                    <div class="field ${fieldErrorClass('channel', 'discordChannelId')}">
-                      <label for="channel-discord">${renderRequiredLabel('디스코드 채널 ID')}</label>
-                      <input id="channel-discord" name="discordChannelId" value="${escapeAttr(current.discordChannelId)}" />
-                      ${renderFormError('channel', 'discordChannelId')}
-                    </div>
-                    <div class="field">
-                      <label for="channel-guild">길드 ID</label>
-                      <input id="channel-guild" name="guildId" value="${escapeAttr(current.guildId)}" />
-                    </div>
+                    ${
+                      isDirectTarget
+                        ? `
+                          <div class="field ${fieldErrorClass('channel', 'discordUserId')}">
+                            <label for="channel-discord-user">${renderRequiredLabel('Discord 사용자 ID')}</label>
+                            <input id="channel-discord-user" name="discordUserId" value="${escapeAttr(current.discordUserId)}" />
+                            <div class="field-hint">이 사용자와 봇이 DM으로 대화합니다. Discord 개발자 모드에서 사용자 ID를 복사하세요.</div>
+                            ${renderFormError('channel', 'discordUserId')}
+                          </div>
+                        `
+                        : `
+                          <div class="field ${fieldErrorClass('channel', 'discordChannelId')}">
+                            <label for="channel-discord">${renderRequiredLabel('디스코드 채널 ID')}</label>
+                            <input id="channel-discord" name="discordChannelId" value="${escapeAttr(current.discordChannelId)}" />
+                            ${renderFormError('channel', 'discordChannelId')}
+                          </div>
+                          <div class="field">
+                            <label for="channel-guild">길드 ID</label>
+                            <input id="channel-guild" name="guildId" value="${escapeAttr(current.guildId)}" />
+                          </div>
+                        `
+                    }
                   `
             }
             <div class="field ${fieldErrorClass('channel', 'workspace')}">
@@ -4591,6 +4673,7 @@ function collectChannelDraftErrors(draft = state.channelDraft || {}) {
   const errors = {};
   const name = optionalDraftText(draft.name);
   const platform = optionalDraftText(draft.platform) || 'discord';
+  const targetType = getChannelTargetType(draft);
   const mode = optionalDraftText(draft.mode) || 'single';
   if (!name) {
     errors.name = '이름을 입력하세요.';
@@ -4604,6 +4687,10 @@ function collectChannelDraftErrors(draft = state.channelDraft || {}) {
   } else if (platform === 'kakao') {
     if (!optionalDraftText(draft.kakaoChannelId)) {
       errors.kakaoChannelId = '받을 카카오 채널을 입력하세요. 전체는 * 를 사용하세요.';
+    }
+  } else if (targetType === 'direct') {
+    if (!optionalDraftText(draft.discordUserId)) {
+      errors.discordUserId = 'Discord 사용자 ID를 입력하세요.';
     }
   } else if (!optionalDraftText(draft.discordChannelId)) {
     errors.discordChannelId = '디스코드 채널 ID를 입력하세요.';
@@ -4821,9 +4908,11 @@ function createChannelDraft(channel) {
     currentName: channel?.name || '',
     name: channel?.name || '',
     platform: channel?.platform || 'discord',
+    targetType: getChannelTargetType(channel),
     connector: optionalDraftText(channel?.connector),
     mode: channel?.mode || 'single',
     discordChannelId: channel?.discordChannelId || '',
+    discordUserId: channel?.discordUserId || '',
     guildId: channel?.guildId || '',
     telegramChatId: channel?.telegramChatId || '',
     telegramThreadId: channel?.telegramThreadId || '',
@@ -5676,10 +5765,12 @@ function createBlankConnector() {
 function createBlankChannel() {
   return {
     platform: 'kakao',
+    targetType: 'channel',
     connector: getDefaultConnectorNameForPlatform('kakao'),
     name: '',
     mode: 'single',
     discordChannelId: '',
+    discordUserId: '',
     guildId: '',
     telegramChatId: '',
     telegramThreadId: '',
@@ -5839,6 +5930,14 @@ function getDefaultConnectorNameForPlatform(platform = '') {
   return optionalDraftText(platform) === 'kakao' ? getConnectorEntries(platform)[0]?.name || '' : '';
 }
 
+function getChannelTargetType(channel = {}) {
+  const explicit = optionalDraftText(channel?.targetType);
+  if (explicit) {
+    return explicit;
+  }
+  return optionalDraftText(channel?.discordUserId) ? 'direct' : 'channel';
+}
+
 function renderConnectorOptions(platform, selectedValue, allowEmpty = false) {
   const selected = optionalDraftText(selectedValue);
   const entries = getConnectorEntries(platform);
@@ -5989,14 +6088,19 @@ function localizeMessagingPlatform(value) {
 
 function describeChannelTarget(channel) {
   const platform = channel?.platform || 'discord';
+  const targetType = getChannelTargetType(channel);
   if (platform === 'telegram') {
     const threadSuffix = channel?.telegramThreadId ? ` / ${channel.telegramThreadId}` : '';
-    return `${channel?.telegramChatId || '-'}${threadSuffix}`;
+    const prefix = targetType === 'direct' ? '1:1 ' : '';
+    return `${prefix}${channel?.telegramChatId || '-'}${threadSuffix}`;
   }
   if (platform === 'kakao') {
     const channelId = channel?.kakaoChannelId || '*';
     const channelLabel = channelId === '*' ? '전체 카카오 메시지' : `Kakao channelId ${channelId}`;
     return channel?.kakaoUserId ? `${channelLabel} · 사용자 ${channel.kakaoUserId}` : channelLabel;
+  }
+  if (targetType === 'direct') {
+    return `DM ${channel?.discordUserId || '-'}`;
   }
   const guildSuffix = channel?.guildId ? ` / ${channel.guildId}` : '';
   return `${channel?.discordChannelId || '-'}${guildSuffix}`;
@@ -6404,10 +6508,12 @@ function localizeFieldName(key) {
     description: '메모',
     platform: '플랫폼',
     connector: 'KakaoTalk 연결',
+    targetType: '사용 방식',
     mode: '채널 모드',
     agent: '에이전트',
     discordToken: 'Discord 토큰',
     telegramBotToken: 'Telegram 봇 토큰',
+    discordUserId: 'Discord 사용자 ID',
     kakaoRelayUrl: 'Kakao 연결 릴레이 URL',
     kakaoRelayToken: 'Kakao 연결 토큰',
     kakaoSessionToken: 'Kakao 세션 토큰',
@@ -6515,6 +6621,9 @@ function localizeErrorMessage(message) {
   }
   if (text === 'discordChannelId is required.') {
     return '디스코드 채널 ID를 입력하세요.';
+  }
+  if (text === 'discordUserId is required.') {
+    return 'Discord 사용자 ID를 입력하세요.';
   }
   if (text === 'telegramChatId is required.') {
     return 'Telegram 채팅 ID를 입력하세요.';

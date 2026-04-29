@@ -184,13 +184,18 @@ async function createDiscordClients(agentConfigs, Discord) {
 }
 
 async function createDiscordClient(token, Discord) {
-  const client = new Discord.Client({
+  const clientOptions = {
     intents: [
       Discord.GatewayIntentBits.Guilds,
       Discord.GatewayIntentBits.GuildMessages,
+      Discord.GatewayIntentBits.DirectMessages,
       Discord.GatewayIntentBits.MessageContent,
     ],
-  });
+  };
+  if (Discord.Partials?.Channel) {
+    clientOptions.partials = [Discord.Partials.Channel];
+  }
+  const client = new Discord.Client(clientOptions);
 
   await new Promise((resolve, reject) => {
     client.once('ready', resolve);
@@ -220,7 +225,7 @@ async function handleInboundMessage({
   message,
   enqueueOutboxFlush,
 }) {
-  if (!message.inGuild() || message.author.bot) {
+  if (message.author.bot) {
     return;
   }
 
@@ -230,11 +235,16 @@ async function handleInboundMessage({
   }
 
   const config = loadConfig(projectRoot);
-  const matchingChannels = listChannels(config).filter(
-    (entry) =>
-      (entry.platform || 'discord') === 'discord' &&
-      entry.discordChannelId === message.channelId,
-  );
+  const inGuild = Boolean(message.inGuild?.());
+  const matchingChannels = listChannels(config).filter((entry) => {
+    if ((entry.platform || 'discord') !== 'discord') {
+      return false;
+    }
+    if (inGuild) {
+      return entry.targetType !== 'direct' && entry.discordChannelId === message.channelId;
+    }
+    return entry.targetType === 'direct' && entry.discordUserId === message.author.id;
+  });
   const channel =
     matchingChannels.find((entry) => entry.connector === inboundAgentName) ||
     matchingChannels.find(
@@ -273,7 +283,9 @@ async function handleInboundMessage({
     runId = error?.runtimeRunId || null;
     if (runId) {
       await enqueueOutboxFlush(() =>
-        flushDiscordOutboxForRun(projectRoot, clients, channel, runId, message.channelId),
+        flushDiscordOutboxForRun(projectRoot, clients, channel, runId, message.channelId, {
+          fallbackUserId: message.author.id,
+        }),
       );
     }
     throw error;
@@ -288,6 +300,7 @@ async function handleInboundMessage({
     await enqueueOutboxFlush(() =>
       flushDiscordOutboxForRun(projectRoot, clients, channel, runId, message.channelId, {
         agentName: workerAgentName,
+        fallbackUserId: message.author.id,
       }),
     );
   }
@@ -489,13 +502,32 @@ async function reconnectDiscordAgent({
   return nextAgentConfigs;
 }
 
-async function sendDiscordText(client, channelId, text) {
+async function sendDiscordText(client, target, text) {
   assert(client, 'Discord client is not available for this role.');
-  const channel = await client.channels.fetch(channelId);
-  assert(channel?.isTextBased?.(), `Discord channel "${channelId}" is not text-based.`);
+  const normalizedTarget =
+    typeof target === 'string' ? { channelId: target } : target || {};
+  if (normalizedTarget.userId) {
+    const user = await resolveDiscordUserDmChannel(client, normalizedTarget.userId);
+    for (const chunk of splitDiscordMessage(text)) {
+      await user.send(chunk);
+    }
+    return;
+  }
+  const channel = await client.channels.fetch(normalizedTarget.channelId);
+  assert(
+    channel?.isTextBased?.(),
+    `Discord channel "${normalizedTarget.channelId}" is not text-based.`,
+  );
   for (const chunk of splitDiscordMessage(text)) {
     await channel.send(chunk);
   }
+}
+
+async function resolveDiscordUserDmChannel(client, userId) {
+  assert(client?.users?.fetch, 'Discord client cannot fetch users for DM delivery.');
+  const user = await client.users.fetch(userId);
+  assert(user?.send, `Discord user "${userId}" cannot receive DMs.`);
+  return user;
 }
 
 function formatDiscordErrorMessage(error) {
@@ -687,7 +719,7 @@ export async function flushDiscordOutboxForRun(
   channel,
   runId,
   fallbackChannelId = null,
-  { agentName = null, botName = null } = {},
+  { agentName = null, botName = null, fallbackUserId = null } = {},
 ) {
   const selectedAgentName = agentName || botName;
   const events = await listPendingRuntimeOutboxEvents(projectRoot, { runId, limit: 100 });
@@ -699,9 +731,12 @@ export async function flushDiscordOutboxForRun(
       }
       const client = (channel?.connector ? clients[channel.connector] : null) || clients[targetAgentName];
       assert(client, `${targetAgentName || event.role} agent client is not configured.`);
-      const channelId = event.discordChannelId || fallbackChannelId;
-      assert(channelId, `Discord channel id is missing for run ${runId}.`);
-      await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
+      const target = resolveDiscordSendTarget(channel, {
+        event,
+        fallbackChannelId,
+        fallbackUserId,
+      });
+      await sendDiscordText(client, target, formatDiscordRoleMessage(channel, event));
       await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
     } catch (error) {
       console.error(`Discord outbox delivery error for event ${event.eventId}: ${toErrorMessage(error)}`);
@@ -741,9 +776,8 @@ export async function flushPendingDiscordOutbox(
       }
       const client = (channel?.connector ? clients[channel.connector] : null) || clients[targetAgentName];
       assert(client, `${targetAgentName || event.role} agent client is not configured.`);
-      const channelId = event.discordChannelId || channel.discordChannelId;
-      assert(channelId, `Discord channel id is missing for queued event ${event.eventId}.`);
-      await sendDiscordText(client, channelId, formatDiscordRoleMessage(channel, event));
+      const target = resolveDiscordSendTarget(channel, { event });
+      await sendDiscordText(client, target, formatDiscordRoleMessage(channel, event));
       await markRuntimeOutboxEventDispatched(projectRoot, event.eventId);
       flushed += 1;
     } catch (error) {
@@ -752,6 +786,18 @@ export async function flushPendingDiscordOutbox(
   }
 
   return flushed;
+}
+
+function resolveDiscordSendTarget(channel, { event = null, fallbackChannelId = null, fallbackUserId = null } = {}) {
+  const userId = channel?.targetType === 'direct'
+    ? String(channel.discordUserId || fallbackUserId || '').trim()
+    : '';
+  if (userId) {
+    return { userId };
+  }
+  const channelId = String(event?.discordChannelId || channel?.discordChannelId || fallbackChannelId || '').trim();
+  assert(channelId, `Discord channel id is missing for queued event ${event?.eventId || 'unknown'}.`);
+  return { channelId };
 }
 
 function enqueueChannelTask(queueMap, key, task) {

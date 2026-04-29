@@ -159,6 +159,26 @@ test('channels can reference a reusable messaging connector', () => {
     command: `node ${fixturePath}`,
     platform: 'discord',
   });
+  const directDiscordChannel = buildChannelDefinition(cwd, config, 'discordDm', {
+    targetType: 'direct',
+    discordUserId: '111222333444555666',
+    workspace: '~',
+    agent: 'owner',
+  });
+  assert.equal(directDiscordChannel.targetType, 'direct');
+  assert.equal(directDiscordChannel.discordUserId, '111222333444555666');
+  assert.equal(directDiscordChannel.discordChannelId, undefined);
+  const directTelegramChannel = buildChannelDefinition(cwd, config, 'telegramDm', {
+    platform: 'telegram',
+    targetType: 'direct',
+    telegramChatId: '987654321',
+    telegramThreadId: 'should-clear',
+    workspace: '~',
+    agent: 'owner',
+  });
+  assert.equal(directTelegramChannel.targetType, 'direct');
+  assert.equal(directTelegramChannel.telegramChatId, '987654321');
+  assert.equal(directTelegramChannel.telegramThreadId, undefined);
   config.connectors.kakaoMain = buildConnectorDefinition('kakaoMain', {
     type: 'kakao',
     kakaoRelayUrl: 'https://relay.example/',

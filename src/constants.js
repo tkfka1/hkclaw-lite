@@ -78,6 +78,18 @@ export const CONNECTOR_PLATFORM_CHOICES = [
     description: 'Reusable connectors are reserved for Kakao TalkChannel relay sessions',
   },
 ];
+export const CHANNEL_TARGET_TYPE_CHOICES = [
+  {
+    value: 'channel',
+    label: '서버/그룹 채널',
+    description: 'Use a Discord server channel or Telegram group/channel chat',
+  },
+  {
+    value: 'direct',
+    label: '개인 대화/DM',
+    description: 'Use a Discord DM or Telegram one-on-one bot chat',
+  },
+];
 export const CODEX_SANDBOX_CHOICES = [
   {
     value: 'workspace-write',

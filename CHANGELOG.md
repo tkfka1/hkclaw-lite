@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.11 - 2026-04-29
+
+### Added
+- Added Discord DM and Telegram 1:1 direct targets for channel setup in CLI, admin UI, runtime prompt context, and Discord outbox delivery.
+- Added operator-facing bundled CLI version/status/auth/test/logout affordances for Codex, Gemini, and Claude runtimes.
+- Added Homebrew formula rendering support for macOS distribution.
+
+### Changed
+- Reworked connector terminology so reusable connectors are KakaoTalk-only, while Discord/Telegram use agent platform tokens and channel/direct targets.
+- Refined the Channels UI/UX around “대화 대상” setup so server channels, Telegram chats, Discord DMs, and Kakao connector routes read as distinct choices.
+- Made npm publishing fail loudly when neither `NPM_TOKEN` nor trusted publishing is available.
+
 ## 1.0.8 - 2026-04-29
 
 ### Added
