@@ -1,5 +1,4 @@
 import {
-  getDashboardStats as buildDashboardStats,
   getViewMeta as resolveViewMeta,
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
@@ -46,8 +45,6 @@ const state = {
   activeView: getInitialActiveView(),
   desktopNav: shouldUseDesktopSidebar(window.innerWidth),
   navOpen: false,
-  agentSearch: '',
-  agentFilter: 'all',
   topologyDraft: '',
   topologyResult: null,
   agentModalOpen: false,
@@ -141,13 +138,6 @@ function handleClick(event) {
   if (action === 'switch-view') {
     setActiveView(button.dataset.view || 'home');
     state.navOpen = false;
-    render();
-    return;
-  }
-
-  if (action === 'clear-agent-filters') {
-    state.agentSearch = '';
-    state.agentFilter = 'all';
     render();
     return;
   }
@@ -386,16 +376,6 @@ function handleClick(event) {
 
   if (action === 'stop-kakao-service') {
     void stopKakaoService();
-    return;
-  }
-
-  if (action === 'start-channel-receiver') {
-    void startChannelReceiver(button.dataset.name);
-    return;
-  }
-
-  if (action === 'restart-channel-receiver') {
-    void restartChannelReceiver(button.dataset.name);
     return;
   }
 
@@ -666,17 +646,6 @@ function handleKeydown(event) {
 function handleInput(event) {
   const target = event.target;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) {
-    return;
-  }
-
-  if (target.closest('[data-form="agent-filters"]') && target.name) {
-    if (target.name === 'agentSearch') {
-      state.agentSearch = target.value;
-    }
-    if (target.name === 'agentFilter') {
-      state.agentFilter = target.value || 'all';
-    }
-    render();
     return;
   }
 
@@ -1421,40 +1390,6 @@ async function stopKakaoService() {
   }
 }
 
-async function startChannelReceiver(name) {
-  if (!name) {
-    return;
-  }
-  try {
-    await mutateJson(`/api/channels/${encodeURIComponent(name)}/receiver/start`, {
-      method: 'POST',
-    });
-    setNotice('info', `채널 "${name}" 수신을 시작하고 있습니다.`);
-    render();
-    void refreshStateAfterServiceCommand();
-  } catch (error) {
-    setNotice('error', localizeErrorMessage(error.message));
-    render();
-  }
-}
-
-async function restartChannelReceiver(name) {
-  if (!name) {
-    return;
-  }
-  try {
-    await mutateJson(`/api/channels/${encodeURIComponent(name)}/receiver/restart`, {
-      method: 'POST',
-    });
-    setNotice('info', `채널 "${name}" 수신을 재시작하고 있습니다.`);
-    render();
-    void refreshStateAfterServiceCommand();
-  } catch (error) {
-    setNotice('error', localizeErrorMessage(error.message));
-    render();
-  }
-}
-
 async function reconnectAgent(name) {
   if (!name) {
     return;
@@ -2006,7 +1941,6 @@ function renderFrame(content, className = '') {
     escapeHtml,
     renderNotice,
     getActiveViewMeta,
-    getDashboardStats,
   });
 }
 
@@ -2040,22 +1974,9 @@ function getActiveViewMeta() {
   return getViewMeta(state.activeView);
 }
 
-function getDashboardStats() {
-  return buildDashboardStats({
-    data: state.data,
-    aiStatuses: state.aiStatuses,
-    getLocalLlmConnectionEntries,
-    isAiReady,
-    localizeAgentTypeValue,
-    localizeChannelMode,
-    localizeMessagingPlatform,
-  });
-}
-
 function renderHomeView() {
   return buildHomeView({
     state,
-    getDashboardStats,
     escapeHtml,
     escapeAttr,
   });
@@ -2064,9 +1985,6 @@ function renderHomeView() {
 function renderAgentsView() {
   return buildAgentsView({
     state,
-    getDashboardStats,
-    escapeHtml,
-    escapeAttr,
     renderAgentList,
   });
 }
@@ -2074,10 +1992,8 @@ function renderAgentsView() {
 function renderChannelsView() {
   return buildChannelsView({
     state,
-    getDashboardStats,
-    escapeHtml,
     renderConnectorList,
-  renderChannelList,
+    renderChannelList,
   });
 }
 
@@ -2100,10 +2016,7 @@ function renderAllView() {
 function renderAiView() {
   return buildAiView({
     state,
-    getDashboardStats,
-    escapeHtml,
     renderAiList,
-    getLocalLlmConnectionEntries,
   });
 }
 
@@ -2262,25 +2175,18 @@ function renderAiManagerGuide(agentType, ready, authResult, testResult) {
     return '';
   }
 
-  const details = authResult?.details || {};
   const title = agentType === 'claude-code'
-    ? 'Claude Code CLI 로그인 흐름'
+    ? 'Claude Code'
     : agentType === 'gemini-cli'
-      ? 'Gemini CLI 로그인 흐름'
+      ? 'Gemini CLI'
       : agentType === 'codex'
-        ? 'Codex 로그인 흐름'
-        : 'AI 연결 점검 흐름';
-  const summary = details.externalCli
-    ? '외부 Claude CLI 모드입니다. 웹에서 브라우저를 억지로 띄우지 않고, 같은 서버 터미널의 claude 로그인 상태를 읽습니다.'
-    : ready
-      ? '로그인과 응답 테스트가 끝났습니다. 이제 에이전트에서 바로 사용할 수 있습니다.'
-      : '왼쪽부터 순서대로 처리하면 됩니다. 막히면 상태 다시 확인을 누르면 현재 서버 기준으로 다시 읽습니다.';
+        ? 'Codex'
+        : 'AI';
 
   return `
     <section class="auth-guide" aria-label="${escapeAttr(title)}">
       <div class="auth-guide-copy">
         <strong>${escapeHtml(title)}</strong>
-        <p class="field-hint">${escapeHtml(summary)}</p>
       </div>
       <ol class="auth-steps">
         ${steps
@@ -2290,7 +2196,6 @@ function renderAiManagerGuide(agentType, ready, authResult, testResult) {
                 <span class="auth-step-index">${escapeHtml(String(index + 1))}</span>
                 <span>
                   <strong>${escapeHtml(step.title)}</strong>
-                  <small>${escapeHtml(step.description)}</small>
                 </span>
               </li>
             `,
@@ -2320,19 +2225,16 @@ function getAiManagerSteps(agentType, ready, authResult, testResult) {
     return [
       {
         title: '기기 코드 로그인',
-        description: '로그인 버튼을 누르고 브라우저에서 코드를 입력합니다.',
         done: loggedIn,
         active: !loggedIn,
       },
       {
         title: '상태 확인',
-        description: '서버가 로그인 완료를 감지할 때까지 자동으로 다시 확인합니다.',
         done: loggedIn,
         active: pendingLogin,
       },
       {
         title: '응답 테스트',
-        description: '실제 CLI 호출이 되는지 짧게 검증합니다.',
         done: testDone,
         active: loggedIn && !testDone,
       },
@@ -2343,19 +2245,16 @@ function getAiManagerSteps(agentType, ready, authResult, testResult) {
     return [
       {
         title: '터미널 로그인',
-        description: '같은 서버 환경에서 claude auth login을 실행합니다.',
         done: loggedIn,
         active: !loggedIn,
       },
       {
         title: '상태 다시 확인',
-        description: '웹이 로컬 Claude 로그인 상태를 다시 읽습니다.',
         done: loggedIn,
         active: !loggedIn,
       },
       {
         title: '응답 테스트',
-        description: 'Claude CLI가 hkclaw-lite에서 실행되는지 확인합니다.',
         done: testDone,
         active: loggedIn && !testDone,
       },
@@ -2366,25 +2265,21 @@ function getAiManagerSteps(agentType, ready, authResult, testResult) {
     return [
       {
         title: '계정 종류 선택',
-        description: '개인 Claude 구독이면 claude.ai, 조직/API 계정이면 console을 고릅니다.',
         done: true,
         active: !pendingLogin && !loggedIn,
       },
       {
         title: '브라우저 로그인',
-        description: '로그인 시작을 누르고 새 창에서 인증을 완료합니다.',
         done: pendingLogin || loggedIn,
         active: !pendingLogin && !loggedIn,
       },
       {
         title: 'callback URL 붙여넣기',
-        description: '최종 주소 전체를 붙여넣고 로그인 완료를 누릅니다.',
         done: loggedIn,
         active: pendingLogin && !callbackReady,
       },
       {
         title: '응답 테스트',
-        description: '실제 Claude Code CLI 호출을 검증합니다.',
         done: testDone,
         active: loggedIn && !testDone,
       },
@@ -2395,19 +2290,16 @@ function getAiManagerSteps(agentType, ready, authResult, testResult) {
     return [
       {
         title: '브라우저 로그인',
-        description: '로그인 시작을 눌러 Google 인증 링크를 엽니다.',
         done: pendingLogin || loggedIn,
         active: !pendingLogin && !loggedIn,
       },
       {
         title: 'Authorization code 붙여넣기',
-        description: '표시된 코드를 그대로 붙여넣고 로그인 완료를 누릅니다.',
         done: loggedIn,
         active: pendingLogin && !callbackReady,
       },
       {
         title: '응답 테스트',
-        description: 'Gemini CLI가 hkclaw-lite에서 실행되는지 확인합니다.',
         done: testDone,
         active: loggedIn && !testDone,
       },
@@ -2482,29 +2374,11 @@ function renderAgentList(agents, discordService = {}, telegramService = {}, kaka
     agent,
     context: buildAgentDisplayContext(agent, serviceAgents, telegramAgents, kakaoAgents),
   }));
-  const filteredEntries = agentEntries.filter(({ agent, context }) => matchesAgentListControls(agent, context));
-  const hasActiveControls = Boolean((state.agentSearch || '').trim()) || (state.agentFilter || 'all') !== 'all';
 
   return `
-    <div class="agent-result-row">
-      <span>${escapeHtml(`표시 ${filteredEntries.length}/${agents.length}`)}</span>
-      ${hasActiveControls ? `<button type="button" class="btn-secondary btn-inline" data-action="clear-agent-filters">${renderButtonLabel('refresh', '필터 초기화')}</button>` : ''}
+    <div class="card-list agent-list">
+      ${agentEntries.map(({ agent, context }) => renderAgentCard(agent, context)).join('')}
     </div>
-    ${
-      filteredEntries.length
-        ? `
-            <div class="card-list agent-list">
-              ${filteredEntries.map(({ agent, context }) => renderAgentCard(agent, context)).join('')}
-            </div>
-          `
-        : `
-            <div class="empty-inline agent-empty">
-              <strong>조건에 맞는 에이전트가 없습니다.</strong>
-              <span>검색어를 줄이거나 상태 필터를 전체로 바꿔보세요.</span>
-              <button type="button" class="btn-secondary" data-action="clear-agent-filters">${renderButtonLabel('refresh', '필터 초기화')}</button>
-            </div>
-          `
-    }
   `;
 }
 
@@ -2523,7 +2397,6 @@ function renderAgentCard(agent, context) {
     tokenConfigured,
     connectionSummary,
     connected,
-    channelCount,
     credentialLabel,
     connectorOnly,
   } = context;
@@ -2549,7 +2422,6 @@ function renderAgentCard(agent, context) {
           <span class="mini-chip agent-chip agent-chip--platform">${renderIcon(resolvePlatformIcon(platform), 'ui-icon')} ${escapeHtml(platformLabel)}</span>
           <span class="mini-chip agent-chip ${tokenConfigured ? 'mini-chip--ok' : 'mini-chip--danger'}">${renderIcon('shield', 'ui-icon')} ${escapeHtml(credentialLabel)}</span>
           <span class="mini-chip agent-chip ${agentServiceStale ? 'mini-chip--danger' : connected ? 'mini-chip--ok' : ''}">${renderIcon('server', 'ui-icon')}${escapeHtml(connectionSummary)}</span>
-          <span class="mini-chip agent-chip">${renderIcon('channels', 'ui-icon')}${escapeHtml(`채널 ${channelCount}개`)}</span>
         </div>
       </div>
       <div class="inline-actions agent-card-actions">
@@ -2642,7 +2514,7 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
         ? Boolean(kakaoRuntime.connected)
         : Boolean(telegramRuntime.connected);
   const connectionSummary = connectorOnly
-    ? 'Kakao 수신 사용'
+    ? 'Kakao 연결에서 수신'
     : isDiscordPlatform
       ? runtimeAgent.connected
       ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
@@ -2677,7 +2549,6 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
 
   return {
     platform,
-    platforms: channelPlatforms.length ? channelPlatforms : [platform],
     isDiscordPlatform,
     platformLabel,
     runtimeAgent,
@@ -2693,62 +2564,7 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
     connectorOnly,
     connected,
     connectionSummary,
-    channelCount: (agent.mappedChannelNames || []).length,
-    needsAttention: !tokenConfigured || (!connectorOnly && agentServiceStale) || Boolean(agentService?.lastError),
   };
-}
-
-function matchesAgentListControls(agent, context) {
-  return matchesAgentFilter(context, state.agentFilter || 'all') && matchesAgentSearch(agent, context, state.agentSearch || '');
-}
-
-function matchesAgentFilter(context, filter) {
-  switch (filter) {
-    case 'running':
-      return context.agentServiceRunning || context.agentServiceStarting;
-    case 'connected':
-      return context.connected;
-    case 'stopped':
-      return !context.agentServiceRunning && !context.agentServiceStarting && !context.agentServiceStale;
-    case 'issues':
-      return context.needsAttention;
-    case 'missing-token':
-      return !context.tokenConfigured;
-    case 'discord':
-      return (context.platforms || [context.platform]).includes('discord');
-    case 'telegram':
-      return (context.platforms || [context.platform]).includes('telegram');
-    case 'kakao':
-      return (context.platforms || [context.platform]).includes('kakao');
-    default:
-      return true;
-  }
-}
-
-function matchesAgentSearch(agent, context, rawSearch) {
-  const search = normalizeSearchText(rawSearch);
-  if (!search) {
-    return true;
-  }
-  const values = [
-    agent.name,
-    agent.agent,
-    localizeAgentTypeValue(agent.agent),
-    agent.model,
-    agent.sandbox,
-    context.platformLabel,
-    context.connectionSummary,
-    context.agentServiceLabel,
-    agent.runtime?.source,
-    agent.runtime?.detail,
-    ...(agent.mappedChannelNames || []),
-    ...(agent.workspaces || []),
-  ];
-  return normalizeSearchText(values.filter(Boolean).join(' ')).includes(search);
-}
-
-function normalizeSearchText(value) {
-  return String(value || '').trim().toLocaleLowerCase('ko-KR');
 }
 
 function unique(values = []) {
@@ -2766,7 +2582,7 @@ function renderAgentDetailPanel(agent, context) {
     : '미확인';
   const rows = context.connectorOnly
     ? [
-        { label: '채널 수신', value: '채널 카드에서 관리' },
+        { label: '수신 워커', value: 'Kakao 연결에서 관리' },
         { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
         { label: 'Sandbox', value: agent.sandbox || '기본값' },
       ]
@@ -2831,10 +2647,9 @@ function localizeAgentRole(role) {
   return role || '';
 }
 
-function renderConnectorList(connectors = [], channels = []) {
+function renderConnectorList(connectors = [], kakaoService = state.data?.kakao || {}) {
   const kakaoConnectors = connectors.filter((connector) => connector.type === 'kakao');
-  const legacyConnectors = connectors.filter((connector) => connector.type !== 'kakao');
-  if (!kakaoConnectors.length && !legacyConnectors.length) {
+  if (!kakaoConnectors.length) {
     return `
       <div class="empty-inline empty-inline--action">
         <strong>KakaoTalk 연결이 아직 없습니다.</strong>
@@ -2843,55 +2658,70 @@ function renderConnectorList(connectors = [], channels = []) {
   }
   return `
     <div class="connector-overview">
-      ${
-        kakaoConnectors.length
-          ? `
-              <div class="card-list card-list--compact connector-card-list">
-                ${kakaoConnectors
-                  .map((connector) => renderConnectorCard(connector, channels))
-                  .join('')}
-              </div>
-            `
-          : `
-              <div class="empty-inline empty-inline--action">
-                <strong>사용 가능한 KakaoTalk 연결이 없습니다.</strong>
-              </div>
-            `
-      }
-      ${
-        legacyConnectors.length
-          ? `
-              <div class="legacy-connector-note">
-                <strong>이전 Discord/Telegram 커넥터 ${escapeHtml(String(legacyConnectors.length))}개는 호환용으로만 유지됩니다.</strong>
-              </div>
-            `
-          : ''
-      }
+      ${renderKakaoConnectorWorkerPanel(kakaoConnectors, kakaoService)}
+      <div class="card-list card-list--compact connector-card-list">
+        ${kakaoConnectors
+          .map((connector) => renderConnectorCard(connector, kakaoService))
+          .join('')}
+      </div>
     </div>
   `;
 }
 
-function renderConnectorCard(connector, channels = []) {
-  const mappedChannels = channels.filter((channel) => channel.connector === connector.name);
+function renderKakaoConnectorWorkerPanel(connectors = [], kakaoService = {}) {
+  const service = kakaoService?.service || {};
+  const worker = buildWorkerStatus({
+    configured: connectors.length > 0,
+    running: Boolean(service.running),
+    starting: Boolean(service.starting),
+    stale: Boolean(service.stale),
+    lastError: service.lastError || '',
+  });
+  const primaryAction = worker.running || worker.stale
+    ? `<button type="button" class="btn-secondary" data-action="restart-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', 'Kakao 워커 재시작')}</button>`
+    : `<button type="button" class="btn-secondary" data-action="start-kakao-service" ${state.busy || !worker.configured || worker.starting ? 'disabled' : ''}>${renderButtonLabel('play', 'Kakao 워커 시작')}</button>`;
+  const stopAction = worker.running || worker.stale || worker.starting
+    ? `<button type="button" class="btn-secondary" data-action="stop-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', 'Kakao 워커 중지')}</button>`
+    : '';
+
+  return `
+    <div class="worker-control-strip">
+      <div class="worker-control-main">
+        <span class="mini-chip ${escapeAttr(worker.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(worker.label)}</span>
+        ${worker.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(worker.lastError)}</p>` : ''}
+      </div>
+      <div class="inline-actions">
+        ${primaryAction}
+        ${stopAction}
+      </div>
+    </div>
+  `;
+}
+
+function renderConnectorCard(connector, kakaoService = {}) {
   const tokenMode = connector.kakaoSessionToken || connector.kakaoRelayToken ? '토큰 설정됨' : '페어링 모드';
+  const runtime = kakaoService?.agents?.[connector.name] || {};
   return `
     <article class="card card--stack connector-card">
       <div class="card-main">
         ${renderCardTitle('link', connector.name, 'calm')}
-        ${renderMetaText(`KakaoTalk · ${mappedChannels.length}개 채널`)}
+        ${renderMetaText('KakaoTalk')}
         <div class="card-tags">
-          <span class="mini-chip mini-chip--ok">${renderIcon('link', 'ui-icon')}KakaoTalk 전용</span>
+          <span class="mini-chip mini-chip--ok">${renderIcon('link', 'ui-icon')}KakaoTalk</span>
           <span class="mini-chip">${escapeHtml(tokenMode)}</span>
+          ${
+            runtime.connected
+              ? `<span class="mini-chip mini-chip--ok">${renderIcon('server', 'ui-icon')}${escapeHtml(`연결됨${runtime.pairedUserId ? ` · ${runtime.pairedUserId}` : ''}`)}</span>`
+              : runtime.pairingCode
+                ? `<span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`/pair ${runtime.pairingCode}`)}</span>`
+                : ''
+          }
           ${connector.description ? `<span class="mini-chip">${escapeHtml(connector.description)}</span>` : ''}
         </div>
         <div class="connector-detail-grid">
           <div>
             <span>릴레이</span>
             <strong>${escapeHtml(connector.kakaoRelayUrl || getDefaultKakaoRelayUrl())}</strong>
-          </div>
-          <div>
-            <span>사용 채널</span>
-            <strong>${escapeHtml(mappedChannels.length ? mappedChannels.map((channel) => channel.name).join(', ') : '아직 없음')}</strong>
           </div>
         </div>
       </div>
@@ -2930,7 +2760,7 @@ function renderChannelList(channels, agents, data = state.data) {
           const claudeSessions = runtimeSessions.filter(
             (session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId,
           );
-          const receiver = buildChannelReceiverContext(channel, agentMap, serviceState);
+          const worker = buildChannelWorkerContext(channel, agentMap, serviceState);
           return `
             <article class="card card--stack">
               <div class="card-main">
@@ -2978,13 +2808,13 @@ function renderChannelList(channels, agents, data = state.data) {
                     : ''
                 }
                 <div class="card-tags">
-                  <span class="mini-chip ${escapeAttr(receiver.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(receiver.label)}</span>
+                  <span class="mini-chip ${escapeAttr(worker.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(worker.label)}</span>
+                  <span class="mini-chip">${renderIcon('settings', 'ui-icon')}${escapeHtml(worker.managementLabel)}</span>
                 </div>
-                ${receiver.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(receiver.lastError)}</p>` : ''}
+                ${worker.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(worker.lastError)}</p>` : ''}
                 ${renderChannelRuntimeSessions(channel, runtimeSessions)}
               </div>
               <div class="inline-actions">
-                ${renderChannelReceiverActions(channel, receiver)}
                 <button type="button" class="btn-secondary" data-action="edit-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
                 ${
                   claudeSessions.length > 0
@@ -3001,20 +2831,28 @@ function renderChannelList(channels, agents, data = state.data) {
   `;
 }
 
-function buildChannelReceiverContext(channel, agentMap, serviceState) {
+function buildChannelWorkerContext(channel, agentMap, serviceState) {
   const platform = channel.platform || 'discord';
+  const roleAgentNames = unique([channel.agent, channel.reviewer, channel.arbiter].filter(Boolean));
   if (platform === 'kakao') {
     const service = serviceState.kakao?.service || {};
-    return buildReceiverStatus({
-      configured: Boolean(channel.connector || serviceState.kakao?.kakaoChannelCount),
-      running: Boolean(service.running),
-      starting: Boolean(service.starting),
-      stale: Boolean(service.stale),
-      lastError: service.lastError || '',
-    });
+    const configuredAgentNames = roleAgentNames.filter((agentName) => Boolean(agentMap.get(agentName)?.kakaoRelayConfigured));
+    return {
+      ...buildWorkerStatus({
+        configured: Boolean(channel.connector || configuredAgentNames.length),
+        running: Boolean(service.running),
+        starting: Boolean(service.starting),
+        stale: Boolean(service.stale),
+        lastError: service.lastError || '',
+      }),
+      managementLabel: channel.connector
+        ? `Kakao 연결 ${channel.connector}에서 관리`
+        : configuredAgentNames.length
+          ? `Kakao 에이전트 ${configuredAgentNames.join(', ')}에서 관리`
+          : 'Kakao 연결 설정 필요',
+    };
   }
 
-  const roleAgentNames = unique([channel.agent, channel.reviewer, channel.arbiter].filter(Boolean));
   const tokenField = platform === 'telegram' ? 'telegramBotTokenConfigured' : 'discordTokenConfigured';
   const serviceGroup = platform === 'telegram' ? serviceState.telegram : serviceState.discord;
   const aggregateService = serviceGroup?.service || {};
@@ -3025,66 +2863,74 @@ function buildChannelReceiverContext(channel, agentMap, serviceState) {
       ? aggregateService
       : {}
   ));
-  return buildReceiverStatus({
-    configured: configuredAgentNames.length > 0,
-    running: channelServices.length > 0 && channelServices.every((service) => service.running),
-    starting: channelServices.some((service) => service.starting),
-    stale: channelServices.some((service) => service.stale),
-    lastError: channelServices.find((service) => service.lastError)?.lastError || '',
-  });
+  return {
+    ...buildWorkerStatus({
+      configured: configuredAgentNames.length > 0,
+      running: channelServices.length > 0 && channelServices.every((service) => service.running),
+      starting: channelServices.some((service) => service.starting),
+      stale: channelServices.some((service) => service.stale),
+      lastError: channelServices.find((service) => service.lastError)?.lastError || '',
+    }),
+    managementLabel: configuredAgentNames.length
+      ? `에이전트 ${configuredAgentNames.join(', ')}에서 관리`
+      : '에이전트 토큰 설정 필요',
+  };
 }
 
-function buildReceiverStatus({ configured, running, starting, stale, lastError }) {
+function buildWorkerStatus({ configured, running, starting, stale, lastError }) {
   if (!configured) {
     return {
-      label: '수신 설정 필요',
+      label: '워커 설정 필요',
       statusClass: 'mini-chip--danger',
-      canStart: false,
-      canRestart: false,
+      configured: false,
+      running: false,
+      starting: false,
+      stale: false,
       lastError: lastError || '',
     };
   }
   if (stale) {
     return {
-      label: '수신 확인 필요',
+      label: '워커 확인 필요',
       statusClass: 'mini-chip--danger',
-      canStart: true,
-      canRestart: true,
+      configured: true,
+      running: false,
+      starting: false,
+      stale: true,
       lastError: lastError || '',
     };
   }
   if (starting) {
     return {
-      label: '수신 시작 중',
+      label: '워커 시작 중',
       statusClass: '',
-      canStart: false,
-      canRestart: false,
+      configured: true,
+      running: false,
+      starting: true,
+      stale: false,
       lastError: lastError || '',
     };
   }
   if (running) {
     return {
-      label: '수신 중',
+      label: '워커 실행 중',
       statusClass: 'mini-chip--ok',
-      canStart: false,
-      canRestart: true,
+      configured: true,
+      running: true,
+      starting: false,
+      stale: false,
       lastError: lastError || '',
     };
   }
   return {
-    label: '수신 대기',
+    label: '워커 대기',
     statusClass: '',
-    canStart: true,
-    canRestart: false,
+    configured: true,
+    running: false,
+    starting: false,
+    stale: false,
     lastError: lastError || '',
   };
-}
-
-function renderChannelReceiverActions(channel, receiver) {
-  if (receiver.canRestart) {
-    return `<button type="button" class="btn-secondary" data-action="restart-channel-receiver" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', '수신 재시작')}</button>`;
-  }
-  return `<button type="button" class="btn-secondary" data-action="start-channel-receiver" data-name="${escapeAttr(channel.name)}" ${state.busy || !receiver.canStart ? 'disabled' : ''}>${renderButtonLabel('play', '수신 시작')}</button>`;
 }
 
 function sortRuntimeSessions(sessions) {
@@ -3110,8 +2956,8 @@ function renderChannelRuntimeSessions(channel, sessions) {
   return `
     <div class="runtime-session-panel" aria-label="채널 런타임 세션">
       <div class="runtime-session-head">
-        <span>${renderIcon('ai', 'ui-icon')}${escapeHtml(`채널+역할 세션 ${sessions.length}`)}</span>
-        <strong>${escapeHtml(claudeCount ? `Claude ${claudeCount}` : '재사용 세션 없음')}</strong>
+        <span>${renderIcon('ai', 'ui-icon')}세션</span>
+        <strong>${escapeHtml(claudeCount ? 'Claude' : '재사용 없음')}</strong>
       </div>
       <div class="runtime-session-list">
         ${sessions
@@ -3125,7 +2971,6 @@ function renderChannelRuntimeSessions(channel, sessions) {
                     session.agentName || 'agent 미지정',
                     localizeRuntimeBackend(session.runtimeBackend),
                     localizeSessionPolicy(session.sessionPolicy),
-                    `run ${session.runCount || 0}`,
                   ].filter(Boolean).join(' · '))}</span>
                   ${
                     session.runtimeSessionId
@@ -3818,26 +3663,11 @@ function renderConnectorModal() {
           ${renderFormErrorSummary('connector')}
           <input type="hidden" name="currentName" value="${escapeAttr(current.currentName || '')}" />
           <input type="hidden" name="type" value="kakao" />
-          <div class="connector-brief">
-            <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
-            <div>
-              <strong>커넥터는 KakaoTalk 전용입니다.</strong>
-            </div>
-            <span class="mini-chip mini-chip--ok">KakaoTalk</span>
-          </div>
           <div class="form-grid connector-form-grid">
             <div class="field ${fieldErrorClass('connector', 'name')}">
               <label for="connector-name">${renderRequiredLabel('연결 이름')}</label>
               <input id="connector-name" name="name" value="${escapeAttr(current.name)}" placeholder="예: kakao-main" />
               ${renderFormError('connector', 'name')}
-            </div>
-            <div class="field field-platform-lock ${fieldErrorClass('connector', 'type')}">
-              <label>플랫폼</label>
-              <div class="locked-platform-card">
-                <strong>KakaoTalk</strong>
-                <span>TalkChannel relay / pairing session</span>
-              </div>
-              ${renderFormError('connector', 'type')}
             </div>
             <div class="field field-full">
               <label for="connector-description">메모</label>
@@ -4832,7 +4662,7 @@ function collectConnectorDraftErrors(draft = state.connectorDraft || {}) {
     errors.name = '영문, 숫자, .-_ 만 가능합니다.';
   }
   if (type !== 'kakao') {
-    errors.type = '커넥터는 KakaoTalk 전용입니다.';
+    errors.type = 'KakaoTalk만 가능합니다.';
   }
   if (
     optionalDraftText(draft.kakaoRelayUrl) &&

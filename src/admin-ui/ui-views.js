@@ -1,13 +1,8 @@
-import {
-  renderDetailList,
-  renderMetricCard,
-  renderShortcutCard,
-} from './ui-shell.js?v=20260427-02';
+import { renderShortcutCard } from './ui-shell.js?v=20260427-02';
 import { renderIcon } from './icons.js?v=20260427-02';
 
 export function renderHomeView(ctx) {
-  const { state, getDashboardStats, escapeHtml } = ctx;
-  const stats = getDashboardStats();
+  const { state, escapeHtml } = ctx;
 
   return `
     <section class="panel section-panel overview-panel">
@@ -18,31 +13,19 @@ export function renderHomeView(ctx) {
         </div>
       </div>
       <div class="shortcut-grid">
-        ${renderShortcutCard({ view: 'agents', title: '에이전트', description: '', meta: `${stats.agents.length}개`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-        ${renderShortcutCard({ view: 'channels', title: '채널', description: '', meta: `${stats.channels.length}개`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-        ${renderShortcutCard({ view: 'ai', title: 'AI', description: '', meta: `${stats.readyAiCount}개 준비`, state, escapeHtml, escapeAttr: ctx.escapeAttr })}
+        ${renderShortcutCard({ view: 'agents', title: '에이전트', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
+        ${renderShortcutCard({ view: 'channels', title: '채널', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
+        ${renderShortcutCard({ view: 'ai', title: 'AI', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
       </div>
     </section>
   `;
 }
 
 export function renderAgentsView(ctx) {
-  const { state, getDashboardStats, escapeHtml, escapeAttr, renderAgentList } = ctx;
-  const stats = getDashboardStats();
+  const { state, renderAgentList } = ctx;
   const discordService = state.data?.discord?.service || {};
   const telegramService = state.data?.telegram?.service || {};
   const kakaoService = state.data?.kakao?.service || {};
-  const filterOptions = [
-    ['all', '전체'],
-    ['running', '실행중'],
-    ['connected', '연결됨'],
-    ['stopped', '중지'],
-    ['issues', '확인 필요'],
-    ['missing-token', '토큰 없음'],
-    ['discord', 'Discord'],
-    ['telegram', 'Telegram'],
-    ['kakao', 'KakaoTalk'],
-  ];
 
   return `
     <section class="panel section-panel">
@@ -53,31 +36,6 @@ export function renderAgentsView(ctx) {
         </div>
         <div class="inline-actions">
           <button type="button" class="btn-primary" data-action="open-agent-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}에이전트 추가</button>
-        </div>
-      </div>
-      <div class="agent-toolbar" data-form="agent-filters">
-        <label class="agent-search-field">
-          <span>검색</span>
-          <input
-            type="search"
-            name="agentSearch"
-            value="${escapeAttr(state.agentSearch || '')}"
-            placeholder="이름, 모델, 채널, 워크스페이스"
-            autocomplete="off"
-          />
-        </label>
-        <label class="agent-filter-field">
-          <span>상태</span>
-          <select name="agentFilter">
-            ${filterOptions
-              .map(([value, label]) => `<option value="${escapeAttr(value)}" ${(state.agentFilter || 'all') === value ? 'selected' : ''}>${escapeHtml(label)}</option>`)
-              .join('')}
-          </select>
-        </label>
-        <div class="agent-toolbar-summary" aria-label="에이전트 요약">
-          <span class="mini-chip">${renderIcon('agents', 'ui-icon')}${escapeHtml(`전체 ${stats.agents.length}`)}</span>
-          <span class="mini-chip mini-chip--ok">${renderIcon('link', 'ui-icon')}${escapeHtml(`연결 ${stats.connectedAgentCount}`)}</span>
-          <span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`수신 ${stats.activeWorkerCount}`)}</span>
         </div>
       </div>
       ${renderAgentList(state.data.agents, discordService, telegramService, kakaoService)}
@@ -106,7 +64,7 @@ export function renderChannelsView(ctx) {
         </div>
         <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}Kakao 연결 추가</button>
       </div>
-      ${renderConnectorList(state.data.connectors || [], state.data.channels || [])}
+      ${renderConnectorList(state.data.connectors || [], state.data.kakao || {})}
     </section>
   `;
 }
@@ -219,8 +177,7 @@ export function renderAllView(ctx) {
 }
 
 export function renderAiView(ctx) {
-  const { state, getDashboardStats, escapeHtml, renderAiList, getLocalLlmConnectionEntries } = ctx;
-  const stats = getDashboardStats();
+  const { state, renderAiList } = ctx;
   const supportsLocalLlm = (state.data?.choices?.agentTypes || []).some(
     (entry) => entry.value === 'local-llm',
   );
@@ -243,16 +200,6 @@ export function renderAiView(ctx) {
               </button>`
             : ''
         }
-      </div>
-      <div class="auth-overview-card">
-        <div>
-          <strong>로그인부터 테스트까지 한 화면에서 끝냅니다.</strong>
-        </div>
-        <div class="auth-overview-steps" aria-label="AI 인증 순서">
-          <span class="mini-chip">${renderIcon('server', 'ui-icon')}상태 확인</span>
-          <span class="mini-chip">${renderIcon('login', 'ui-icon')}로그인</span>
-          <span class="mini-chip mini-chip--ok">${renderIcon('play', 'ui-icon')}응답 테스트</span>
-        </div>
       </div>
       ${renderAiList()}
     </section>

@@ -1476,7 +1476,7 @@ test('admin snapshot scopes channel worker requirements to connector platform ro
   });
 });
 
-test('admin server auto-starts receivers for configured channels', async () => {
+test('admin server auto-starts messaging workers for configured channels', async () => {
   const projectRoot = createProject();
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
   initProject(projectRoot);
@@ -1594,7 +1594,7 @@ test('admin server auto-starts receivers for configured channels', async () => {
   }
 });
 
-test('admin server starts and restarts receiver workers from channel controls', async () => {
+test('admin server keeps messaging worker controls on agents instead of channels', async () => {
   const projectRoot = createProject();
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
   initProject(projectRoot);
@@ -1619,12 +1619,17 @@ test('admin server starts and restarts receiver workers from channel controls', 
 
   try {
     await withAdminServer(projectRoot, async ({ url }) => {
-      const startResponse = await requestJson(`${url}/api/channels/ops/receiver/start`, {
+      const channelStartResponse = await requestJson(`${url}/api/channels/ops/receiver/start`, {
+        method: 'POST',
+      });
+      assert.equal(channelStartResponse.response.status, 404, JSON.stringify(channelStartResponse.payload));
+
+      const startResponse = await requestJson(`${url}/api/agents/worker/start`, {
         method: 'POST',
       });
       assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
-      assert.equal(startResponse.payload.result.action, 'start-channel-receivers');
-      assert.equal(startResponse.payload.result.channelName, 'ops');
+      assert.equal(startResponse.payload.result.action, 'start');
+      assert.equal(startResponse.payload.result.agentName, 'worker');
 
       const started = await waitFor(() => {
         const snapshot = buildDiscordServiceSnapshot(projectRoot);
@@ -1632,12 +1637,17 @@ test('admin server starts and restarts receiver workers from channel controls', 
       });
       assert.equal(started?.agentServices?.worker?.desiredRunning, true);
 
-      const restartResponse = await requestJson(`${url}/api/channels/ops/receiver/restart`, {
+      const channelRestartResponse = await requestJson(`${url}/api/channels/ops/receiver/restart`, {
+        method: 'POST',
+      });
+      assert.equal(channelRestartResponse.response.status, 404, JSON.stringify(channelRestartResponse.payload));
+
+      const restartResponse = await requestJson(`${url}/api/agents/worker/restart`, {
         method: 'POST',
       });
       assert.equal(restartResponse.response.status, 200, JSON.stringify(restartResponse.payload));
-      assert.equal(restartResponse.payload.result.action, 'restart-channel-receivers');
-      assert.equal(restartResponse.payload.result.channelName, 'ops');
+      assert.equal(restartResponse.payload.result.action, 'restart');
+      assert.equal(restartResponse.payload.result.agentName, 'worker');
 
       const restarted = await waitFor(() => {
         const snapshot = buildDiscordServiceSnapshot(projectRoot);

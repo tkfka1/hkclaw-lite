@@ -36,24 +36,26 @@ test('desktop layout can show the sidebar without always rendering the hamburger
 
   assert.match(shellSource, /showNavToggle/u);
   assert.match(shellSource, /desktopNavVisible/u);
-  assert.match(shellSource, /const sidebarVisible = Boolean\(state\.data && stats && \(desktopNavVisible \|\| state\.navOpen\)\);/u);
+  assert.match(shellSource, /const sidebarVisible = Boolean\(state\.data && \(desktopNavVisible \|\| state\.navOpen\)\);/u);
   assert.match(shellSource, /nav-toggle-button/u);
   assert.match(shellSource, /state\.data && !desktopNavVisible && state\.navOpen/u);
   assert.match(shellSource, /desktopNavVisible \|\| state\.navOpen \? '' : 'inert'/u);
 });
 
-test('agents page keeps operator controls visible and bookmarkable', () => {
+test('agents page keeps the operator surface simple', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
 
   assert.match(appSource, /VIEW_NAMES/u);
   assert.match(appSource, /window\.location\.hash/u);
-  assert.match(appSource, /agentSearch/u);
-  assert.match(appSource, /agentFilter/u);
   assert.match(appSource, /renderAgentDetailPanel/u);
-  assert.match(viewsSource, /data-form="agent-filters"/u);
-  assert.match(viewsSource, /name="agentSearch"/u);
-  assert.match(viewsSource, /name="agentFilter"/u);
+  assert.doesNotMatch(appSource, /agentSearch/u);
+  assert.doesNotMatch(appSource, /agentFilter/u);
+  assert.doesNotMatch(viewsSource, /data-form="agent-filters"/u);
+  assert.doesNotMatch(viewsSource, /name="agentSearch"/u);
+  assert.doesNotMatch(viewsSource, /name="agentFilter"/u);
+  assert.doesNotMatch(viewsSource, /에이전트 요약/u);
+  assert.doesNotMatch(viewsSource, /전체 \$\{stats\.agents\.length\}/u);
 });
 
 test('channels page exposes role-scoped runtime session controls', () => {
@@ -64,6 +66,8 @@ test('channels page exposes role-scoped runtime session controls', () => {
   assert.match(appSource, /open-reset-channel-runtime-sessions/u);
   assert.match(appSource, /confirm-reset-channel-runtime-sessions/u);
   assert.match(appSource, /channel\.name.*session\.role/us);
+  assert.doesNotMatch(appSource, /채널\+역할 세션 \$\{sessions\.length\}/u);
+  assert.doesNotMatch(appSource, /run \$\{session\.runCount/u);
 });
 
 test('channels page exposes reusable connector management', () => {
@@ -73,17 +77,25 @@ test('channels page exposes reusable connector management', () => {
   assert.match(viewsSource, /renderConnectorList/u);
   assert.match(viewsSource, /<h2>채널<\/h2>/u);
   assert.match(viewsSource, /<h2>KakaoTalk 연결<\/h2>/u);
-  assert.match(appSource, /start-channel-receiver/u);
-  assert.match(appSource, /restart-channel-receiver/u);
-  assert.match(appSource, /수신 시작/u);
-  assert.match(appSource, /수신 재시작/u);
-  assert.match(appSource, /수신 중/u);
+  assert.doesNotMatch(appSource, /start-channel-receiver/u);
+  assert.doesNotMatch(appSource, /restart-channel-receiver/u);
+  assert.doesNotMatch(appSource, /receiver\/start/u);
+  assert.doesNotMatch(appSource, /receiver\/restart/u);
+  assert.match(appSource, /buildChannelWorkerContext/u);
+  assert.match(appSource, /Kakao 워커 시작/u);
+  assert.doesNotMatch(appSource, /KakaoTalk 수신 워커는 연결 단위로 관리합니다/u);
+  assert.doesNotMatch(appSource, /채널은 라우팅 규칙만 저장합니다/u);
+  assert.doesNotMatch(appSource, /개 채널/u);
+  assert.doesNotMatch(appSource, /사용 채널/u);
   assert.doesNotMatch(viewsSource, /renderChannelWorkerPanel/u);
   assert.doesNotMatch(viewsSource, /<h2>메시지 수신<\/h2>/u);
   assert.doesNotMatch(viewsSource, />채널 워커</u);
   assert.doesNotMatch(viewsSource, /가동 중/u);
   assert.match(appSource, /data-form="connector"/u);
-  assert.match(appSource, /커넥터는 KakaoTalk 전용입니다/u);
+  assert.doesNotMatch(appSource, /connector-brief/u);
+  assert.doesNotMatch(appSource, /커넥터는 KakaoTalk 전용입니다/u);
+  assert.doesNotMatch(appSource, /locked-platform-card/u);
+  assert.doesNotMatch(appSource, /이전 Discord\/Telegram 커넥터/u);
   assert.match(appSource, /channel-target-type/u);
   assert.match(appSource, /Discord 사용자 ID/u);
   assert.match(appSource, /telegram-get-updates/u);
@@ -130,8 +142,8 @@ test('agent cards distinguish connector-managed channels from legacy agent token
   assert.match(appSource, /agentCredentialConfiguredByPlatform/u);
   assert.match(appSource, /ownsConnectorOnlyRoute && agentPlatform === 'kakao'/u);
   assert.match(appSource, /Kakao 연결 사용/u);
-  assert.match(appSource, /Kakao 수신 사용/u);
-  assert.match(appSource, /채널 카드에서 관리/u);
+  assert.match(appSource, /Kakao 연결에서 수신/u);
+  assert.match(appSource, /Kakao 연결에서 관리/u);
   assert.match(appSource, /function\s+unique\s*\(/u);
 });
 
@@ -159,11 +171,16 @@ test('mobile shell exposes a thumb-friendly bottom navigation dock', () => {
   assert.match(shellSource, /function renderMobileTabBar/u);
   assert.match(shellSource, /aria-label="빠른 관리 메뉴"/u);
   assert.match(shellSource, /class="mobile-tabbar-link/u);
-  assert.match(shellSource, /getMobileNavBadge/u);
+  assert.doesNotMatch(shellSource, /getMobileNavBadge/u);
+  assert.doesNotMatch(shellSource, /mobile-tabbar-badge/u);
+  assert.doesNotMatch(shellSource, /side-nav-subtitle/u);
+  assert.doesNotMatch(shellSource, /sidebar-summary/u);
   assert.match(styles, /\.mobile-tabbar\s*\{[\s\S]*?display:\s*none;/u);
   assert.match(styles, /@media \(max-width: 1080px\)[\s\S]*?\.mobile-tabbar\s*\{[\s\S]*?position:\s*fixed;/u);
   assert.match(styles, /grid-template-columns:\s*repeat\(7, minmax\(0, 1fr\)\);/u);
   assert.match(styles, /env\(safe-area-inset-bottom\)/u);
+  assert.doesNotMatch(styles, /mobile-tabbar-badge/u);
+  assert.doesNotMatch(styles, /sidebar-summary/u);
 });
 
 test('mobile modals use the dynamic viewport and safe-area padding', () => {
@@ -218,10 +235,12 @@ test('AI auth manager keeps Claude and browser login controls compact', () => {
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
   const styles = readRepoFile('src/admin-ui/styles.css');
 
-  assert.match(viewsSource, /class="auth-overview-card"/u);
+  assert.doesNotMatch(viewsSource, /auth-overview-card/u);
+  assert.doesNotMatch(viewsSource, /로그인부터 테스트까지/u);
   assert.match(appSource, /function\s+renderAiManagerGuide\s*\(/u);
   assert.match(appSource, /class="auth-steps"/u);
-  assert.match(appSource, /Claude Code CLI 로그인 흐름/u);
+  assert.doesNotMatch(appSource, /Claude Code CLI 로그인 흐름/u);
+  assert.doesNotMatch(appSource, /왼쪽부터 순서대로/u);
   assert.match(appSource, /3\. 브라우저 완료 후 주소 붙여넣기/u);
   assert.match(appSource, /showCompleteLoginButton/u);
   assert.match(appSource, /function\s+renderAiRuntimeSummary\s*\(/u);
@@ -235,6 +254,7 @@ test('AI auth manager keeps Claude and browser login controls compact', () => {
   assert.match(styles, /\.runtime-summary-card/u);
   assert.match(styles, /\.model-default-card/u);
   assert.match(styles, /\.auth-step\.is-active/u);
+  assert.doesNotMatch(styles, /auth-overview-card/u);
 });
 
 test('admin login keeps the first screen focused on hkclaw-lite password entry', () => {

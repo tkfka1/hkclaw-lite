@@ -169,8 +169,8 @@ export async function startAdminServer(
   await restoreManagedServiceProcesses(projectRoot).catch((error) => {
     console.error(`Failed to restore managed services: ${toErrorMessage(error)}`);
   });
-  await autoStartRequiredChannelServices(projectRoot).catch((error) => {
-    console.error(`Failed to auto-start channel services: ${toErrorMessage(error)}`);
+  await autoStartRequiredMessagingWorkers(projectRoot).catch((error) => {
+    console.error(`Failed to auto-start messaging workers: ${toErrorMessage(error)}`);
   });
 
   return {
@@ -318,7 +318,7 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
       payload.currentName || null,
       payload.definition || payload,
     );
-    await autoStartRequiredChannelServices(projectRoot);
+    await autoStartRequiredMessagingWorkers(projectRoot);
     writeJson(response, 200, {
       ok: true,
       state: await buildAdminSnapshot(projectRoot),
@@ -523,7 +523,7 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
       payload.currentName || null,
       payload.definition || payload,
     );
-    await autoStartRequiredChannelServices(projectRoot);
+    await autoStartRequiredMessagingWorkers(projectRoot);
     writeJson(response, 200, {
       ok: true,
       state: await buildAdminSnapshot(projectRoot),
@@ -547,43 +547,9 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
       payload.currentName || null,
       payload.definition || payload,
     );
-    await autoStartRequiredChannelServices(projectRoot);
+    await autoStartRequiredMessagingWorkers(projectRoot);
     writeJson(response, 200, {
       ok: true,
-      state: await buildAdminSnapshot(projectRoot),
-    });
-    return;
-  }
-
-  if (
-    request.method === 'POST' &&
-    pathname.startsWith('/api/channels/') &&
-    pathname.endsWith('/receiver/start')
-  ) {
-    const name = decodeEntityPath(
-      pathname.slice(0, -'/receiver/start'.length),
-      '/api/channels/',
-    );
-    writeJson(response, 200, {
-      ok: true,
-      result: await startChannelReceiverServices(projectRoot, name),
-      state: await buildAdminSnapshot(projectRoot),
-    });
-    return;
-  }
-
-  if (
-    request.method === 'POST' &&
-    pathname.startsWith('/api/channels/') &&
-    pathname.endsWith('/receiver/restart')
-  ) {
-    const name = decodeEntityPath(
-      pathname.slice(0, -'/receiver/restart'.length),
-      '/api/channels/',
-    );
-    writeJson(response, 200, {
-      ok: true,
-      result: await restartChannelReceiverServices(projectRoot, name),
       state: await buildAdminSnapshot(projectRoot),
     });
     return;
@@ -672,7 +638,7 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     const plan = applyTopology(projectRoot, payload.spec || payload.definition || payload, {
       actorName: payload.actorName,
     });
-    await autoStartRequiredChannelServices(projectRoot);
+    await autoStartRequiredMessagingWorkers(projectRoot);
     writeJson(response, 200, {
       ok: true,
       result: serializeTopologyPlan(plan),
@@ -945,8 +911,8 @@ async function restoreManagedServiceProcesses(projectRoot) {
   return await Promise.all(tasks);
 }
 
-async function autoStartRequiredChannelServices(projectRoot) {
-  if (!isChannelAutoStartEnabled()) {
+async function autoStartRequiredMessagingWorkers(projectRoot) {
+  if (!isMessagingWorkerAutoStartEnabled()) {
     return [];
   }
 
@@ -954,13 +920,13 @@ async function autoStartRequiredChannelServices(projectRoot) {
   const channels = Object.values(config.channels || {});
   const tasks = [];
 
-  for (const agentName of listRequiredChannelAgentNames(config, channels, 'discord', 'discordToken')) {
+  for (const agentName of listRequiredWorkerAgentNames(config, channels, 'discord', 'discordToken')) {
     if (!isDiscordAgentServiceActive(projectRoot, agentName)) {
       tasks.push(autoStartManagedServiceProcess(projectRoot, agentName, 'discord'));
     }
   }
 
-  for (const agentName of listRequiredChannelAgentNames(config, channels, 'telegram', 'telegramBotToken')) {
+  for (const agentName of listRequiredWorkerAgentNames(config, channels, 'telegram', 'telegramBotToken')) {
     if (!isTelegramAgentServiceActive(projectRoot, agentName)) {
       tasks.push(autoStartManagedServiceProcess(projectRoot, agentName, 'telegram'));
     }
@@ -977,12 +943,12 @@ async function autoStartRequiredChannelServices(projectRoot) {
   return await Promise.all(tasks);
 }
 
-function isChannelAutoStartEnabled() {
+function isMessagingWorkerAutoStartEnabled() {
   const value = String(process.env[CHANNEL_AUTOSTART_ENV] || '').trim().toLowerCase();
   return !['0', 'false', 'no', 'off', 'never'].includes(value);
 }
 
-function listRequiredChannelAgentNames(config, channels, platform, tokenField) {
+function listRequiredWorkerAgentNames(config, channels, platform, tokenField) {
   const names = new Set();
   for (const channel of channels) {
     if ((channel?.platform || 'discord') !== platform) {
@@ -1070,7 +1036,7 @@ async function autoStartManagedServiceProcess(projectRoot, agentName, platform) 
     };
   } catch (error) {
     console.error(
-      `Failed to auto-start ${platform} channel service${agentName ? ` for agent "${agentName}"` : ''}: ${toErrorMessage(error)}`,
+      `Failed to auto-start ${platform} messaging worker${agentName ? ` for agent "${agentName}"` : ''}: ${toErrorMessage(error)}`,
     );
     return {
       action: 'auto-start',
@@ -1124,96 +1090,6 @@ function shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapsh
     return false;
   }
   return Boolean(legacyAgents[agentName]);
-}
-
-async function startChannelReceiverServices(projectRoot, channelName) {
-  const targets = listChannelReceiverTargets(projectRoot, channelName);
-  assert(targets.length > 0, `Channel "${channelName}" has no receiver target to start.`);
-  return {
-    action: 'start-channel-receivers',
-    channelName,
-    receivers: await Promise.all(
-      targets.map((target) => startChannelReceiverTarget(projectRoot, target)),
-    ),
-  };
-}
-
-async function restartChannelReceiverServices(projectRoot, channelName) {
-  const targets = listChannelReceiverTargets(projectRoot, channelName);
-  assert(targets.length > 0, `Channel "${channelName}" has no receiver target to restart.`);
-  return {
-    action: 'restart-channel-receivers',
-    channelName,
-    receivers: await Promise.all(
-      targets.map((target) => restartChannelReceiverTarget(projectRoot, target)),
-    ),
-  };
-}
-
-function listChannelReceiverTargets(projectRoot, channelName) {
-  const config = loadConfig(projectRoot);
-  const channel = config.channels?.[channelName];
-  assert(channel, `Channel "${channelName}" does not exist.`);
-  const platform = channel.platform || 'discord';
-
-  if (platform === 'kakao') {
-    if (channel.connector || listConfiguredKakaoRuntimeTargets(projectRoot).length > 0) {
-      return [{ platform: 'kakao', agentName: null }];
-    }
-    return [];
-  }
-
-  const tokenField = platform === 'telegram' ? 'telegramBotToken' : 'discordToken';
-  const seen = new Set();
-  const targets = [];
-  for (const agentName of getChannelRoleAgentNames(channel)) {
-    if (seen.has(agentName)) {
-      continue;
-    }
-    seen.add(agentName);
-    const agent = config.agents?.[agentName];
-    if (agent && String(agent[tokenField] || '').trim()) {
-      targets.push({ platform, agentName });
-    }
-  }
-  return targets;
-}
-
-async function startChannelReceiverTarget(projectRoot, target) {
-  if (target.platform === 'telegram') {
-    if (isTelegramAgentServiceActive(projectRoot, target.agentName)) {
-      return { action: 'start', platform: target.platform, agentName: target.agentName, skipped: 'already-running' };
-    }
-    return await startTelegramServiceProcess(projectRoot, target.agentName);
-  }
-  if (target.platform === 'kakao') {
-    const platformService = buildKakaoPlatformServiceSnapshot(projectRoot);
-    if (platformService.running || platformService.starting || platformService.pidAlive) {
-      return { action: 'start', platform: target.platform, agentName: null, skipped: 'already-running' };
-    }
-    return await startAllKakaoServiceProcesses(projectRoot);
-  }
-  if (isDiscordAgentServiceActive(projectRoot, target.agentName)) {
-    return { action: 'start', platform: target.platform, agentName: target.agentName, skipped: 'already-running' };
-  }
-  return await startDiscordServiceProcess(projectRoot, target.agentName);
-}
-
-async function restartChannelReceiverTarget(projectRoot, target) {
-  if (target.platform === 'telegram') {
-    return isTelegramAgentServiceActive(projectRoot, target.agentName)
-      ? await restartTelegramServiceProcess(projectRoot, target.agentName)
-      : await startTelegramServiceProcess(projectRoot, target.agentName);
-  }
-  if (target.platform === 'kakao') {
-    const platformService = buildKakaoPlatformServiceSnapshot(projectRoot);
-    return platformService.running || platformService.starting || platformService.pidAlive
-      ? await restartAllKakaoServiceProcesses(projectRoot)
-      : await startAllKakaoServiceProcesses(projectRoot);
-  }
-  return isDiscordAgentServiceActive(projectRoot, target.agentName)
-    ? await restartDiscordServiceProcess(projectRoot, target.agentName)
-    : await startDiscordServiceProcess(projectRoot, target.agentName);
 }
 
 async function restoreManagedServiceProcess(projectRoot, agentName, platform) {

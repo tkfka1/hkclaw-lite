@@ -19,186 +19,28 @@ export function shouldUseDesktopSidebar(viewportWidth) {
 export function getViewMeta(view = 'home') {
   const views = {
     home: {
-      eyebrow: 'Overview',
       title: '운영 개요',
-      description: '상태 요약',
     },
     agents: {
-      eyebrow: 'Agents',
       title: '에이전트 운영',
-      description: '실행 상태',
     },
     channels: {
-      eyebrow: 'Channels',
       title: '채널 관리',
-      description: '연결과 수신',
     },
     topology: {
-      eyebrow: 'Topology',
       title: '구성 자동화',
-      description: '계획과 적용',
     },
     ai: {
-      eyebrow: 'AI Runtime',
       title: 'AI 연결 관리',
-      description: '연결 상태',
     },
     tokens: {
-      eyebrow: 'Usage',
       title: '토큰 사용량',
-      description: '사용 기록',
     },
     all: {
-      eyebrow: 'Settings',
       title: '관리 설정',
-      description: '콘솔 설정',
     },
   };
   return views[view] || views.home;
-}
-
-export function summarizeCounts(entries, getKey, getLabel = (value) => value) {
-  const counts = new Map();
-  for (const entry of entries || []) {
-    const key = getKey(entry);
-    if (!key) {
-      continue;
-    }
-    counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .map(([key, count]) => ({
-      key,
-      label: getLabel(key),
-      count,
-    }))
-    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'ko'));
-}
-
-export function getDashboardStats({
-  data,
-  aiStatuses,
-  getLocalLlmConnectionEntries,
-  isAiReady,
-  localizeAgentTypeValue,
-  localizeChannelMode,
-  localizeMessagingPlatform,
-}) {
-  const agents = Array.isArray(data?.agents) ? data.agents : [];
-  const channels = Array.isArray(data?.channels) ? data.channels : [];
-  const discordService = data?.discord?.service || {};
-  const telegramService = data?.telegram?.service || {};
-  const kakaoService = data?.kakao?.service || {};
-  const discordRuntimeAgents = discordService.agents || discordService.bots || {};
-  const telegramRuntimeAgents = telegramService.agents || telegramService.bots || {};
-  const kakaoRuntimeAgents = kakaoService.agents || kakaoService.accounts || {};
-  const agentTypes = (data?.choices?.agentTypes || []).filter(
-    (entry) => !['command', 'local-llm'].includes(entry.value),
-  );
-  const localLlmConnections = getLocalLlmConnectionEntries();
-
-  const configuredAgentCount = agents.filter((agent) => {
-    const platform = agent.platform || 'discord';
-    if (platform === 'telegram') {
-      return Boolean(agent.telegramBotTokenConfigured);
-    }
-    if (platform === 'kakao') {
-      return Boolean(agent.kakaoRelayConfigured);
-    }
-    return Boolean(agent.discordTokenConfigured);
-  }).length;
-
-  const activeWorkerCount = agents.filter((agent) => {
-    const platform = agent.platform || 'discord';
-    const service =
-      platform === 'telegram'
-        ? agent.telegramService
-        : platform === 'kakao'
-          ? agent.kakaoService
-          : agent.discordService;
-    return Boolean(service?.running || service?.starting || service?.stale);
-  }).length;
-
-  const connectedAgentCount = agents.filter((agent) => {
-    const platform = agent.platform || 'discord';
-    if (platform === 'telegram') {
-      return Boolean(telegramRuntimeAgents[agent.name]?.connected);
-    }
-    if (platform === 'kakao') {
-      return Boolean(kakaoRuntimeAgents[agent.name]?.connected);
-    }
-    return Boolean(discordRuntimeAgents[agent.name]?.connected);
-  }).length;
-
-  const availableAiCount = agentTypes.length + localLlmConnections.length;
-  const readyAiCount =
-    agentTypes.filter((entry) => isAiReady(entry.value, aiStatuses[entry.value] || {})).length +
-    (isAiReady('local-llm', aiStatuses['local-llm'] || {}) ? localLlmConnections.length : 0);
-
-  const tribunalChannelCount = channels.filter(
-    (channel) => (channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single')) === 'tribunal',
-  ).length;
-  const discordChannelCount = channels.filter((channel) => (channel.platform || 'discord') === 'discord').length;
-  const telegramChannelCount = channels.filter((channel) => (channel.platform || 'discord') === 'telegram').length;
-  const kakaoChannelCount = channels.filter((channel) => (channel.platform || 'discord') === 'kakao').length;
-  const claudeSessionCount = channels.reduce((total, channel) => {
-    const sessions = Array.isArray(channel.runtime?.sessions) ? channel.runtime.sessions : [];
-    return total + sessions.filter((session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId).length;
-  }, 0);
-
-  return {
-    agents,
-    channels,
-    discordService,
-    telegramService,
-    kakaoService,
-    configuredAgentCount,
-    activeWorkerCount,
-    connectedAgentCount,
-    availableAiCount,
-    readyAiCount,
-    tribunalChannelCount,
-    discordChannelCount,
-    telegramChannelCount,
-    kakaoChannelCount,
-    claudeSessionCount,
-    agentTypeSummary: summarizeCounts(
-      agents,
-      (agent) => agent.agent,
-      (value) => localizeAgentTypeValue(value),
-    ),
-    channelModeSummary: summarizeCounts(
-      channels,
-      (channel) => channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single'),
-      (value) => localizeChannelMode(value),
-    ),
-    channelPlatformSummary: summarizeCounts(
-      channels,
-      (channel) => channel.platform || 'discord',
-      (value) => localizeMessagingPlatform(value),
-    ),
-  };
-}
-
-export function renderDetailList(rows, escapeHtml, emptyText = '표시할 정보가 없습니다.') {
-  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
-  if (!list.length) {
-    return `<div class="field-hint">${escapeHtml(emptyText)}</div>`;
-  }
-  return `
-    <div class="detail-list">
-      ${list
-        .map(
-          (row) => `
-            <div class="detail-row">
-              <span class="detail-label">${escapeHtml(row.label)}</span>
-              <strong class="detail-value">${escapeHtml(row.value)}</strong>
-            </div>
-          `,
-        )
-        .join('')}
-    </div>
-  `;
 }
 
 export function renderMetricCard(label, value, escapeHtml, tone = '', meta = '') {
@@ -214,7 +56,7 @@ export function renderMetricCard(label, value, escapeHtml, tone = '', meta = '')
   `;
 }
 
-export function renderShortcutCard({ view, title, description, meta, state, escapeHtml, escapeAttr }) {
+export function renderShortcutCard({ view, title, description = '', meta = '', state, escapeHtml, escapeAttr }) {
   return `
     <article
       class="shortcut-card ${state.activeView === view ? 'is-active' : ''}"
@@ -234,7 +76,7 @@ export function renderShortcutCard({ view, title, description, meta, state, esca
   `;
 }
 
-function renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible = false }) {
+function renderSidebar({ state, escapeHtml, escapeAttr, desktopNavVisible = false }) {
   return `
     <aside class="panel sidebar-panel ${state.navOpen || desktopNavVisible ? 'is-open' : ''} ${desktopNavVisible ? 'sidebar-panel--desktop' : ''}" aria-hidden="${desktopNavVisible || state.navOpen ? 'false' : 'true'}" ${desktopNavVisible || state.navOpen ? '' : 'inert'}>
       <div class="sidebar-brand">
@@ -264,44 +106,22 @@ function renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible
                   <span class="side-nav-icon">${renderIcon(resolveViewIcon(tab.view), 'ui-icon')}</span>
                   <span class="side-nav-copy">
                     <span class="side-nav-label">${escapeHtml(tab.label)}</span>
-                    <span class="side-nav-subtitle">${escapeHtml(getViewMeta(tab.view).description)}</span>
                   </span>
                 </span>
-                ${tab.meta ? `<span class="side-nav-meta">${escapeHtml(tab.meta)}</span>` : ''}
               </button>
             `,
           )
           .join('')}
       </nav>
-      <div class="sidebar-summary">
-        <span class="mini-chip">${renderIcon('agents', 'ui-icon')}${escapeHtml(String(stats.agents.length))}</span>
-        <span class="mini-chip">${renderIcon('channels', 'ui-icon')}${escapeHtml(String(stats.channels.length))}</span>
-        <span class="mini-chip">${renderIcon('ai', 'ui-icon')}${escapeHtml(`${stats.readyAiCount}/${stats.availableAiCount}`)}</span>
-      </div>
     </aside>
   `;
 }
 
-function getMobileNavBadge(view, stats) {
-  if (view === 'agents') {
-    return String(stats.agents.length);
-  }
-  if (view === 'channels') {
-    return String(stats.channels.length);
-  }
-  if (view === 'ai') {
-    return `${stats.readyAiCount}/${stats.availableAiCount}`;
-  }
-  return '';
-}
-
-function renderMobileTabBar({ state, stats, escapeHtml, escapeAttr }) {
+function renderMobileTabBar({ state, escapeHtml, escapeAttr }) {
   return `
     <nav class="mobile-tabbar" aria-label="빠른 관리 메뉴">
       ${NAV_TABS.map((tab) => {
         const active = state.activeView === tab.view;
-        const badge = getMobileNavBadge(tab.view, stats);
-        const visibleBadge = active ? badge : '';
         const label = getViewMeta(tab.view).title;
         return `
           <button
@@ -310,12 +130,11 @@ function renderMobileTabBar({ state, stats, escapeHtml, escapeAttr }) {
             data-action="switch-view"
             data-view="${escapeAttr(tab.view)}"
             aria-current="${active ? 'page' : 'false'}"
-            aria-label="${escapeAttr(`${label}${badge ? ` ${badge}` : ''}`)}"
+            aria-label="${escapeAttr(label)}"
             ${state.busy ? 'disabled' : ''}
           >
             <span class="mobile-tabbar-icon">${renderIcon(resolveViewIcon(tab.view), 'ui-icon')}</span>
             <span class="mobile-tabbar-label">${escapeHtml(tab.label)}</span>
-            ${visibleBadge ? `<span class="mobile-tabbar-badge">${escapeHtml(visibleBadge)}</span>` : ''}
           </button>
         `;
       }).join('')}
@@ -331,29 +150,27 @@ export function renderFrame({
   escapeHtml,
   renderNotice,
   getActiveViewMeta,
-  getDashboardStats,
 }) {
-  const stats = state.data ? getDashboardStats() : null;
   const desktopNavVisible = Boolean(state.data && state.desktopNav);
-  const sidebarVisible = Boolean(state.data && stats && (desktopNavVisible || state.navOpen));
+  const sidebarVisible = Boolean(state.data && (desktopNavVisible || state.navOpen));
   return `
     <div class="app-shell ${escapeAttr(className)} ${state.navOpen ? 'is-nav-open' : ''}">
       <div class="app-backdrop" aria-hidden="true"></div>
       ${state.data && !desktopNavVisible && state.navOpen ? `<button type="button" class="nav-scrim is-visible" data-action="close-nav" aria-label="메뉴 닫기"></button>` : ''}
       <div class="workspace-shell ${state.data ? '' : 'workspace-shell--simple'} ${desktopNavVisible ? 'workspace-shell--desktop-nav' : ''}">
-        ${sidebarVisible ? renderSidebar({ state, stats, escapeHtml, escapeAttr, desktopNavVisible }) : ''}
+        ${sidebarVisible ? renderSidebar({ state, escapeHtml, escapeAttr, desktopNavVisible }) : ''}
         <div class="workspace-main">
-          ${state.data ? renderTopBar({ state, escapeHtml, getActiveViewMeta, stats, showNavToggle: !desktopNavVisible }) : ''}
+          ${state.data ? renderTopBar({ state, escapeHtml, getActiveViewMeta, showNavToggle: !desktopNavVisible }) : ''}
           <div class="shell ${state.data ? 'shell--embedded' : ''}">${content}</div>
         </div>
       </div>
-      ${state.data && stats && !desktopNavVisible ? renderMobileTabBar({ state, stats, escapeHtml, escapeAttr }) : ''}
+      ${state.data && !desktopNavVisible ? renderMobileTabBar({ state, escapeHtml, escapeAttr }) : ''}
       ${renderNotice()}
     </div>
   `;
 }
 
-export function renderTopBar({ state, escapeHtml, getActiveViewMeta, stats, showNavToggle = true }) {
+export function renderTopBar({ state, escapeHtml, getActiveViewMeta, showNavToggle = true }) {
   void state;
   const activeView = getActiveViewMeta();
   return `
@@ -367,9 +184,6 @@ export function renderTopBar({ state, escapeHtml, getActiveViewMeta, stats, show
         <div class="workspace-header-copy">
           <h1>${escapeHtml(activeView.title)}</h1>
         </div>
-      </div>
-      <div class="workspace-status">
-        <span class="status-pill">${renderIcon('link', 'ui-icon')} ${escapeHtml(`연결 ${stats.connectedAgentCount}/${stats.agents.length}`)}</span>
       </div>
     </section>
   `;
