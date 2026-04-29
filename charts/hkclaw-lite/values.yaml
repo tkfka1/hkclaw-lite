@@ -112,7 +112,7 @@ adminExternalSecret:
   data:
     - secretKey: admin_password
       remoteRef:
-        key: hkyo/infra/helm/devops/hkclaw-lite
+        key: path/to/hkclaw-lite
         property: admin-password
         conversionStrategy: Default
         decodingStrategy: None

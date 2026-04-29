@@ -496,14 +496,13 @@ curl -X DELETE \
   - `main` push 때 `latest`/`sha-*` 이미지 publish
   - `v*` 태그 push 때 `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X` 태그까지 함께 publish
   - Docker Buildx/QEMU로 `linux/amd64`와 `linux/arm64` 멀티아키텍처 이미지를 하나의 manifest로 publish
-  - `main` 이미지 publish 후 `infra-values`의 `hkclaw-lite/values-idc.yaml` image tag/digest를 갱신해서 ArgoCD가 GitOps desired state로 배포하게 한다
+  - 컨테이너 이미지만 publish한다. 운영 배포 반영은 공개 저장소 밖의 별도 절차에서 처리한다
 
 ### 필요한 GitHub Secrets
 
 - `NPM_TOKEN`: npm 배포용 토큰. 없으면 GitHub Release와 컨테이너 이미지는 계속 만들지만 npm publish는 건너뛴다.
 - `HOMEBREW_TAP_TOKEN`: `homebrew-tap` 저장소에 push 가능한 GitHub token. 없으면 formula 파일만 Release 자산으로 만들고 tap 갱신은 건너뛴다.
 - `HOMEBREW_TAP_REPOSITORY` Repository variable: 선택값. 기본값은 `${owner}/homebrew-tap`이고, 다른 tap을 쓰면 `owner/repo`로 지정한다.
-- `GITOPS_DEPLOY_KEY`: `git@gitlab.com:hkyo/infra/helm/infra-values.git`에 push 가능한 SSH private key. 없으면 컨테이너 이미지만 publish하고 GitOps values 갱신은 warning으로 건너뛴다.
 
 ### 운영 방법
 
