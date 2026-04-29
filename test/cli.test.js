@@ -44,6 +44,7 @@ function runCli(cwd, args, options = {}) {
   return spawnSync('node', [cliPath, ...args], {
     cwd,
     encoding: 'utf8',
+    env: { ...process.env, ...(options.env || {}) },
     input: options.input,
   });
 }
@@ -197,6 +198,191 @@ test('channels can reference a reusable messaging connector', () => {
   assert.equal(runCli(cwd, ['remove', 'channel', 'kakao', '--yes']).status, 0);
   assert.equal(runCli(cwd, ['remove', 'connector', 'kakaoOps', '--yes']).status, 0);
   assert.equal(loadConfig(cwd).connectors.kakaoOps, undefined);
+});
+
+test('topology plan and apply create reusable agent connector channel mappings', () => {
+  const cwd = createProject();
+  initProject(cwd);
+  const topologyPath = path.join(cwd, 'topology.json');
+  fs.writeFileSync(
+    topologyPath,
+    JSON.stringify(
+      {
+        version: 1,
+        agents: [
+          {
+            name: 'auto-owner',
+            agent: 'command',
+            platform: 'kakao',
+            command: `node ${fixturePath}`,
+          },
+        ],
+        connectors: [
+          {
+            name: 'auto-kakao',
+            type: 'kakao',
+            description: 'test kakao connector',
+            kakaoRelayUrl: 'https://relay.example/',
+          },
+        ],
+        channels: [
+          {
+            name: 'auto-kakao-main',
+            platform: 'kakao',
+            connector: 'auto-kakao',
+            kakaoChannelId: '*',
+            workspace: '.',
+            agent: 'auto-owner',
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const plan = runCli(cwd, ['topology', 'plan', '--file', topologyPath]);
+  assert.equal(plan.status, 0, plan.stderr);
+  assert.match(plan.stdout, /Topology plan: changes=3 actor=operator/u);
+  assert.match(plan.stdout, /create agent "auto-owner"/u);
+  assert.match(plan.stdout, /create connector "auto-kakao"/u);
+  assert.match(plan.stdout, /create channel "auto-kakao-main"/u);
+  assert.deepEqual(loadConfig(cwd).agents, {});
+
+  const apply = runCli(cwd, ['topology', 'apply', '--file', topologyPath, '--yes']);
+  assert.equal(apply.status, 0, apply.stderr);
+  assert.match(apply.stdout, /Topology apply: changes=3 actor=operator/u);
+
+  const config = loadConfig(cwd);
+  assert.equal(config.agents['auto-owner'].agent, 'command');
+  assert.equal(config.connectors['auto-kakao'].type, 'kakao');
+  assert.equal(config.channels['auto-kakao-main'].connector, 'auto-kakao');
+
+  const secondApply = runCli(cwd, ['topology', 'apply', '--file', topologyPath, '--yes']);
+  assert.equal(secondApply.status, 0, secondApply.stderr);
+  assert.match(secondApply.stdout, /Topology apply: changes=0 actor=operator/u);
+  assert.match(secondApply.stdout, /noop agent "auto-owner"/u);
+
+  const exported = runCli(cwd, ['topology', 'export']);
+  assert.equal(exported.status, 0, exported.stderr);
+  const exportedSpec = JSON.parse(exported.stdout);
+  assert.equal(exportedSpec.version, 1);
+  assert.equal(exportedSpec.agents[0].name, 'auto-owner');
+  assert.equal(exportedSpec.connectors[0].name, 'auto-kakao');
+  assert.equal(exportedSpec.channels[0].name, 'auto-kakao-main');
+});
+
+test('topology apply enforces agent management policy', () => {
+  const cwd = createProject();
+  initProject(cwd);
+  const topologyPath = path.join(cwd, 'topology.json');
+  fs.writeFileSync(
+    topologyPath,
+    JSON.stringify(
+      {
+        version: 1,
+        agents: [
+          {
+            name: 'auto-target',
+            agent: 'command',
+            platform: 'discord',
+            command: `node ${fixturePath}`,
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const config = loadConfig(cwd);
+  config.agents.manager = buildAgentDefinition(cwd, 'manager', {
+    name: 'manager',
+    agent: 'command',
+    platform: 'discord',
+    command: `node ${fixturePath}`,
+  });
+  saveConfig(cwd, config);
+
+  const denied = runCli(cwd, ['topology', 'apply', '--file', topologyPath, '--yes'], {
+    env: { HKCLAW_LITE_AGENT_NAME: 'manager' },
+  });
+  assert.notEqual(denied.status, 0);
+  assert.match(denied.stderr, /not allowed to apply topology changes/u);
+
+  const allowedConfig = loadConfig(cwd);
+  allowedConfig.agents.manager = buildAgentDefinition(cwd, 'manager', {
+    ...allowedConfig.agents.manager,
+    name: 'manager',
+    managementPolicy: {
+      canPlan: true,
+      canApply: true,
+      allowedActions: ['agent:upsert'],
+      allowedNamePrefixes: ['auto-'],
+      allowedPlatforms: ['discord'],
+      maxChangesPerApply: 2,
+    },
+  });
+  saveConfig(cwd, allowedConfig);
+
+  const allowed = runCli(cwd, ['topology', 'apply', '--file', topologyPath, '--yes'], {
+    env: { HKCLAW_LITE_AGENT_NAME: 'manager' },
+  });
+  assert.equal(allowed.status, 0, allowed.stderr);
+  assert.match(allowed.stdout, /actor=agent:manager/u);
+  assert.equal(loadConfig(cwd).agents['auto-target'].agent, 'command');
+});
+
+test('topology rejects inline secrets and redacts secret env refs', () => {
+  const cwd = createProject();
+  initProject(cwd);
+  const inlinePath = path.join(cwd, 'inline-secret.json');
+  fs.writeFileSync(
+    inlinePath,
+    JSON.stringify({
+      version: 1,
+      connectors: [
+        {
+          name: 'auto-discord',
+          type: 'discord',
+          discordToken: 'super-secret-token',
+        },
+      ],
+    }),
+  );
+
+  const inline = runCli(cwd, ['topology', 'plan', '--file', inlinePath]);
+  assert.notEqual(inline.status, 0);
+  assert.match(inline.stderr, /Inline secret field connectors\[0\]\.discordToken is not allowed/u);
+
+  const refPath = path.join(cwd, 'secret-ref.json');
+  fs.writeFileSync(
+    refPath,
+    JSON.stringify({
+      version: 1,
+      connectors: [
+        {
+          name: 'auto-discord',
+          type: 'discord',
+          secretRefs: {
+            discordTokenEnv: 'HKCLAW_TEST_DISCORD_TOKEN',
+          },
+        },
+      ],
+    }),
+  );
+
+  const apply = runCli(cwd, ['topology', 'apply', '--file', refPath, '--yes'], {
+    env: { HKCLAW_TEST_DISCORD_TOKEN: 'resolved-secret-token' },
+  });
+  assert.equal(apply.status, 0, apply.stderr);
+  assert.doesNotMatch(apply.stdout, /resolved-secret-token/u);
+  assert.equal(loadConfig(cwd).connectors['auto-discord'].discordToken, 'resolved-secret-token');
+
+  const exported = runCli(cwd, ['topology', 'export']);
+  assert.equal(exported.status, 0, exported.stderr);
+  assert.doesNotMatch(exported.stdout, /resolved-secret-token/u);
+  assert.match(exported.stdout, /"discordToken": "\*\*\*"/u);
 });
 
 test('add agent auto-initializes project metadata when missing', () => {
@@ -817,6 +1003,43 @@ test('prompt envelope injects skills and baseline context separately', () => {
   assert.match(prompt, /Monorepo layout:/u);
   assert.match(prompt, /packages\/api/u);
   assert.match(prompt, /workdir:/u);
+});
+
+test('prompt envelope injects topology guidance only for policy-enabled agents', () => {
+  const cwd = createProject();
+  const baseChannel = {
+    name: 'discord-main',
+    discordChannelId: '123',
+    workspace: '.',
+  };
+
+  const unmanagedPrompt = buildPromptEnvelope({
+    projectRoot: cwd,
+    agent: {
+      name: 'worker',
+      agent: 'command',
+    },
+    channel: baseChannel,
+    userPrompt: 'hello',
+  });
+  assert.doesNotMatch(unmanagedPrompt, /Topology management:/u);
+
+  const managedPrompt = buildPromptEnvelope({
+    projectRoot: cwd,
+    agent: {
+      name: 'manager',
+      agent: 'command',
+      managementPolicy: {
+        canPlan: true,
+        canApply: false,
+      },
+    },
+    channel: baseChannel,
+    userPrompt: 'hello',
+  });
+  assert.match(managedPrompt, /Topology management:/u);
+  assert.match(managedPrompt, /hkclaw-lite topology plan --file/u);
+  assert.match(managedPrompt, /not allowed to apply topology changes/u);
 });
 
 test('backup export and import restore config, project assets, and watcher state', () => {

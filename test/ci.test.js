@@ -180,6 +180,20 @@ test('container publish workflow builds amd64 and arm64 images', () => {
   assert.match(readme, /ArgoCD가 GitOps desired state로 배포/u);
 });
 
+test('ci workflow smoke-builds amd64 and arm64 container images', () => {
+  const workflow = fs.readFileSync(path.resolve('.github/workflows/ci.yml'), 'utf8');
+
+  assert.match(workflow, /container-build:/u);
+  assert.match(workflow, /docker\/setup-qemu-action@/u);
+  assert.match(workflow, /docker\/setup-buildx-action@/u);
+  assert.match(workflow, /arch:\s*amd64[\s\S]*platform:\s*linux\/amd64/u);
+  assert.match(workflow, /arch:\s*arm64[\s\S]*platform:\s*linux\/arm64/u);
+  assert.match(workflow, /docker\/build-push-action@/u);
+  assert.match(workflow, /platforms:\s*\$\{\{\s*matrix\.platform\s*\}\}/u);
+  assert.match(workflow, /push:\s*false/u);
+  assert.match(workflow, /outputs:\s*type=cacheonly/u);
+});
+
 test('ci watch gitlab polls until pipeline completes', async () => {
   let pipelineChecks = 0;
 

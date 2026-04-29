@@ -80,6 +80,13 @@ import {
 import { handleKakaoRelayRequest, isKakaoRelayRequest } from './kakao-relay.js';
 import { listAgentModels } from './model-catalog.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
+import {
+  applyTopology,
+  exportTopology,
+  formatTopologyPlan,
+  planTopology,
+  serializeTopologyPlan,
+} from './topology.js';
 import { assert, parseInteger, toErrorMessage } from './utils.js';
 
 const ADMIN_UI_ROOT = fileURLToPath(new URL('./admin-ui/', import.meta.url));
@@ -586,6 +593,40 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     writeJson(response, 200, {
       ok: true,
       state: await replaceLocalLlmConnections(projectRoot, payload.connections || []),
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/topology/export') {
+    writeJson(response, 200, {
+      ok: true,
+      spec: exportTopology(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/topology/plan') {
+    const payload = await readJsonBody(request);
+    const plan = planTopology(projectRoot, payload.spec || payload.definition || payload, {
+      actorName: payload.actorName,
+    });
+    writeJson(response, 200, {
+      ok: plan.blockers.length === 0,
+      result: serializeTopologyPlan(plan),
+      summary: formatTopologyPlan(plan),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/topology/apply') {
+    const payload = await readJsonBody(request);
+    const plan = applyTopology(projectRoot, payload.spec || payload.definition || payload, {
+      actorName: payload.actorName,
+    });
+    writeJson(response, 200, {
+      ok: true,
+      result: serializeTopologyPlan(plan),
+      summary: formatTopologyPlan(plan, { applied: true }),
     });
     return;
   }

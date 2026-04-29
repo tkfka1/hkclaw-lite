@@ -6,6 +6,7 @@ const NAV_TABS = [
   { view: 'home', label: '개요' },
   { view: 'agents', label: '에이전트' },
   { view: 'channels', label: '채널' },
+  { view: 'topology', label: '구성' },
   { view: 'ai', label: 'AI' },
   { view: 'tokens', label: '토큰' },
   { view: 'all', label: '설정' },
@@ -31,6 +32,11 @@ export function getViewMeta(view = 'home') {
       eyebrow: 'Channels',
       title: '채널 관리',
       description: '연결과 수신',
+    },
+    topology: {
+      eyebrow: 'Topology',
+      title: '구성 자동화',
+      description: '계획과 적용',
     },
     ai: {
       eyebrow: 'AI Runtime',
@@ -375,6 +381,8 @@ function resolveViewIcon(view) {
       return 'agents';
     case 'channels':
       return 'channels';
+    case 'topology':
+      return 'link';
     case 'ai':
       return 'ai';
     case 'tokens':

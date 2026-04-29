@@ -66,6 +66,13 @@ import {
   saveConfig,
 } from './store.js';
 import {
+  applyTopology,
+  exportTopology,
+  formatTopologyPlan,
+  loadTopologySpec,
+  planTopology,
+} from './topology.js';
+import {
   assert,
   ensureDir,
   getBooleanFlag,
@@ -144,6 +151,9 @@ export async function main(argv) {
         return;
       case 'status':
         await handleStatusCommand(projectRoot, tail);
+        return;
+      case 'topology':
+        await handleTopologyCommand(projectRoot, tail);
         return;
       case 'env':
         throw new Error(
@@ -808,6 +818,51 @@ async function handleDashboardCommand(projectRoot, argv) {
     console.log('Press Ctrl+C to exit.');
     await sleep(dashboard.refreshMs);
   }
+}
+
+async function handleTopologyCommand(projectRoot, argv) {
+  const [subcommand, ...tail] = argv;
+  const { flags, positionals } = parseArgs(tail);
+
+  if (subcommand === 'export') {
+    console.log(JSON.stringify(exportTopology(projectRoot), null, 2));
+    return;
+  }
+
+  if (!['plan', 'apply'].includes(subcommand)) {
+    throw new Error(
+      'Usage: hkclaw-lite topology <plan|apply|export> [--file <file>] [--actor <agent>] [--yes]',
+    );
+  }
+
+  const filePath = getFlagValue(flags, 'file') || positionals[0];
+  const actorName = getFlagValue(flags, 'actor');
+  const spec = loadTopologySpec(filePath);
+
+  if (subcommand === 'plan') {
+    const plan = planTopology(projectRoot, spec, { actorName });
+    console.log(formatTopologyPlan(plan));
+    if (plan.blockers.length > 0) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (!getBooleanFlag(flags, 'yes')) {
+    if (!process.stdin.isTTY) {
+      throw new Error('Topology apply requires --yes in non-interactive mode.');
+    }
+    const confirmed = await withPrompter((prompter) =>
+      prompter.askConfirm('Apply topology changes?', { defaultValue: false }),
+    );
+    if (!confirmed) {
+      console.log('Cancelled.');
+      return;
+    }
+  }
+
+  const result = applyTopology(projectRoot, spec, { actorName });
+  console.log(formatTopologyPlan(result, { applied: true }));
 }
 
 async function handleStatusCommand(projectRoot, argv) {
@@ -2288,6 +2343,9 @@ Usage:
   hkclaw-lite show dashboard <name>
   hkclaw-lite run <agent> [--workdir DIR] [--message TEXT]
   hkclaw-lite run --channel <name> [--message TEXT]
+  hkclaw-lite topology plan --file <file> [--actor <agent>]
+  hkclaw-lite topology apply --file <file> [--actor <agent>] [--yes]
+  hkclaw-lite topology export
   hkclaw-lite dashboard [name] [--once]
   hkclaw-lite ci check github --repo owner/repo --run-id 123
   hkclaw-lite ci check gitlab --project group/project --pipeline-id 456
@@ -2317,6 +2375,8 @@ Examples:
   hkclaw-lite add dashboard
   hkclaw-lite run --channel discord-main --message "summarize the repo"
   hkclaw-lite run dev-codex --workdir ./workspaces/dev --message "review the latest diff"
+  hkclaw-lite topology plan --file ./topology.json
+  hkclaw-lite topology apply --file ./topology.json --yes
   hkclaw-lite show agent dev-codex
   hkclaw-lite status channel discord-main
   hkclaw-lite ci watch gitlab --project group/project --pipeline-id 456

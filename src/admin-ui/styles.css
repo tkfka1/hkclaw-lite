@@ -1586,6 +1586,52 @@ strong,
   white-space: pre-wrap;
 }
 
+.topology-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.topology-editor,
+.topology-result {
+  min-width: 0;
+}
+
+.topology-textarea {
+  min-height: 520px;
+  font-family: var(--font-mono);
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.topology-result-card {
+  align-items: stretch;
+}
+
+.topology-blockers {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.topology-blockers p {
+  margin: 0;
+  color: #8d2638;
+}
+
+.topology-change-list {
+  display: grid;
+  gap: 8px;
+}
+
+.topology-change-row {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.2fr);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2322,7 +2368,7 @@ button:focus-visible {
     bottom: max(10px, env(safe-area-inset-bottom));
     z-index: 35;
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 4px;
     padding: 7px;
     border: 1px solid rgba(196, 208, 220, 0.88);
@@ -2347,6 +2393,7 @@ button:focus-visible {
   .form-grid,
   .service-grid,
   .settings-grid,
+  .topology-grid,
   .shortcut-grid {
     grid-template-columns: 1fr;
   }

@@ -86,6 +86,28 @@ test('channels page exposes reusable connector management', () => {
   assert.match(appSource, /findKakaoChannelRouteConflict/u);
 });
 
+test('web admin exposes topology automation screen', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
+  const shellSource = readRepoFile('src/admin-ui/ui-shell.js');
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(shellSource, /view: 'topology'/u);
+  assert.match(shellSource, /구성 자동화/u);
+  assert.match(appSource, /VIEW_NAMES[^;]*topology/u);
+  assert.match(appSource, /renderTopologyView/u);
+  assert.match(appSource, /topology-plan/u);
+  assert.match(appSource, /topology-apply/u);
+  assert.match(appSource, /topology-export/u);
+  assert.match(appSource, /\/api\/topology\/plan/u);
+  assert.match(appSource, /\/api\/topology\/apply/u);
+  assert.match(appSource, /\/api\/topology\/export/u);
+  assert.match(viewsSource, /data-form="topology"/u);
+  assert.match(viewsSource, /secretRefs\.\*Env/u);
+  assert.match(styles, /\.topology-grid/u);
+  assert.match(styles, /\.topology-textarea/u);
+});
+
 test('agent cards distinguish connector-managed channels from legacy agent tokens', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const adminStateSource = readRepoFile('src/admin-state.js');
@@ -126,7 +148,7 @@ test('mobile shell exposes a thumb-friendly bottom navigation dock', () => {
   assert.match(shellSource, /getMobileNavBadge/u);
   assert.match(styles, /\.mobile-tabbar\s*\{[\s\S]*?display:\s*none;/u);
   assert.match(styles, /@media \(max-width: 1080px\)[\s\S]*?\.mobile-tabbar\s*\{[\s\S]*?position:\s*fixed;/u);
-  assert.match(styles, /grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\);/u);
+  assert.match(styles, /grid-template-columns:\s*repeat\(7, minmax\(0, 1fr\)\);/u);
   assert.match(styles, /env\(safe-area-inset-bottom\)/u);
 });
 

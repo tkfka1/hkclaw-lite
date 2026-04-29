@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.8 - 2026-04-29
+
+### Added
+- Added topology automation for dry-run planning, policy-guarded apply, export, admin APIs, web admin UI, and CLI commands.
+- Added CI smoke builds for both `linux/amd64` and `linux/arm64` Docker images with Buildx/QEMU.
+
+### Changed
+- Added agent management policy guidance so automation agents can plan/apply allowed topology changes without inline secrets.
+
 ## 1.0.7 - 2026-04-27
 
 ### Changed

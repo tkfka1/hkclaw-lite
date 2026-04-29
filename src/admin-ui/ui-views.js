@@ -114,6 +114,73 @@ export function renderChannelsView(ctx) {
   `;
 }
 
+export function renderTopologyView(ctx) {
+  const { state, escapeHtml, escapeAttr, renderTopologyResult } = ctx;
+  const draft = state.topologyDraft || '';
+  const placeholder = `{
+  "version": 1,
+  "agents": [
+    {
+      "name": "auto-owner",
+      "agent": "codex",
+      "platform": "kakao",
+      "sandbox": "workspace-write"
+    }
+  ],
+  "connectors": [
+    {
+      "name": "auto-kakao",
+      "type": "kakao",
+      "kakaoRelayUrl": "https://hkclaw.example/",
+      "secretRefs": {
+        "kakaoRelayTokenEnv": "HKCLAW_KAKAO_RELAY_TOKEN"
+      }
+    }
+  ],
+  "channels": [
+    {
+      "name": "auto-kakao-main",
+      "platform": "kakao",
+      "connector": "auto-kakao",
+      "kakaoChannelId": "*",
+      "workspace": "/workspace",
+      "agent": "auto-owner"
+    }
+  ]
+}`;
+
+  return `
+    <section class="panel section-panel topology-panel">
+      <div class="section-head">
+        <div class="section-title-group">
+          <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
+          <h2>Topology 자동화</h2>
+        </div>
+        <div class="inline-actions">
+          <button type="button" class="btn-secondary" data-action="topology-export" ${state.busy ? 'disabled' : ''}>${renderIcon('refresh', 'ui-icon')}현재 구성 불러오기</button>
+          <button type="button" class="btn-secondary" data-action="topology-plan" ${state.busy ? 'disabled' : ''}>${renderIcon('notice', 'ui-icon')}Plan</button>
+          <button type="button" class="btn-primary" data-action="topology-apply" ${state.busy ? 'disabled' : ''}>${renderIcon('play', 'ui-icon')}Apply</button>
+        </div>
+      </div>
+      <p class="field-hint">에이전트·채널 연결·채널을 desired-state JSON으로 검토하고 적용합니다. 토큰은 직접 넣지 말고 <code>secretRefs.*Env</code>를 사용하세요.</p>
+      <div class="topology-grid" data-form="topology">
+        <label class="field topology-editor">
+          <span>Topology JSON</span>
+          <textarea
+            name="topologySpec"
+            class="topology-textarea"
+            spellcheck="false"
+            placeholder="${escapeAttr(placeholder)}"
+          >${escapeHtml(draft)}</textarea>
+        </label>
+        <div class="topology-result">
+          ${renderTopologyResult(state.topologyResult)}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderChannelWorkerPanel({ state, stats, escapeHtml }) {
   const services = [
     {

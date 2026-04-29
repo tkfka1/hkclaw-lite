@@ -1,6 +1,6 @@
 {
   "name": "hkclaw-lite",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Discord/Telegram/KakaoTalk AI agent runtime with a local web admin and full host-account privileges",
   "license": "MIT",
   "author": "hankyo",

@@ -11,6 +11,7 @@ import {
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
+  renderTopologyView as buildTopologyView,
 } from './ui-views.js?v=20260427-02';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
@@ -26,7 +27,7 @@ const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
 const FALLBACK_KAKAO_RELAY_URL = 'https://k.tess.dev/';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
-const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'ai', 'tokens', 'all']);
+const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'topology', 'ai', 'tokens', 'all']);
 const ADMIN_PASSWORD_FIELD_NAMES = ['currentPassword', 'newPassword', 'confirmPassword'];
 let noticeTimer = null;
 let aiManagerStatusPollTimer = null;
@@ -47,6 +48,8 @@ const state = {
   navOpen: false,
   agentSearch: '',
   agentFilter: 'all',
+  topologyDraft: '',
+  topologyResult: null,
   agentModalOpen: false,
   connectorModalOpen: false,
   channelModalOpen: false,
@@ -578,6 +581,21 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'topology-plan') {
+    void planTopologyFromUi();
+    return;
+  }
+
+  if (action === 'topology-apply') {
+    void applyTopologyFromUi();
+    return;
+  }
+
+  if (action === 'topology-export') {
+    void exportTopologyToUi();
+    return;
+  }
+
   if (action === 'logout') {
     void logout();
   }
@@ -775,6 +793,11 @@ function handleInput(event) {
         setFormErrors('adminPassword', collectAdminPasswordErrors(new FormData(form)));
         render();
       }
+      return;
+    }
+    if (target.closest('[data-form="topology"]') && target.name === 'topologySpec') {
+      state.topologyDraft = target.value;
+      state.topologyResult = null;
       return;
     }
     return;
@@ -1564,6 +1587,84 @@ async function resetChannelRuntimeSessions(name, role = '') {
   }
 }
 
+async function planTopologyFromUi() {
+  try {
+    const spec = readTopologySpecFromUi();
+    const response = await mutateJson('/api/topology/plan', {
+      method: 'POST',
+      body: { spec },
+    });
+    state.topologyResult = {
+      ...response.result,
+      summary: response.summary,
+      ok: response.ok,
+      mode: 'plan',
+    };
+    setNotice(
+      response.ok ? 'info' : 'error',
+      response.ok ? 'Topology plan을 생성했습니다.' : 'Topology plan에 blocker가 있습니다.',
+    );
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function applyTopologyFromUi() {
+  try {
+    const spec = readTopologySpecFromUi();
+    const confirmed = window.confirm('Topology 변경을 적용할까요? 먼저 Plan 결과를 확인했는지 확인하세요.');
+    if (!confirmed) {
+      return;
+    }
+    const response = await mutateJson('/api/topology/apply', {
+      method: 'POST',
+      body: { spec },
+    });
+    state.topologyResult = {
+      ...response.result,
+      summary: response.summary,
+      ok: response.ok,
+      mode: 'apply',
+    };
+    state.data = await requestJson('/api/state');
+    setNotice('info', 'Topology 변경을 적용했습니다.');
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function exportTopologyToUi() {
+  try {
+    const response = await requestJson('/api/topology/export');
+    state.topologyDraft = JSON.stringify(response.spec || response, null, 2);
+    state.topologyResult = null;
+    setNotice('info', '현재 구성을 Topology JSON으로 불러왔습니다.');
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+function readTopologySpecFromUi() {
+  const textarea = app.querySelector('[data-form="topology"] textarea[name="topologySpec"]');
+  const rawText = textarea instanceof HTMLTextAreaElement ? textarea.value : state.topologyDraft;
+  state.topologyDraft = rawText;
+  const text = optionalDraftText(rawText);
+  if (!text) {
+    throw new Error('Topology JSON을 입력하세요.');
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Topology JSON 문법 오류: ${error.message}`);
+  }
+}
+
 async function mutateJson(url, options) {
   state.busy = true;
   render();
@@ -1858,6 +1959,9 @@ function renderActiveView() {
   if (state.activeView === 'channels') {
     return renderChannelsView();
   }
+  if (state.activeView === 'topology') {
+    return renderTopologyView();
+  }
   if (state.activeView === 'ai') {
     return renderAiView();
   }
@@ -1913,6 +2017,15 @@ function renderChannelsView() {
     escapeHtml,
     renderConnectorList,
     renderChannelList,
+  });
+}
+
+function renderTopologyView() {
+  return buildTopologyView({
+    state,
+    escapeHtml,
+    escapeAttr,
+    renderTopologyResult,
   });
 }
 
@@ -3679,6 +3792,62 @@ function renderLocalLlmConnectionEditor() {
           <button type="submit" class="btn-primary" ${state.busy || hasErrors ? 'disabled' : ''}${hasErrors && errorText ? ` title="${escapeAttr(errorText)}"` : ''}>${isEditing ? '저장' : '추가'}</button>
         </div>
       </form>
+    </div>
+  `;
+}
+
+function renderTopologyResult(result) {
+  if (!result) {
+    return `
+      <div class="empty-inline empty-inline--action">
+        <strong>아직 Plan 결과가 없습니다.</strong>
+        <span>JSON을 입력하거나 현재 구성을 불러온 뒤 Plan을 실행하세요.</span>
+      </div>
+    `;
+  }
+
+  const changes = Array.isArray(result.changes) ? result.changes : [];
+  const blockers = Array.isArray(result.blockers) ? result.blockers : [];
+  const statusClass = blockers.length > 0 ? 'mini-chip--danger' : 'mini-chip--ok';
+  const modeLabel = result.mode === 'apply' ? 'Apply' : 'Plan';
+  return `
+    <article class="card card--stack topology-result-card">
+      <div class="card-main">
+        <div class="card-title-row">
+          ${renderIcon(blockers.length > 0 ? 'notice' : 'shield', 'ui-icon')}
+          <strong>${escapeHtml(`${modeLabel} 결과`)}</strong>
+        </div>
+        <div class="card-tags">
+          <span class="mini-chip ${statusClass}">${escapeHtml(blockers.length > 0 ? 'Blockers 있음' : '적용 가능')}</span>
+          <span class="mini-chip">${escapeHtml(`변경 ${result.changedCount ?? changes.length}`)}</span>
+        </div>
+      </div>
+      ${
+        blockers.length > 0
+          ? `<div class="topology-blockers">${blockers.map((entry) => `<p>${escapeHtml(entry)}</p>`).join('')}</div>`
+          : ''
+      }
+      <div class="topology-change-list">
+        ${
+          changes.length > 0
+            ? changes.map((change) => renderTopologyChange(change)).join('')
+            : '<div class="empty-inline">요청된 topology entry가 없습니다.</div>'
+        }
+      </div>
+      ${result.summary ? `<pre class="result-output">${escapeHtml(result.summary)}</pre>` : ''}
+    </article>
+  `;
+}
+
+function renderTopologyChange(change) {
+  const fields = Array.isArray(change.fields) && change.fields.length > 0
+    ? ` · ${change.fields.join(', ')}`
+    : '';
+  return `
+    <div class="agent-result-row topology-change-row">
+      <span class="mini-chip">${escapeHtml(change.action || 'change')}</span>
+      <strong>${escapeHtml(`${change.kind || 'entry'}:${change.name || ''}`)}</strong>
+      <span>${escapeHtml(fields)}</span>
     </div>
   `;
 }

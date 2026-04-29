@@ -1085,6 +1085,85 @@ test('admin server saves config changes and can run a mapped channel', async () 
   assert.equal(config.dashboards.ops, undefined);
 });
 
+test('admin server plans and applies topology changes with redacted results', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+  const spec = {
+    version: 1,
+    agents: [
+      {
+        name: 'auto-owner',
+        agent: 'command',
+        platform: 'discord',
+        command: `node ${fixturePath}`,
+      },
+    ],
+    connectors: [
+      {
+        name: 'auto-discord',
+        type: 'discord',
+        secretRefs: {
+          discordTokenEnv: 'HKCLAW_TEST_ADMIN_DISCORD_TOKEN',
+        },
+      },
+    ],
+    channels: [
+      {
+        name: 'auto-discord-main',
+        platform: 'discord',
+        connector: 'auto-discord',
+        discordChannelId: '123456789012345678',
+        workspace: 'workspace',
+        agent: 'auto-owner',
+      },
+    ],
+  };
+
+  const priorToken = process.env.HKCLAW_TEST_ADMIN_DISCORD_TOKEN;
+  process.env.HKCLAW_TEST_ADMIN_DISCORD_TOKEN = 'admin-secret-token';
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const plan = await requestJson(`${url}/api/topology/plan`, {
+        method: 'POST',
+        body: { spec },
+      });
+      assert.equal(plan.response.status, 200, JSON.stringify(plan.payload));
+      assert.equal(plan.payload.ok, true);
+      assert.equal(plan.payload.result.changedCount, 3);
+      assert.match(plan.payload.summary, /Topology plan: changes=3/u);
+      assert.equal(plan.payload.result.changes[1].after.discordToken, '***');
+      assert.doesNotMatch(JSON.stringify(plan.payload), /admin-secret-token/u);
+      assert.equal(loadConfig(projectRoot).agents['auto-owner'], undefined);
+
+      const apply = await requestJson(`${url}/api/topology/apply`, {
+        method: 'POST',
+        body: { spec },
+      });
+      assert.equal(apply.response.status, 200, JSON.stringify(apply.payload));
+      assert.equal(apply.payload.ok, true);
+      assert.equal(apply.payload.result.changedCount, 3);
+      assert.doesNotMatch(JSON.stringify(apply.payload), /admin-secret-token/u);
+
+      const config = loadConfig(projectRoot);
+      assert.equal(config.agents['auto-owner'].agent, 'command');
+      assert.equal(config.connectors['auto-discord'].discordToken, 'admin-secret-token');
+      assert.equal(config.channels['auto-discord-main'].connector, 'auto-discord');
+
+      const exported = await requestJson(`${url}/api/topology/export`);
+      assert.equal(exported.response.status, 200, JSON.stringify(exported.payload));
+      assert.equal(exported.payload.spec.connectors[0].discordToken, '***');
+      assert.doesNotMatch(JSON.stringify(exported.payload), /admin-secret-token/u);
+    });
+  } finally {
+    if (priorToken === undefined) {
+      delete process.env.HKCLAW_TEST_ADMIN_DISCORD_TOKEN;
+    } else {
+      process.env.HKCLAW_TEST_ADMIN_DISCORD_TOKEN = priorToken;
+    }
+  }
+});
+
 test('admin server removes deleted agent runtime artifacts from service snapshots', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
