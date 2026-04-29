@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import dns from 'node:dns';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import {
   flushPendingTelegramOutbox,
   flushTelegramOutboxForRun,
   formatTelegramRoleMessage,
+  lookupTelegramApiHost,
   withTelegramTypingIndicator,
 } from '../src/telegram-service.js';
 import {
@@ -30,6 +32,30 @@ function createProject() {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+test('telegram API lookup forces IPv4 for cluster networks without IPv6 egress', async (t) => {
+  const lookupCalls = [];
+  t.mock.method(dns, 'lookup', (hostname, options, callback) => {
+    lookupCalls.push({ hostname, options });
+    callback(null, '149.154.166.110', 4);
+  });
+
+  const result = await new Promise((resolve, reject) => {
+    lookupTelegramApiHost('api.telegram.org', { all: true }, (error, address, family) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ address, family });
+    });
+  });
+
+  assert.deepEqual(result, { address: '149.154.166.110', family: 4 });
+  assert.equal(lookupCalls.length, 1);
+  assert.equal(lookupCalls[0].hostname, 'api.telegram.org');
+  assert.equal(lookupCalls[0].options.family, 4);
+  assert.equal(lookupCalls[0].options.all, false);
+});
 
 test('telegram formatter labels tribunal roles clearly', () => {
   const channel = {

@@ -1,4 +1,6 @@
+import dns from 'node:dns';
 import fs from 'node:fs';
+import https from 'node:https';
 
 import { executeChannelTurn, isTribunalChannel } from './channel-runtime.js';
 import { resolveChannelRoleAgentNames } from './discord-runtime-state.js';
@@ -22,6 +24,7 @@ const TELEGRAM_COMMAND_POLL_INTERVAL_MS = 1_000;
 const TELEGRAM_HEARTBEAT_INTERVAL_MS = 10_000;
 const TELEGRAM_UPDATES_TIMEOUT_SECONDS = 2;
 const TELEGRAM_TYPING_ACTION_INTERVAL_MS = 4_000;
+const TELEGRAM_API_REQUEST_TIMEOUT_MS = 30_000;
 
 export async function serveTelegram(projectRoot, { agentName = null } = {}) {
   const config = loadConfig(projectRoot);
@@ -842,17 +845,70 @@ function localizeReviewerVerdict(verdict) {
 }
 
 async function callTelegramApi(token, method, payload) {
-  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(payload || {}),
-  });
-  const data = await response.json().catch(() => null);
-  assert(response.ok, data?.description || `Telegram API ${method} failed with status ${response.status}.`);
+  const { statusCode, data } = await postTelegramJson(
+    `https://api.telegram.org/bot${token}/${method}`,
+    payload || {},
+  );
+  assert(
+    statusCode >= 200 && statusCode < 300,
+    data?.description || `Telegram API ${method} failed with status ${statusCode}.`,
+  );
   assert(data?.ok, data?.description || `Telegram API ${method} returned a failure response.`);
   return data.result;
+}
+
+async function postTelegramJson(url, payload) {
+  const requestBody = JSON.stringify(payload || {});
+  return await new Promise((resolve, reject) => {
+    const request = https.request(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(requestBody),
+        },
+        lookup: lookupTelegramApiHost,
+        timeout: TELEGRAM_API_REQUEST_TIMEOUT_MS,
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('error', reject);
+        response.on('end', () => {
+          const rawBody = Buffer.concat(chunks).toString('utf8');
+          let data = null;
+          try {
+            data = rawBody ? JSON.parse(rawBody) : null;
+          } catch {
+            data = null;
+          }
+          resolve({
+            statusCode: response.statusCode || 0,
+            data,
+          });
+        });
+      },
+    );
+
+    request.on('timeout', () => {
+      request.destroy(new Error('Telegram API request timed out.'));
+    });
+    request.on('error', reject);
+    request.end(requestBody);
+  });
+}
+
+export function lookupTelegramApiHost(hostname, options, callback) {
+  dns.lookup(
+    hostname,
+    {
+      ...options,
+      family: 4,
+      all: false,
+    },
+    callback,
+  );
 }
 
 function sleep(ms) {
