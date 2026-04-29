@@ -108,7 +108,6 @@ export function renderChannelsView(ctx) {
         </div>
         <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}Kakao 연결 추가</button>
       </div>
-      <p class="field-hint">커넥터는 KakaoTalk 전용입니다. Discord/Telegram 토큰은 에이전트 설정에서 관리하고, Kakao TalkChannel 릴레이·페어링 세션만 여기서 재사용합니다.</p>
       ${renderConnectorList(state.data.connectors || [], state.data.channels || [])}
     </section>
   `;
@@ -162,7 +161,6 @@ export function renderTopologyView(ctx) {
           <button type="button" class="btn-primary" data-action="topology-apply" ${state.busy ? 'disabled' : ''}>${renderIcon('play', 'ui-icon')}Apply</button>
         </div>
       </div>
-      <p class="field-hint">에이전트·KakaoTalk 연결·채널을 desired-state JSON으로 검토하고 적용합니다. 커넥터는 KakaoTalk 전용이며 토큰은 직접 넣지 말고 <code>secretRefs.*Env</code>를 사용하세요.</p>
       <div class="topology-grid" data-form="topology">
         <label class="field topology-editor">
           <span>Topology JSON</span>
@@ -220,7 +218,6 @@ function renderChannelWorkerPanel({ state, stats, escapeHtml }) {
           <h2>메시지 수신</h2>
         </div>
       </div>
-      <p class="field-hint">채널을 만든 뒤 수신을 켜면 Discord/Telegram/KakaoTalk 메시지가 해당 채널로 들어옵니다.</p>
       <div class="card-list card-list--compact service-worker-list channel-intake-list">
         ${services.map((entry) => renderChannelWorkerCard(entry, state, escapeHtml)).join('')}
       </div>
@@ -378,7 +375,6 @@ export function renderAiView(ctx) {
       <div class="auth-overview-card">
         <div>
           <strong>로그인부터 테스트까지 한 화면에서 끝냅니다.</strong>
-          <p class="field-hint">Codex, Claude, Gemini 로그인은 이 서버의 HOME에 저장됩니다. 먼저 상태를 확인하고, 필요한 계정만 로그인한 뒤 응답 테스트로 바로 검증하세요.</p>
         </div>
         <div class="auth-overview-steps" aria-label="AI 인증 순서">
           <span class="mini-chip">${renderIcon('server', 'ui-icon')}상태 확인</span>

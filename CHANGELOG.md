@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.12 - 2026-04-29
+
+### Added
+- Added an authenticated Telegram `getUpdates` shortcut from the channel form for quick chat ID lookup.
+
+### Changed
+- Removed verbose helper copy across channel, connector, topology, and AI auth screens so the admin UI stays focused on fields and actions.
+
 ## 1.0.11 - 2026-04-29
 
 ### Added

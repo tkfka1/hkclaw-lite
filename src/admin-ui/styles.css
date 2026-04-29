@@ -2337,12 +2337,6 @@ button:focus-visible {
   padding: 14px;
 }
 
-.auth-action-hint {
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  background: rgba(53, 92, 255, 0.07);
-}
-
 .runtime-summary-card {
   padding: 14px;
   border-radius: var(--radius-md);

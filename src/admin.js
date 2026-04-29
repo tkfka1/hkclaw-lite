@@ -291,6 +291,11 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     return;
   }
 
+  if (request.method === 'GET' && pathname === '/api/telegram-get-updates') {
+    writeRedirect(response, resolveTelegramGetUpdatesUrl(projectRoot, url.searchParams.get('agent')));
+    return;
+  }
+
   if (request.method === 'GET' && pathname.startsWith('/api/watchers/')) {
     const watcherId = decodeWatcherLogPath(pathname);
     writeText(
@@ -3926,6 +3931,24 @@ function writeText(response, statusCode, value, contentType) {
   response.setHeader('content-type', contentType);
   response.setHeader('cache-control', 'no-store');
   response.end(value);
+}
+
+function writeRedirect(response, location) {
+  response.statusCode = 302;
+  response.setHeader('location', location);
+  response.setHeader('cache-control', 'no-store');
+  response.end('');
+}
+
+function resolveTelegramGetUpdatesUrl(projectRoot, agentName) {
+  const name = String(agentName || '').trim();
+  assert(name, 'Telegram agent is required.');
+  const config = loadConfig(projectRoot);
+  const agent = config.agents?.[name];
+  assert(agent, `Agent "${name}" does not exist.`);
+  const token = String(agent.telegramBotToken || '').trim();
+  assert(token, `Agent "${name}" does not configure a Telegram bot token.`);
+  return `https://api.telegram.org/bot${encodeURIComponent(token)}/getUpdates?allowed_updates=%5B%22message%22%5D&limit=10`;
 }
 
 function applyAdminSecurityHeaders(response, request) {

@@ -2373,24 +2373,6 @@ function getAiManagerSteps(agentType, ready, authResult, testResult) {
   return [];
 }
 
-function renderAiActionHint(agentType, authResult, ready) {
-  const details = authResult?.details || {};
-  if (ready) {
-    return '<p class="field-hint auth-action-hint">로그인은 완료됐습니다. 설정을 바꿨다면 상태 다시 확인 후 응답 테스트를 다시 실행하세요.</p>';
-  }
-  if (agentType === 'claude-code' && details.externalCli) {
-    return '<p class="field-hint auth-action-hint">외부 Claude CLI는 웹 callback 단계가 없습니다. 터미널에서 로그인한 뒤 상태 다시 확인을 누르세요.</p>';
-  }
-  if ((agentType === 'claude-code' || agentType === 'gemini-cli') && details.pendingLogin) {
-    return '<p class="field-hint auth-action-hint">브라우저 인증을 끝냈다면 아래 입력칸에 결과를 붙여넣고 로그인 완료를 누르세요.</p>';
-  }
-  return '<p class="field-hint auth-action-hint">처음이면 로그인 시작을 누르세요. 이미 로그인했다면 상태 다시 확인으로 현재 서버 상태를 읽을 수 있습니다.</p>';
-}
-
-function getClaudeLoginModeLabel(loginMode) {
-  return loginMode === 'console' ? 'Anthropic Console' : 'claude.ai';
-}
-
 function renderMetaText(text) {
   const value = String(text || '').trim();
   return `<span class="card-meta"${value ? ` title="${escapeAttr(value)}"` : ''}>${escapeHtml(value)}</span>`;
@@ -2802,7 +2784,6 @@ function renderConnectorList(connectors = [], channels = []) {
     return `
       <div class="empty-inline empty-inline--action">
         <strong>KakaoTalk 연결이 아직 없습니다.</strong>
-        <span>카카오 채널을 여러 개 운영할 때 연결을 하나 만들어 재사용하세요. Discord/Telegram은 에이전트 설정에서 토큰을 관리합니다.</span>
       </div>
     `;
   }
@@ -2820,7 +2801,6 @@ function renderConnectorList(connectors = [], channels = []) {
           : `
               <div class="empty-inline empty-inline--action">
                 <strong>사용 가능한 KakaoTalk 연결이 없습니다.</strong>
-                <span>새 연결을 만들면 Kakao 채널 모달에서 바로 선택할 수 있습니다.</span>
               </div>
             `
       }
@@ -2829,7 +2809,6 @@ function renderConnectorList(connectors = [], channels = []) {
           ? `
               <div class="legacy-connector-note">
                 <strong>이전 Discord/Telegram 커넥터 ${escapeHtml(String(legacyConnectors.length))}개는 호환용으로만 유지됩니다.</strong>
-                <span>새 UI에서는 Discord/Telegram 토큰을 에이전트 설정에서 관리합니다. 기존 채널은 그대로 동작하지만 새 연결 생성 대상은 KakaoTalk뿐입니다.</span>
               </div>
             `
           : ''
@@ -2875,7 +2854,6 @@ function renderChannelList(channels, agents) {
     return `
       <div class="empty-inline empty-inline--action">
         <strong>아직 채널이 없습니다.</strong>
-        <span>카카오톡, 텔레그램, 디스코드 메시지를 받을 채널 하나를 먼저 만드세요.</span>
       </div>
     `;
   }
@@ -3260,7 +3238,6 @@ function renderAiModal() {
                         : ''
                     }
                   </div>
-                  ${renderAiActionHint(entry.value, authResult, ready)}
                 </div>`
               : ''
           }
@@ -3694,7 +3671,6 @@ function renderConnectorModal() {
             <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
             <div>
               <strong>커넥터는 KakaoTalk 전용입니다.</strong>
-              <p>Discord와 Telegram은 각 에이전트의 플랫폼 토큰으로 바로 실행하고, 재사용 커넥터는 Kakao TalkChannel 릴레이/페어링 세션만 관리합니다.</p>
             </div>
             <span class="mini-chip mini-chip--ok">KakaoTalk</span>
           </div>
@@ -3702,7 +3678,6 @@ function renderConnectorModal() {
             <div class="field ${fieldErrorClass('connector', 'name')}">
               <label for="connector-name">${renderRequiredLabel('연결 이름')}</label>
               <input id="connector-name" name="name" value="${escapeAttr(current.name)}" placeholder="예: kakao-main" />
-              <div class="field-hint">채널에서 고를 짧은 이름입니다. 운영/개발 계정을 분리하면 편합니다.</div>
               ${renderFormError('connector', 'name')}
             </div>
             <div class="field field-platform-lock ${fieldErrorClass('connector', 'type')}">
@@ -3734,18 +3709,15 @@ function renderConnectorCredentialFields(current) {
     <div class="field field-full ${fieldErrorClass('connector', 'kakaoRelayUrl')}">
       <label for="connector-kakao-relay">Kakao 릴레이 URL</label>
       <input id="connector-kakao-relay" name="kakaoRelayUrl" value="${escapeAttr(current.kakaoRelayUrl || getDefaultKakaoRelayUrl())}" placeholder="${escapeAttr(getDefaultKakaoRelayUrl())}" />
-      <div class="field-hint">비워도 기본 릴레이 URL을 사용합니다. 자체 배포 주소가 있으면 여기에 넣으세요.</div>
       ${renderFormError('connector', 'kakaoRelayUrl')}
     </div>
     <div class="field">
       <label for="connector-kakao-token">연결 토큰</label>
       <input id="connector-kakao-token" name="kakaoRelayToken" value="${escapeAttr(current.kakaoRelayToken)}" placeholder="비우면 페어링 코드 생성" />
-      <div class="field-hint">운영 토큰을 이미 발급했다면 입력합니다.</div>
     </div>
     <div class="field">
       <label for="connector-kakao-session">세션 토큰</label>
       <input id="connector-kakao-session" name="kakaoSessionToken" value="${escapeAttr(current.kakaoSessionToken)}" placeholder="선택" />
-      <div class="field-hint">페어링 완료 후 저장되는 세션 토큰입니다.</div>
     </div>
   `;
 }
@@ -3757,16 +3729,10 @@ function renderChannelConnectorField(platform, selectedConnector) {
       <div class="field">
         <label for="channel-connector">KakaoTalk 연결</label>
         <select id="channel-connector" name="connector">${renderConnectorOptions(platform, selectedConnector, true)}</select>
-        <div class="field-hint">Kakao 채널만 재사용 커넥터를 고릅니다. 비우면 선택한 에이전트의 Kakao 설정을 그대로 씁니다.</div>
       </div>
     `;
   }
-  return `
-    <div class="field field-full connector-agent-note">
-      <strong>${escapeHtml(localizeMessagingPlatform(platform))}는 에이전트 설정 사용</strong>
-      <span>Discord/Telegram 토큰은 커넥터로 분리하지 않고 선택한 에이전트의 플랫폼 설정에서 관리합니다.</span>
-    </div>
-  `;
+  return '';
 }
 
 function renderChannelTargetTypeField(platform, selectedTargetType) {
@@ -3789,8 +3755,22 @@ function renderChannelTargetTypeField(platform, selectedTargetType) {
     <div class="field">
       <label for="channel-target-type">${renderRequiredLabel('사용 방식')}</label>
       <select id="channel-target-type" name="targetType">${renderOptions(choices, selectedTargetType || 'channel')}</select>
-      <div class="field-hint">서버 방에 붙일지, 봇과 1:1로 직접 쓸지 먼저 고릅니다.</div>
     </div>
+  `;
+}
+
+function renderTelegramGetUpdatesLink(channel) {
+  const agentName = optionalDraftText(channel?.agent);
+  if (!agentName) {
+    return '';
+  }
+  return `
+    <a
+      class="btn-secondary btn-inline"
+      href="/api/telegram-get-updates?agent=${encodeURIComponent(agentName)}"
+      target="_blank"
+      rel="noreferrer"
+    >getUpdates 보기</a>
   `;
 }
 
@@ -3839,7 +3819,7 @@ function renderChannelModal() {
                     <div class="field ${fieldErrorClass('channel', 'telegramChatId')}">
                       <label for="channel-telegram-chat">${renderRequiredLabel(isDirectTarget ? 'Telegram 개인 chat_id' : 'Telegram 그룹/채널 chat_id')}</label>
                       <input id="channel-telegram-chat" name="telegramChatId" value="${escapeAttr(current.telegramChatId)}" />
-                      <div class="field-hint">${escapeHtml(isDirectTarget ? '사용자가 봇에게 한 번 말을 걸면 Telegram getUpdates 또는 수신 로그에서 확인할 수 있는 1:1 chat_id입니다.' : '그룹, 슈퍼그룹, 채널의 chat_id입니다. 토픽을 쓰면 아래 thread ID도 넣으세요.')}</div>
+                      <div class="inline-actions">${renderTelegramGetUpdatesLink(current)}</div>
                       ${renderFormError('channel', 'telegramChatId')}
                     </div>
                     ${
@@ -3858,7 +3838,6 @@ function renderChannelModal() {
                     <div class="field ${fieldErrorClass('channel', 'kakaoChannelId')}">
                       <label for="channel-kakao-channel">${renderRequiredLabel('받을 카카오 채널')}</label>
                       <input id="channel-kakao-channel" name="kakaoChannelId" value="${escapeAttr(current.kakaoChannelId || '*')}" placeholder="전체" />
-                      <div class="field-hint">보통은 전체(*) 그대로 두면 됩니다. 특정 Kakao channelId만 받을 때만 값을 넣으세요.</div>
                       ${renderFormError('channel', 'kakaoChannelId')}
                     </div>
                     <div class="field">
@@ -3873,7 +3852,6 @@ function renderChannelModal() {
                           <div class="field ${fieldErrorClass('channel', 'discordUserId')}">
                             <label for="channel-discord-user">${renderRequiredLabel('Discord 사용자 ID')}</label>
                             <input id="channel-discord-user" name="discordUserId" value="${escapeAttr(current.discordUserId)}" />
-                            <div class="field-hint">이 사용자와 봇이 DM으로 대화합니다. Discord 개발자 모드에서 사용자 ID를 복사하세요.</div>
                             ${renderFormError('channel', 'discordUserId')}
                           </div>
                         `
@@ -3933,7 +3911,6 @@ function renderChannelModal() {
                     </div>
                     <div class="field field-full">
                       <label>역할별 워크스페이스</label>
-                      <div class="field-hint">비워두면 기본 워크스페이스를 그대로 씁니다.</div>
                     </div>
                     <div class="field">
                       <label for="channel-owner-workspace">owner 워크스페이스</label>
@@ -4276,22 +4253,18 @@ function getAgentWizardSteps(draft) {
         <div class="form-grid">
           <div class="field field-full">
             <label for="wizard-agent-system">기본 지시문</label>
-            <div class="field-hint">이 에이전트가 항상 지켜야 할 역할, 말투, 작업 규칙을 적습니다.</div>
             <textarea id="wizard-agent-system" name="systemPrompt" placeholder="예: 코드 리뷰어처럼 동작하고, 변경 이유와 위험 요소를 먼저 설명하세요.">${escapeHtml(draft.systemPrompt)}</textarea>
           </div>
           <div class="field field-full">
             <label for="wizard-agent-system-file">지시문 파일 경로</label>
-            <div class="field-hint">긴 프롬프트를 파일로 관리하고 싶을 때 씁니다. 프로젝트 루트 기준 상대 경로를 넣으세요.</div>
             <input id="wizard-agent-system-file" name="systemPromptFile" value="${escapeAttr(draft.systemPromptFile)}" placeholder="예: prompts/reviewer.md" />
           </div>
           <div class="field field-full">
             <label for="wizard-agent-skills">불러올 스킬</label>
-            <div class="field-hint">줄바꿈이나 쉼표로 여러 개를 넣을 수 있습니다. 비워두면 스킬 없이 실행합니다.</div>
             <textarea id="wizard-agent-skills" name="skillsText" placeholder="예: reviewer&#10;backend">${escapeHtml(draft.skillsText)}</textarea>
           </div>
           <div class="field field-full">
             <label for="wizard-agent-context">같이 읽을 파일</label>
-            <div class="field-hint">처음 실행할 때 함께 읽게 할 문서나 설정 파일 경로입니다. 줄바꿈이나 쉼표로 구분하세요.</div>
             <textarea id="wizard-agent-context" name="contextFilesText" placeholder="예: README.md&#10;docs/architecture.md">${escapeHtml(draft.contextFilesText)}</textarea>
           </div>
         </div>
@@ -4330,7 +4303,6 @@ function renderAgentWizardRuntimeStep(draft) {
             value="${escapeAttr(draft.kakaoRelayUrl || getDefaultKakaoRelayUrl())}"
             placeholder="${escapeAttr(getDefaultKakaoRelayUrl())}"
           />
-          <div class="field-hint">이 Agent/worker가 SSE를 붙을 Kakao 릴레이 주소입니다. hkclaw-lite 내장 릴레이를 쓰면 배포 환경 기본값을 사용합니다.</div>
         </div>
         <div class="field field-full ${fieldErrorClass('agentWizard', tokenFieldName)}">
           <label for="wizard-agent-platform-token">Kakao 연결 토큰</label>
@@ -4340,7 +4312,6 @@ function renderAgentWizardRuntimeStep(draft) {
             value="${escapeAttr(draft.kakaoRelayToken || '')}"
             placeholder="선택: 비우면 시작 시 페어링 코드를 생성"
           />
-          <div class="field-hint">비워두면 워커 시작 후 Kakao 채널에 입력할 /pair 코드가 생성됩니다.</div>
           ${renderFormError('agentWizard', tokenFieldName)}
         </div>
         <div class="field field-full">
@@ -4362,7 +4333,6 @@ function renderAgentWizardRuntimeStep(draft) {
             value="${escapeAttr(platform === 'telegram' ? draft.telegramBotToken || '' : draft.discordToken || '')}"
             placeholder="${platform === 'telegram' ? 'Telegram bot token' : 'Discord bot token'}"
           />
-          <div class="field-hint">선택한 메시징 플랫폼에 이 에이전트를 연결할 때 사용하는 토큰입니다.</div>
           ${renderFormError('agentWizard', tokenFieldName)}
         </div>
       `,
@@ -4377,7 +4347,6 @@ function renderAgentWizardRuntimeStep(draft) {
           { value: 'workspace-write', label: '작업 디렉터리만 수정', description: '워크스페이스 안에서만 수정 허용' },
           { value: 'danger-full-access', label: '전체 허용', description: '명령 실행과 파일 접근을 전부 허용' },
         ], codexAccess, false)}</select>
-        <div class="field-hint">전체 허용은 Codex의 제한과 승인 확인을 모두 우회합니다.</div>
       </div>
     `);
   }
@@ -5208,7 +5177,6 @@ function renderAiAuthFields(agentType) {
       ? `
         <div class="auth-guide-card field-full">
           <strong>외부 Claude CLI 모드</strong>
-          <p class="field-hint">이 설정은 웹 세션을 따로 만들지 않습니다. hkclaw-lite가 실행되는 같은 머신과 같은 HOME에서 아래 명령을 실행한 뒤 상태 다시 확인을 누르세요.</p>
           <div class="result-code">${escapeHtml(commandHint)}</div>
         </div>
       `
@@ -5223,7 +5191,6 @@ function renderAiAuthFields(agentType) {
             autocomplete="off"
             spellcheck="false"
           >${escapeHtml(authConfig.callbackUrl || '')}</textarea>
-          <div class="field-hint">로그인 창이 마지막에 이동한 callback URL 전체를 붙여넣으세요. code와 state가 들어간 주소여야 합니다.</div>
         </div>
       `;
 
@@ -5235,11 +5202,9 @@ function renderAiAuthFields(agentType) {
             <option value="claudeai" ${loginMode !== 'console' ? 'selected' : ''}>claude.ai 개인/Pro 계정</option>
             <option value="console" ${loginMode === 'console' ? 'selected' : ''}>Anthropic Console 조직/API 계정</option>
           </select>
-          <div class="field-hint">현재 선택: ${escapeHtml(getClaudeLoginModeLabel(loginMode))}. 잘못 고르면 브라우저 로그인은 되지만 CLI 상태가 이어지지 않습니다.</div>
         </div>
         <div class="auth-guide-card">
           <strong>2. 로그인 시작</strong>
-          <p class="field-hint">아래 로그인 시작 버튼을 누르면 브라우저가 열립니다. 팝업이 막히면 결과 카드의 링크를 직접 여세요.</p>
         </div>
         ${externalCliGuide}
       </div>
@@ -5250,7 +5215,6 @@ function renderAiAuthFields(agentType) {
       <div class="form-grid auth-form-grid">
         <div class="auth-guide-card field-full">
           <strong>Google 브라우저 로그인</strong>
-          <p class="field-hint">로그인 시작을 누른 뒤 표시되는 authorization code를 아래에 붙여넣으면 됩니다. 이 값은 저장하지 않고 Gemini CLI 로그인 완료에만 사용합니다.</p>
         </div>
         <div class="field field-full">
           <label for="ai-manager-gemini-authorization-code">Authorization code 붙여넣기</label>
@@ -5262,7 +5226,6 @@ function renderAiAuthFields(agentType) {
             autocomplete="off"
             spellcheck="false"
           >${escapeHtml(authConfig.authorizationCode || '')}</textarea>
-          <div class="field-hint">앞뒤 공백은 자동으로 제거합니다. 코드를 붙여넣은 뒤 로그인 완료를 누르세요.</div>
         </div>
       </div>
     `;

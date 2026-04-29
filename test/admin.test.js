@@ -908,6 +908,34 @@ test('admin server exposes project snapshot and watcher logs', async () => {
   });
 });
 
+test('admin server redirects Telegram getUpdates helper through the selected agent token', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const config = loadConfig(projectRoot);
+  config.agents.telegram = buildAgentDefinition(projectRoot, 'telegram', {
+    name: 'telegram',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'telegram',
+    telegramBotToken: '123456:telegram-token',
+  });
+  saveConfig(projectRoot, config);
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const response = await fetch(`${url}/api/telegram-get-updates?agent=telegram`, {
+      redirect: 'manual',
+    });
+    const location = response.headers.get('location') || '';
+
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.match(location, /^https:\/\/api\.telegram\.org\/bot123456%3Atelegram-token\/getUpdates/u);
+    assert.match(location, /allowed_updates=%5B%22message%22%5D/u);
+    assert.match(location, /limit=10/u);
+  });
+});
+
 test('admin server saves config changes and can run a mapped channel', async () => {
   const projectRoot = createProject();
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });

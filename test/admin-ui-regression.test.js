@@ -82,9 +82,12 @@ test('channels page exposes reusable connector management', () => {
   assert.doesNotMatch(viewsSource, /가동 중/u);
   assert.match(appSource, /data-form="connector"/u);
   assert.match(appSource, /커넥터는 KakaoTalk 전용입니다/u);
-  assert.match(appSource, /connector-agent-note/u);
   assert.match(appSource, /channel-target-type/u);
   assert.match(appSource, /Discord 사용자 ID/u);
+  assert.match(appSource, /telegram-get-updates/u);
+  assert.match(appSource, /getUpdates 보기/u);
+  assert.doesNotMatch(appSource, /connector-agent-note/u);
+  assert.doesNotMatch(appSource, /사용자가 봇에게 한 번 말을 걸면/u);
   assert.match(appSource, /open-connector-modal/u);
   assert.match(appSource, /\/api\/connectors/u);
   assert.match(appSource, /findKakaoChannelRouteConflict/u);
@@ -107,7 +110,7 @@ test('web admin exposes topology automation screen', () => {
   assert.match(appSource, /\/api\/topology\/apply/u);
   assert.match(appSource, /\/api\/topology\/export/u);
   assert.match(viewsSource, /data-form="topology"/u);
-  assert.match(viewsSource, /secretRefs\.\*Env/u);
+  assert.match(viewsSource, /kakaoRelayTokenEnv/u);
   assert.match(styles, /\.topology-grid/u);
   assert.match(styles, /\.topology-textarea/u);
 });
@@ -203,7 +206,7 @@ test('admin password modal keeps typed values across validation re-renders', () 
   assert.doesNotMatch(appSource, /name="confirmPassword"[^>]*value=/u);
 });
 
-test('AI auth manager explains the Claude and browser login flow before actions', () => {
+test('AI auth manager keeps Claude and browser login controls compact', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
   const styles = readRepoFile('src/admin-ui/styles.css');
@@ -213,13 +216,14 @@ test('AI auth manager explains the Claude and browser login flow before actions'
   assert.match(appSource, /class="auth-steps"/u);
   assert.match(appSource, /Claude Code CLI 로그인 흐름/u);
   assert.match(appSource, /3\. 브라우저 완료 후 주소 붙여넣기/u);
-  assert.match(appSource, /외부 Claude CLI는 웹 callback 단계가 없습니다/u);
   assert.match(appSource, /showCompleteLoginButton/u);
   assert.match(appSource, /function\s+renderAiRuntimeSummary\s*\(/u);
   assert.match(appSource, /runtimePackageVersion/u);
   assert.match(appSource, /hkclaw-lite가 포함한 Codex CLI/u);
   assert.match(appSource, /모델 목록 불러오기/u);
   assert.doesNotMatch(appSource, /Codex는 hkclaw-lite 전용 저장소/u);
+  assert.doesNotMatch(appSource, /외부 Claude CLI는 웹 callback 단계가 없습니다/u);
+  assert.doesNotMatch(appSource, /처음이면 로그인 시작을 누르세요/u);
   assert.match(styles, /\.modal-card--ai\s*\{/u);
   assert.match(styles, /\.runtime-summary-card/u);
   assert.match(styles, /\.model-default-card/u);
