@@ -1256,7 +1256,7 @@ async function reloadDiscordServiceConfig() {
     await mutateJson('/api/discord-service/reload', {
       method: 'POST',
     });
-    setNotice('info', 'Discord 서비스가 최신 에이전트 연결 설정을 다시 읽고 있습니다.');
+    setNotice('info', 'Discord 수신 연결이 최신 설정을 다시 읽고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1270,7 +1270,7 @@ async function reloadTelegramServiceConfig() {
     await mutateJson('/api/telegram-service/reload', {
       method: 'POST',
     });
-    setNotice('info', 'Telegram 서비스가 최신 에이전트 연결 설정을 다시 읽고 있습니다.');
+    setNotice('info', 'Telegram 수신 연결이 최신 설정을 다시 읽고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1284,7 +1284,7 @@ async function reloadKakaoServiceConfig() {
     await mutateJson('/api/kakao-service/reload', {
       method: 'POST',
     });
-    setNotice('info', 'KakaoTalk 서비스가 최신 에이전트 연결 설정을 다시 읽고 있습니다.');
+    setNotice('info', 'KakaoTalk 수신 연결이 최신 설정을 다시 읽고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1298,7 +1298,7 @@ async function startDiscordService() {
     await mutateJson('/api/discord-service/start', {
       method: 'POST',
     });
-    setNotice('info', 'Discord 서비스를 시작하고 있습니다.');
+    setNotice('info', 'Discord 수신 연결을 시작하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1312,7 +1312,7 @@ async function startTelegramService() {
     await mutateJson('/api/telegram-service/start', {
       method: 'POST',
     });
-    setNotice('info', 'Telegram 서비스를 시작하고 있습니다.');
+    setNotice('info', 'Telegram 수신 연결을 시작하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1326,7 +1326,7 @@ async function startKakaoService() {
     await mutateJson('/api/kakao-service/start', {
       method: 'POST',
     });
-    setNotice('info', 'KakaoTalk 서비스를 시작하고 있습니다.');
+    setNotice('info', 'KakaoTalk 수신 연결을 시작하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1340,7 +1340,7 @@ async function restartDiscordService() {
     await mutateJson('/api/discord-service/restart', {
       method: 'POST',
     });
-    setNotice('info', 'Discord 서비스를 재시작하고 있습니다.');
+    setNotice('info', 'Discord 수신 연결을 재시작하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1354,7 +1354,7 @@ async function restartTelegramService() {
     await mutateJson('/api/telegram-service/restart', {
       method: 'POST',
     });
-    setNotice('info', 'Telegram 서비스를 재시작하고 있습니다.');
+    setNotice('info', 'Telegram 수신 연결을 재시작하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1368,7 +1368,7 @@ async function restartKakaoService() {
     await mutateJson('/api/kakao-service/restart', {
       method: 'POST',
     });
-    setNotice('info', 'KakaoTalk 서비스를 재시작하고 있습니다.');
+    setNotice('info', 'KakaoTalk 수신 연결을 재시작하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1382,7 +1382,7 @@ async function stopDiscordService() {
     await mutateJson('/api/discord-service/stop', {
       method: 'POST',
     });
-    setNotice('info', 'Discord 서비스를 중지하고 있습니다.');
+    setNotice('info', 'Discord 수신 연결을 중지하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1396,7 +1396,7 @@ async function stopTelegramService() {
     await mutateJson('/api/telegram-service/stop', {
       method: 'POST',
     });
-    setNotice('info', 'Telegram 서비스를 중지하고 있습니다.');
+    setNotice('info', 'Telegram 수신 연결을 중지하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1410,7 +1410,7 @@ async function stopKakaoService() {
     await mutateJson('/api/kakao-service/stop', {
       method: 'POST',
     });
-    setNotice('info', 'KakaoTalk 서비스를 중지하고 있습니다.');
+    setNotice('info', 'KakaoTalk 수신 연결을 중지하고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1428,7 +1428,7 @@ async function reconnectAgent(name) {
       method: 'POST',
     });
     const platform = resolveAgentPlatform(name);
-    setNotice('info', `에이전트 "${name}" ${localizeMessagingPlatform(platform)} 연결을 다시 시도합니다.`);
+    setNotice('info', `"${name}" ${localizeMessagingPlatform(platform)} 수신 연결을 다시 시도합니다.`);
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1449,7 +1449,7 @@ async function startAgentService(name) {
     await mutateJson(`/api/agents/${encodeURIComponent(name)}/start`, {
       method: 'POST',
     });
-    setNotice('info', `에이전트 "${name}" ${resolveAgentPlatformLabel(name)} 워커를 시작하고 있습니다.`);
+    setNotice('info', `"${name}" ${resolveAgentPlatformLabel(name)} 수신 연결을 시작하고 있습니다.`);
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1470,7 +1470,7 @@ async function restartAgentService(name) {
     await mutateJson(`/api/agents/${encodeURIComponent(name)}/restart`, {
       method: 'POST',
     });
-    setNotice('info', `에이전트 "${name}" ${resolveAgentPlatformLabel(name)} 워커를 재시작하고 있습니다.`);
+    setNotice('info', `"${name}" ${resolveAgentPlatformLabel(name)} 수신 연결을 재시작하고 있습니다.`);
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -1491,7 +1491,7 @@ async function stopAgentService(name) {
     await mutateJson(`/api/agents/${encodeURIComponent(name)}/stop`, {
       method: 'POST',
     });
-    setNotice('info', `에이전트 "${name}" ${resolveAgentPlatformLabel(name)} 워커를 중지하고 있습니다.`);
+    setNotice('info', `"${name}" ${resolveAgentPlatformLabel(name)} 수신 연결을 중지하고 있습니다.`);
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -2388,13 +2388,13 @@ function renderAgentCard(agent, context) {
   const primaryAction = connectorOnly
     ? ''
     : !tokenConfigured
-    ? `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" disabled>${renderButtonLabel('play', '실행')}</button>`
+    ? `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" disabled>${renderButtonLabel('play', '연결 설정 필요')}</button>`
     : agentServiceRunning || agentServiceStale
-      ? `<button type="button" class="btn-secondary" data-action="restart-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>${renderButtonLabel('refresh', '재시작')}</button>`
-      : `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || agentServiceRunning || agentServiceStarting ? 'disabled' : ''}>${renderButtonLabel('play', '실행')}</button>`;
+      ? `<button type="button" class="btn-secondary" data-action="restart-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>${renderButtonLabel('refresh', '연결 재시작')}</button>`
+      : `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || agentServiceRunning || agentServiceStarting ? 'disabled' : ''}>${renderButtonLabel('play', '연결 시작')}</button>`;
   const stopAction =
     agentServiceRunning || agentServiceStale || agentServiceStarting
-      ? `<button type="button" class="btn-secondary" data-action="stop-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale && !agentServiceStarting) ? 'disabled' : ''}>${renderButtonLabel('stop', '중지')}</button>`
+      ? `<button type="button" class="btn-secondary" data-action="stop-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale && !agentServiceStarting) ? 'disabled' : ''}>${renderButtonLabel('stop', '연결 중지')}</button>`
       : '';
   return `
     <article class="card agent-card">
@@ -2419,7 +2419,7 @@ function renderAgentCard(agent, context) {
           body: renderAgentDetailPanel(agent, context),
           actions: [
             !connectorOnly && (isDiscordPlatform || platform === 'kakao')
-              ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentService?.running ? 'disabled' : ''}>${renderButtonLabel('refresh', '재연결')}</button>`
+              ? `<button type="button" class="btn-secondary" data-action="reconnect-agent" data-name="${escapeAttr(agent.name)}" ${state.busy || !agentService?.running ? 'disabled' : ''}>${renderButtonLabel('refresh', '다시 연결')}</button>`
               : '',
             `<button type="button" class="btn-danger" data-action="delete-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>`,
           ],
@@ -2472,7 +2472,6 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
     : platform === 'kakao'
       ? (agent.kakaoService || null)
       : (agent.telegramService || null);
-  const agentServiceLabel = agentService?.label || '중지';
   const agentServiceRunning = Boolean(agentService?.running);
   const agentServiceStarting = Boolean(agentService?.starting);
   const agentServiceStale = Boolean(agentService?.stale);
@@ -2489,8 +2488,8 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
   const credentialLabel = connectorOnly
     ? 'Kakao 연결 사용'
     : tokenConfigured
-      ? '토큰 설정됨'
-      : '토큰 미설정';
+      ? '연결 설정됨'
+      : '연결 미설정';
   const connected = connectorOnly
     ? false
     : isDiscordPlatform
@@ -2504,12 +2503,12 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
       ? runtimeAgent.connected
       ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
       : agentServiceRunning
-        ? '연결 안 됨'
+        ? '연결 대기'
         : agentServiceStarting
-          ? '워커 시작 중'
+          ? '연결 중'
           : agentServiceStale
-            ? '워커 끊김'
-            : '워커 중지'
+            ? '연결 확인 필요'
+            : '연결 중지'
     : platform === 'kakao'
       ? kakaoRuntime.connected
         ? `연결됨${kakaoRuntime.pairedUserId ? ` · ${kakaoRuntime.pairedUserId}` : ''}`
@@ -2518,19 +2517,19 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
           : agentServiceRunning
             ? '페어링 대기'
             : agentServiceStarting
-              ? '워커 시작 중'
+              ? '연결 중'
               : agentServiceStale
-                ? '워커 끊김'
-                : '워커 중지'
+                ? '연결 확인 필요'
+                : '연결 중지'
       : telegramRuntime.connected
         ? `연결됨${telegramRuntime.username ? ` · @${telegramRuntime.username}` : ''}`
         : agentServiceRunning
-          ? '연결 안 됨'
+          ? '연결 대기'
           : agentServiceStarting
-            ? '워커 시작 중'
+            ? '연결 중'
             : agentServiceStale
-              ? '워커 끊김'
-              : '워커 중지';
+              ? '연결 확인 필요'
+              : '연결 중지';
 
   return {
     platform,
@@ -2540,7 +2539,6 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
     telegramRuntime,
     kakaoRuntime,
     agentService,
-    agentServiceLabel,
     agentServiceRunning,
     agentServiceStarting,
     agentServiceStale,
@@ -2567,13 +2565,12 @@ function renderAgentDetailPanel(agent, context) {
     : '미확인';
   const rows = context.connectorOnly
     ? [
-        { label: '수신 워커', value: 'Kakao 연결에서 관리' },
+        { label: '수신 연결', value: 'Kakao 연결에서 관리' },
         { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
         { label: 'Sandbox', value: agent.sandbox || '기본값' },
       ]
     : [
-        { label: '서비스', value: context.agentServiceLabel },
-        { label: 'Heartbeat', value: context.agentService?.heartbeatAt ? formatRelativeDateTime(context.agentService.heartbeatAt) : '없음' },
+        { label: '수신 연결', value: context.connectionSummary },
         { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
         { label: 'Sandbox', value: agent.sandbox || '기본값' },
       ];
@@ -2663,10 +2660,10 @@ function renderKakaoConnectorWorkerPanel(connectors = [], kakaoService = {}) {
     lastError: service.lastError || '',
   });
   const primaryAction = worker.running || worker.stale
-    ? `<button type="button" class="btn-secondary" data-action="restart-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', 'Kakao 워커 재시작')}</button>`
-    : `<button type="button" class="btn-secondary" data-action="start-kakao-service" ${state.busy || !worker.configured || worker.starting ? 'disabled' : ''}>${renderButtonLabel('play', 'Kakao 워커 시작')}</button>`;
+    ? `<button type="button" class="btn-secondary" data-action="restart-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', 'Kakao 연결 재시작')}</button>`
+    : `<button type="button" class="btn-secondary" data-action="start-kakao-service" ${state.busy || !worker.configured || worker.starting ? 'disabled' : ''}>${renderButtonLabel('play', 'Kakao 연결 시작')}</button>`;
   const stopAction = worker.running || worker.stale || worker.starting
-    ? `<button type="button" class="btn-secondary" data-action="stop-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', 'Kakao 워커 중지')}</button>`
+    ? `<button type="button" class="btn-secondary" data-action="stop-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', 'Kakao 연결 중지')}</button>`
     : '';
 
   return `
@@ -2758,7 +2755,7 @@ function renderChannelList(channels) {
 function buildWorkerStatus({ configured, running, starting, stale, lastError }) {
   if (!configured) {
     return {
-      label: '워커 설정 필요',
+      label: '연결 설정 필요',
       statusClass: 'mini-chip--danger',
       configured: false,
       running: false,
@@ -2769,7 +2766,7 @@ function buildWorkerStatus({ configured, running, starting, stale, lastError }) 
   }
   if (stale) {
     return {
-      label: '워커 확인 필요',
+      label: '연결 확인 필요',
       statusClass: 'mini-chip--danger',
       configured: true,
       running: false,
@@ -2780,7 +2777,7 @@ function buildWorkerStatus({ configured, running, starting, stale, lastError }) 
   }
   if (starting) {
     return {
-      label: '워커 시작 중',
+      label: '연결 중',
       statusClass: '',
       configured: true,
       running: false,
@@ -2791,7 +2788,7 @@ function buildWorkerStatus({ configured, running, starting, stale, lastError }) 
   }
   if (running) {
     return {
-      label: '워커 실행 중',
+      label: '연결됨',
       statusClass: 'mini-chip--ok',
       configured: true,
       running: true,
@@ -2801,7 +2798,7 @@ function buildWorkerStatus({ configured, running, starting, stale, lastError }) 
     };
   }
   return {
-    label: '워커 대기',
+    label: '연결 대기',
     statusClass: '',
     configured: true,
     running: false,
@@ -4031,7 +4028,7 @@ function getAgentWizardSteps(draft) {
     },
     {
       id: 'execution',
-      question: '실행 옵션을 정할까요?',
+      question: '응답 옵션을 정할까요?',
       body: `
         <div class="form-grid">
           ${renderEffortField(draft)}
@@ -4089,7 +4086,7 @@ function renderAgentWizardRuntimeStep(draft) {
   const blocks = [
     `
       <div class="field">
-        <label for="wizard-agent-platform">${renderRequiredLabel('메시징 플랫폼')}</label>
+        <label for="wizard-agent-platform">${renderRequiredLabel('수신 플랫폼')}</label>
         <select id="wizard-agent-platform" name="platform">
           ${renderOptions(state.data.choices.messagingPlatforms, platform)}
         </select>
@@ -5879,7 +5876,7 @@ function localizeWorkerError(value) {
     return '';
   }
   if (/ECONNREFUSED|ENOTFOUND|fetch failed|network|socket|TLS|timeout/iu.test(raw)) {
-    return '외부 API 연결이 잠시 실패했습니다. 워커가 자동으로 다시 시도합니다.';
+    return '외부 API 연결이 잠시 실패했습니다. 자동으로 다시 시도합니다.';
   }
   if (/auth|unauthorized|forbidden|login|401|403/iu.test(raw)) {
     return '인증이 실패했습니다. 토큰이나 로그인 상태를 확인하세요.';

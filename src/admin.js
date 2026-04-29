@@ -313,12 +313,13 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
   if (request.method === 'POST' && pathname === '/api/agents') {
     const payload = await readJsonBody(request);
+    const previousConfig = loadConfig(projectRoot);
     await upsertAgent(
       projectRoot,
       payload.currentName || null,
       payload.definition || payload,
     );
-    await autoStartRequiredMessagingWorkers(projectRoot);
+    await syncRequiredMessagingWorkers(projectRoot, { previousConfig });
     writeJson(response, 200, {
       ok: true,
       state: await buildAdminSnapshot(projectRoot),
@@ -518,12 +519,13 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
   if (request.method === 'POST' && pathname === '/api/connectors') {
     const payload = await readJsonBody(request);
+    const previousConfig = loadConfig(projectRoot);
     await upsertConnector(
       projectRoot,
       payload.currentName || null,
       payload.definition || payload,
     );
-    await autoStartRequiredMessagingWorkers(projectRoot);
+    await syncRequiredMessagingWorkers(projectRoot, { previousConfig });
     writeJson(response, 200, {
       ok: true,
       state: await buildAdminSnapshot(projectRoot),
@@ -533,21 +535,25 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
   if (request.method === 'DELETE' && pathname.startsWith('/api/connectors/')) {
     const name = decodeEntityPath(pathname, '/api/connectors/');
+    const previousConfig = loadConfig(projectRoot);
+    await deleteConnectorByName(projectRoot, name);
+    await syncRequiredMessagingWorkers(projectRoot, { previousConfig });
     writeJson(response, 200, {
       ok: true,
-      state: await deleteConnectorByName(projectRoot, name),
+      state: await buildAdminSnapshot(projectRoot),
     });
     return;
   }
 
   if (request.method === 'POST' && pathname === '/api/channels') {
     const payload = await readJsonBody(request);
+    const previousConfig = loadConfig(projectRoot);
     await upsertChannel(
       projectRoot,
       payload.currentName || null,
       payload.definition || payload,
     );
-    await autoStartRequiredMessagingWorkers(projectRoot);
+    await syncRequiredMessagingWorkers(projectRoot, { previousConfig });
     writeJson(response, 200, {
       ok: true,
       state: await buildAdminSnapshot(projectRoot),
@@ -574,9 +580,12 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
   if (request.method === 'DELETE' && pathname.startsWith('/api/channels/')) {
     const name = decodeEntityPath(pathname, '/api/channels/');
+    const previousConfig = loadConfig(projectRoot);
+    await deleteChannelByName(projectRoot, name);
+    await syncRequiredMessagingWorkers(projectRoot, { previousConfig });
     writeJson(response, 200, {
       ok: true,
-      state: await deleteChannelByName(projectRoot, name),
+      state: await buildAdminSnapshot(projectRoot),
     });
     return;
   }
@@ -635,10 +644,11 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
   if (request.method === 'POST' && pathname === '/api/topology/apply') {
     const payload = await readJsonBody(request);
+    const previousConfig = loadConfig(projectRoot);
     const plan = applyTopology(projectRoot, payload.spec || payload.definition || payload, {
       actorName: payload.actorName,
     });
-    await autoStartRequiredMessagingWorkers(projectRoot);
+    await syncRequiredMessagingWorkers(projectRoot, { previousConfig });
     writeJson(response, 200, {
       ok: true,
       result: serializeTopologyPlan(plan),
@@ -912,6 +922,10 @@ async function restoreManagedServiceProcesses(projectRoot) {
 }
 
 async function autoStartRequiredMessagingWorkers(projectRoot) {
+  return syncRequiredMessagingWorkers(projectRoot);
+}
+
+async function syncRequiredMessagingWorkers(projectRoot, { previousConfig = null } = {}) {
   if (!isMessagingWorkerAutoStartEnabled()) {
     return [];
   }
@@ -919,21 +933,50 @@ async function autoStartRequiredMessagingWorkers(projectRoot) {
   const config = loadConfig(projectRoot);
   const channels = Object.values(config.channels || {});
   const tasks = [];
+  const discordAgentNames = listRequiredWorkerAgentNames(config, channels, 'discord', 'discordToken');
+  const telegramAgentNames = listRequiredWorkerAgentNames(config, channels, 'telegram', 'telegramBotToken');
+  const previousChannels = previousConfig ? Object.values(previousConfig.channels || {}) : [];
+  const previousDiscordAgentNames = previousConfig
+    ? listRequiredWorkerAgentNames(previousConfig, previousChannels, 'discord', 'discordToken')
+    : [];
+  const previousTelegramAgentNames = previousConfig
+    ? listRequiredWorkerAgentNames(previousConfig, previousChannels, 'telegram', 'telegramBotToken')
+    : [];
 
-  for (const agentName of listRequiredWorkerAgentNames(config, channels, 'discord', 'discordToken')) {
+  for (const agentName of previousDiscordAgentNames) {
+    if (!discordAgentNames.includes(agentName) && isDiscordAgentServiceActive(projectRoot, agentName)) {
+      tasks.push(autoStopManagedServiceProcess(projectRoot, agentName, 'discord'));
+    }
+  }
+
+  for (const agentName of previousTelegramAgentNames) {
+    if (!telegramAgentNames.includes(agentName) && isTelegramAgentServiceActive(projectRoot, agentName)) {
+      tasks.push(autoStopManagedServiceProcess(projectRoot, agentName, 'telegram'));
+    }
+  }
+
+  for (const agentName of discordAgentNames) {
     if (!isDiscordAgentServiceActive(projectRoot, agentName)) {
       tasks.push(autoStartManagedServiceProcess(projectRoot, agentName, 'discord'));
+    } else if (shouldReloadAgentMessagingWorker(previousConfig, config, agentName, 'discord')) {
+      tasks.push(queueRequiredMessagingWorkerReload(projectRoot, agentName, 'discord'));
     }
   }
 
-  for (const agentName of listRequiredWorkerAgentNames(config, channels, 'telegram', 'telegramBotToken')) {
+  for (const agentName of telegramAgentNames) {
     if (!isTelegramAgentServiceActive(projectRoot, agentName)) {
       tasks.push(autoStartManagedServiceProcess(projectRoot, agentName, 'telegram'));
+    } else if (shouldReloadAgentMessagingWorker(previousConfig, config, agentName, 'telegram')) {
+      tasks.push(queueRequiredMessagingWorkerReload(projectRoot, agentName, 'telegram'));
     }
   }
 
-  if (shouldAutoStartKakaoPlatformService(projectRoot, channels)) {
+  if (shouldStopKakaoPlatformWorker(projectRoot, previousConfig, config)) {
+    tasks.push(autoStopManagedServiceProcess(projectRoot, null, 'kakao-platform'));
+  } else if (shouldAutoStartKakaoPlatformService(projectRoot, channels)) {
     tasks.push(autoStartManagedServiceProcess(projectRoot, null, 'kakao-platform'));
+  } else if (shouldReloadKakaoPlatformWorker(projectRoot, previousConfig, config)) {
+    tasks.push(queueKakaoPlatformWorkerReload(projectRoot));
   }
 
   if (tasks.length === 0) {
@@ -941,6 +984,224 @@ async function autoStartRequiredMessagingWorkers(projectRoot) {
   }
 
   return await Promise.all(tasks);
+}
+
+function shouldReloadAgentMessagingWorker(previousConfig, config, agentName, platform) {
+  if (!previousConfig) {
+    return false;
+  }
+
+  const channels = Object.values(config.channels || {});
+  const previousChannels = Object.values(previousConfig.channels || {});
+  const tokenField = platform === 'telegram' ? 'telegramBotToken' : 'discordToken';
+  const isRequired = listRequiredWorkerAgentNames(config, channels, platform, tokenField).includes(agentName);
+  if (!isRequired) {
+    return false;
+  }
+
+  const wasRequired = listRequiredWorkerAgentNames(
+    previousConfig,
+    previousChannels,
+    platform,
+    tokenField,
+  ).includes(agentName);
+
+  return (
+    !wasRequired ||
+    buildAgentMessagingWorkerSignature(previousConfig, agentName, platform) !==
+      buildAgentMessagingWorkerSignature(config, agentName, platform)
+  );
+}
+
+function buildAgentMessagingWorkerSignature(config, agentName, platform) {
+  const agent = config?.agents?.[agentName] || null;
+  if (!agent) {
+    return '';
+  }
+
+  const tokenField = platform === 'telegram' ? 'telegramBotToken' : 'discordToken';
+  return JSON.stringify({
+    platform: agent.platform || 'discord',
+    agent: agent.agent || '',
+    token: String(agent[tokenField] || '').trim(),
+  });
+}
+
+function shouldReloadKakaoPlatformWorker(projectRoot, previousConfig, config) {
+  if (!previousConfig) {
+    return false;
+  }
+
+  const service = buildKakaoPlatformServiceSnapshot(projectRoot);
+  if (!(service.running || service.starting)) {
+    return false;
+  }
+
+  const hasKakaoChannels = Object.values(config.channels || {}).some(
+    (channel) => (channel?.platform || 'discord') === 'kakao',
+  );
+  if (!hasKakaoChannels || listConfiguredKakaoRuntimeTargets(projectRoot).length === 0) {
+    return false;
+  }
+
+  return buildKakaoPlatformWorkerSignature(previousConfig) !== buildKakaoPlatformWorkerSignature(config);
+}
+
+function shouldStopKakaoPlatformWorker(projectRoot, previousConfig, config) {
+  if (!previousConfig) {
+    return false;
+  }
+
+  const service = buildKakaoPlatformServiceSnapshot(projectRoot);
+  if (!(service.running || service.starting || service.pidAlive)) {
+    return false;
+  }
+
+  const previousHadKakaoChannels = Object.values(previousConfig.channels || {}).some(
+    (channel) => (channel?.platform || 'discord') === 'kakao',
+  );
+  if (!previousHadKakaoChannels) {
+    return false;
+  }
+
+  const hasKakaoChannels = Object.values(config.channels || {}).some(
+    (channel) => (channel?.platform || 'discord') === 'kakao',
+  );
+  return !hasKakaoChannels || listConfiguredKakaoRuntimeTargets(projectRoot).length === 0;
+}
+
+function buildKakaoPlatformWorkerSignature(config) {
+  return JSON.stringify({
+    connectors: Object.entries(config?.connectors || {})
+      .filter(([, connector]) => connector?.type === 'kakao')
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, connector]) => ({
+        name,
+        relayUrl: connector?.kakaoRelayUrl || '',
+        relayToken: connector?.kakaoRelayToken || '',
+        sessionToken: connector?.kakaoSessionToken || '',
+      })),
+    agents: Object.entries(config?.agents || {})
+      .filter(([, agent]) => (agent?.platform || 'discord') === 'kakao')
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, agent]) => ({
+        name,
+        agent: agent?.agent || '',
+        relayUrl: agent?.kakaoRelayUrl || '',
+        relayToken: agent?.kakaoRelayToken || '',
+        sessionToken: agent?.kakaoSessionToken || '',
+      })),
+  });
+}
+
+async function queueRequiredMessagingWorkerReload(projectRoot, agentName, platform) {
+  try {
+    const service =
+      platform === 'telegram'
+        ? buildTelegramAgentServiceSnapshot(projectRoot, agentName)
+        : buildDiscordAgentServiceSnapshot(projectRoot, agentName);
+    if (!service.running) {
+      return {
+        action: 'reload-config',
+        agentName,
+        platform,
+        queued: false,
+        reason: 'not-running',
+      };
+    }
+
+    const result =
+      platform === 'telegram'
+        ? await queueTelegramServiceAction(projectRoot, {
+            action: 'reload-config',
+            agentName,
+          })
+        : await queueDiscordServiceAction(projectRoot, {
+            action: 'reload-config',
+            agentName,
+          });
+    return {
+      ...result,
+      platform,
+    };
+  } catch (error) {
+    console.error(
+      `Failed to queue ${platform} messaging worker reload for agent "${agentName}": ${toErrorMessage(error)}`,
+    );
+    return {
+      action: 'reload-config',
+      agentName,
+      platform,
+      queued: false,
+      error: toErrorMessage(error),
+    };
+  }
+}
+
+async function queueKakaoPlatformWorkerReload(projectRoot) {
+  try {
+    const command = enqueueKakaoServiceCommand(projectRoot, {
+      action: 'reload-config',
+    });
+    return {
+      action: command.action,
+      agentName: command.agentName,
+      platform: 'kakao',
+      queued: true,
+      requestedAt: command.requestedAt,
+    };
+  } catch (error) {
+    console.error(`Failed to queue Kakao messaging worker reload: ${toErrorMessage(error)}`);
+    return {
+      action: 'reload-config',
+      agentName: null,
+      platform: 'kakao',
+      queued: false,
+      error: toErrorMessage(error),
+    };
+  }
+}
+
+async function autoStopManagedServiceProcess(projectRoot, agentName, platform) {
+  try {
+    if (platform === 'discord') {
+      const result = await stopDiscordServiceProcess(projectRoot, agentName, {
+        allowStopped: true,
+      });
+      return {
+        ...result,
+        action: 'auto-stop',
+        platform,
+      };
+    }
+    if (platform === 'telegram') {
+      const result = await stopTelegramServiceProcess(projectRoot, agentName, {
+        allowStopped: true,
+      });
+      return {
+        ...result,
+        action: 'auto-stop',
+        platform,
+      };
+    }
+    const result = await stopAllKakaoServiceProcesses(projectRoot);
+    return {
+      ...result,
+      action: 'auto-stop',
+      platform: 'kakao',
+    };
+  } catch (error) {
+    console.error(
+      `Failed to auto-stop ${platform} messaging worker${agentName ? ` for agent "${agentName}"` : ''}: ${toErrorMessage(error)}`,
+    );
+    return {
+      action: 'auto-stop',
+      agentName,
+      platform,
+      stopped: false,
+      error: toErrorMessage(error),
+    };
+  }
 }
 
 function isMessagingWorkerAutoStartEnabled() {

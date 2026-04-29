@@ -27,6 +27,7 @@ import {
 } from '../src/telegram-runtime-state.js';
 import {
   buildKakaoServiceSnapshot,
+  listKakaoServiceCommands,
   readKakaoAgentServiceStatus,
   readKakaoServiceStatus,
   writeKakaoServiceStatus,
@@ -1354,6 +1355,248 @@ test('admin server queues manual Discord service commands instead of auto reload
         },
       ],
     );
+  });
+});
+
+test('admin server reloads an already-running Telegram worker when its token changes', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'telegram',
+    telegramBotToken: 'old-token',
+  });
+  config.channels.alerts = buildChannelDefinition(projectRoot, config, 'alerts', {
+    name: 'alerts',
+    platform: 'telegram',
+    telegramChatId: '-100111222333',
+    workspace: 'workspace',
+    agent: 'worker',
+  });
+  saveConfig(projectRoot, config);
+
+  writeTelegramAgentServiceStatus(projectRoot, 'worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'worker',
+    pid: process.pid,
+    running: true,
+    desiredRunning: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: new Date().toISOString(),
+    agents: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        username: 'old_bot',
+        userId: '1',
+      },
+    },
+  });
+
+  await withEnv({ HKCLAW_LITE_CHANNEL_AUTOSTART: '1' }, async () => {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      assert.equal(listTelegramServiceCommands(projectRoot, { agentName: 'worker' }).length, 0);
+
+      const response = await requestJson(`${url}/api/agents`, {
+        method: 'POST',
+        body: {
+          currentName: 'worker',
+          definition: {
+            name: 'worker',
+            agent: 'command',
+            command: `node ${fixturePath}`,
+            platform: 'telegram',
+            telegramBotToken: 'new-token',
+          },
+        },
+      });
+
+      assert.equal(response.response.status, 200, JSON.stringify(response.payload));
+      assert.equal(loadConfig(projectRoot).agents.worker.telegramBotToken, 'new-token');
+
+      const commands = listTelegramServiceCommands(projectRoot, { agentName: 'worker' });
+      assert.deepEqual(
+        commands.map((entry) => ({
+          action: entry.action,
+          agentName: entry.agentName || null,
+        })),
+        [
+          {
+            action: 'reload-config',
+            agentName: 'worker',
+          },
+        ],
+      );
+    });
+  });
+});
+
+test('admin server reloads an already-running Discord worker when its token changes', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'discord',
+    discordToken: 'old-token',
+  });
+  config.channels.ops = buildChannelDefinition(projectRoot, config, 'ops', {
+    name: 'ops',
+    platform: 'discord',
+    discordChannelId: '123456789012345678',
+    workspace: 'workspace',
+    agent: 'worker',
+  });
+  saveConfig(projectRoot, config);
+
+  writeDiscordAgentServiceStatus(projectRoot, 'worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'worker',
+    pid: process.pid,
+    running: true,
+    desiredRunning: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: new Date().toISOString(),
+    agents: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        tag: 'old#0001',
+        userId: '1',
+      },
+    },
+  });
+
+  await withEnv({ HKCLAW_LITE_CHANNEL_AUTOSTART: '1' }, async () => {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      assert.equal(listDiscordServiceCommands(projectRoot, { agentName: 'worker' }).length, 0);
+
+      const response = await requestJson(`${url}/api/agents`, {
+        method: 'POST',
+        body: {
+          currentName: 'worker',
+          definition: {
+            name: 'worker',
+            agent: 'command',
+            command: `node ${fixturePath}`,
+            platform: 'discord',
+            discordToken: 'new-token',
+          },
+        },
+      });
+
+      assert.equal(response.response.status, 200, JSON.stringify(response.payload));
+      assert.equal(loadConfig(projectRoot).agents.worker.discordToken, 'new-token');
+
+      const commands = listDiscordServiceCommands(projectRoot, { agentName: 'worker' });
+      assert.deepEqual(
+        commands.map((entry) => ({
+          action: entry.action,
+          agentName: entry.agentName || null,
+        })),
+        [
+          {
+            action: 'reload-config',
+            agentName: 'worker',
+          },
+        ],
+      );
+    });
+  });
+});
+
+test('admin server reloads the Kakao platform worker when a Kakao connector changes', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+  });
+  config.connectors['kakao-main'] = buildConnectorDefinition('kakao-main', {
+    name: 'kakao-main',
+    type: 'kakao',
+    kakaoRelayUrl: 'https://relay.example/old',
+  });
+  config.channels.support = buildChannelDefinition(projectRoot, config, 'support', {
+    name: 'support',
+    platform: 'kakao',
+    connector: 'kakao-main',
+    kakaoChannelId: 'support',
+    workspace: 'workspace',
+    agent: 'worker',
+  });
+  saveConfig(projectRoot, config);
+
+  writeKakaoServiceStatus(projectRoot, {
+    version: 1,
+    projectRoot,
+    agentName: null,
+    pid: process.pid,
+    running: true,
+    desiredRunning: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: new Date().toISOString(),
+    agents: {
+      'kakao-main': {
+        agent: '',
+        tokenConfigured: true,
+        connected: true,
+        relayUrl: 'https://relay.example/old',
+        pairedUserId: 'user-1',
+      },
+    },
+  });
+
+  await withEnv({ HKCLAW_LITE_CHANNEL_AUTOSTART: '1' }, async () => {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      assert.equal(listKakaoServiceCommands(projectRoot).length, 0);
+
+      const response = await requestJson(`${url}/api/connectors`, {
+        method: 'POST',
+        body: {
+          currentName: 'kakao-main',
+          definition: {
+            name: 'kakao-main',
+            type: 'kakao',
+            kakaoRelayUrl: 'https://relay.example/new',
+          },
+        },
+      });
+
+      assert.equal(response.response.status, 200, JSON.stringify(response.payload));
+      assert.equal(loadConfig(projectRoot).connectors['kakao-main'].kakaoRelayUrl, 'https://relay.example/new');
+
+      const commands = listKakaoServiceCommands(projectRoot);
+      assert.deepEqual(
+        commands.map((entry) => ({
+          action: entry.action,
+          agentName: entry.agentName || null,
+        })),
+        [
+          {
+            action: 'reload-config',
+            agentName: null,
+          },
+        ],
+      );
+    });
   });
 });
 

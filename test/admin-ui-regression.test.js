@@ -49,8 +49,13 @@ test('agents page keeps the operator surface simple', () => {
   assert.match(appSource, /VIEW_NAMES/u);
   assert.match(appSource, /window\.location\.hash/u);
   assert.match(appSource, /renderAgentDetailPanel/u);
+  assert.match(appSource, /연결 시작/u);
+  assert.match(appSource, /수신 연결/u);
   assert.doesNotMatch(appSource, /agentSearch/u);
   assert.doesNotMatch(appSource, /agentFilter/u);
+  assert.doesNotMatch(appSource, /renderButtonLabel\('play', '실행'\)/u);
+  assert.doesNotMatch(appSource, /Heartbeat/u);
+  assert.doesNotMatch(appSource, /메시징 플랫폼/u);
   assert.doesNotMatch(viewsSource, /data-form="agent-filters"/u);
   assert.doesNotMatch(viewsSource, /name="agentSearch"/u);
   assert.doesNotMatch(viewsSource, /name="agentFilter"/u);
@@ -105,7 +110,8 @@ test('channels page exposes reusable connector management', () => {
   assert.doesNotMatch(appSource, /receiver\/start/u);
   assert.doesNotMatch(appSource, /receiver\/restart/u);
   assert.doesNotMatch(appSource, /buildChannelWorkerContext/u);
-  assert.match(appSource, /Kakao 워커 시작/u);
+  assert.match(appSource, /Kakao 연결 시작/u);
+  assert.doesNotMatch(appSource, /Kakao 워커/u);
   assert.doesNotMatch(appSource, /KakaoTalk 수신 워커는 연결 단위로 관리합니다/u);
   assert.doesNotMatch(appSource, /채널은 라우팅 규칙만 저장합니다/u);
   assert.doesNotMatch(appSource, /개 채널/u);
