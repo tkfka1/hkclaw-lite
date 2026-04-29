@@ -26,9 +26,11 @@ const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
 const FALLBACK_KAKAO_RELAY_URL = 'https://k.tess.dev/';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
+const STATE_REFRESH_INTERVAL_MS = 5_000;
 const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'topology', 'ai', 'tokens', 'all']);
 const ADMIN_PASSWORD_FIELD_NAMES = ['currentPassword', 'newPassword', 'confirmPassword'];
 let noticeTimer = null;
+let stateRefreshTimer = null;
 let aiManagerStatusPollTimer = null;
 let aiManagerStatusPollSession = 0;
 
@@ -52,7 +54,6 @@ const state = {
   channelModalOpen: false,
   localLlmModalOpen: false,
   adminPasswordModalOpen: false,
-  runtimeResetModal: null,
   connectorDraft: null,
   channelDraft: null,
   localLlmDraft: null,
@@ -89,26 +90,68 @@ async function boot() {
     return;
   }
   await refreshState();
+  startStateAutoRefresh();
   void refreshAiStatuses();
 }
 
-async function refreshState() {
-  state.loading = true;
-  render();
+async function refreshState(options = {}) {
+  const silent = Boolean(options.silent);
+  if (!silent) {
+    state.loading = true;
+    render();
+  }
 
   try {
     state.data = await requestJson('/api/state');
-    state.notice = null;
+    if (!silent) {
+      state.notice = null;
+    }
   } catch (error) {
     if (handleAuthError(error)) {
-      setNotice('info', '로그인이 필요합니다.');
-    } else {
+      if (!silent) {
+        setNotice('info', '로그인이 필요합니다.');
+      }
+      stopStateAutoRefresh();
+    } else if (!silent) {
       setNotice('error', localizeErrorMessage(error.message));
     }
   } finally {
-    state.loading = false;
+    if (!silent) {
+      state.loading = false;
+    }
     render();
   }
+}
+
+function startStateAutoRefresh() {
+  stopStateAutoRefresh();
+  stateRefreshTimer = window.setInterval(() => {
+    if (canAutoRefreshState()) {
+      void refreshState({ silent: true });
+    }
+  }, STATE_REFRESH_INTERVAL_MS);
+}
+
+function stopStateAutoRefresh() {
+  if (stateRefreshTimer) {
+    window.clearInterval(stateRefreshTimer);
+    stateRefreshTimer = null;
+  }
+}
+
+function canAutoRefreshState() {
+  return Boolean(
+    state.data &&
+      state.auth.authenticated &&
+      !state.busy &&
+      !state.agentModalOpen &&
+      !state.connectorModalOpen &&
+      !state.channelModalOpen &&
+      !state.localLlmModalOpen &&
+      !state.adminPasswordModalOpen &&
+      !state.agentWizard &&
+      !state.aiManager,
+  );
 }
 
 async function refreshAiStatuses() {
@@ -251,22 +294,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'open-reset-channel-runtime-sessions') {
-    openRuntimeResetModal(button.dataset.name, button.dataset.role || '');
-    return;
-  }
-
-  if (action === 'close-runtime-reset-modal') {
-    state.runtimeResetModal = null;
-    render();
-    return;
-  }
-
-  if (action === 'confirm-reset-channel-runtime-sessions') {
-    const modal = state.runtimeResetModal;
-    void resetChannelRuntimeSessions(modal?.channelName, modal?.role || '');
-    return;
-  }
 
   if (action === 'logout' && !state.auth.enabled) {
     return;
@@ -942,6 +969,7 @@ async function login(form) {
   state.loading = false;
   setNotice('info', '로그인했습니다.');
   await refreshState();
+  startStateAutoRefresh();
 }
 
 async function logout() {
@@ -950,6 +978,7 @@ async function logout() {
       method: 'POST',
     });
     state.auth = response;
+    stopStateAutoRefresh();
     state.data = null;
     setNotice('info', '로그아웃했습니다.');
     render();
@@ -1540,49 +1569,6 @@ async function deleteLocalLlmConnection(name) {
   }
 }
 
-function openRuntimeResetModal(channelName, role = '') {
-  const channel = state.data?.channels?.find((entry) => entry.name === channelName);
-  if (!channel) {
-    setNotice('error', '채널을 찾지 못했습니다.');
-    render();
-    return;
-  }
-  state.runtimeResetModal = {
-    channelName,
-    role: role || '',
-  };
-  render();
-}
-
-async function resetChannelRuntimeSessions(name, role = '') {
-  if (!name) {
-    return;
-  }
-
-  try {
-    const query = role ? `?role=${encodeURIComponent(role)}` : '';
-    const response = await mutateJson(
-      `/api/channels/${encodeURIComponent(name)}/runtime-sessions${query}`,
-      {
-        method: 'DELETE',
-      },
-    );
-
-    state.data = response.state;
-    state.runtimeResetModal = null;
-    setNotice(
-      'info',
-      role
-        ? `채널 "${name}"의 ${localizeAgentRole(role)} Claude 세션 매핑을 초기화했습니다.`
-        : `채널 "${name}"의 Claude 세션 매핑을 초기화했습니다.`,
-    );
-    render();
-  } catch (error) {
-    setNotice('error', localizeErrorMessage(error.message));
-    render();
-  }
-}
-
 async function planTopologyFromUi() {
   try {
     const spec = readTopologySpecFromUi();
@@ -1762,7 +1748,6 @@ function render() {
     ${state.channelModalOpen ? renderChannelModal() : ''}
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
-    ${state.runtimeResetModal ? renderRuntimeResetModal() : ''}
   `);
   restoreRenderState(previousViewState);
 }
@@ -2593,7 +2578,7 @@ function renderAgentDetailPanel(agent, context) {
         { label: 'Sandbox', value: agent.sandbox || '기본값' },
       ];
   if (context.agentService?.lastError) {
-    rows.push({ label: '최근 오류', value: context.agentService.lastError });
+    rows.push({ label: '최근 오류', value: localizeWorkerError(context.agentService.lastError) });
   }
   if (!context.connectorOnly && context.platform === 'kakao') {
     rows.push(
@@ -2688,7 +2673,7 @@ function renderKakaoConnectorWorkerPanel(connectors = [], kakaoService = {}) {
     <div class="worker-control-strip">
       <div class="worker-control-main">
         <span class="mini-chip ${escapeAttr(worker.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(worker.label)}</span>
-        ${worker.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(worker.lastError)}</p>` : ''}
+        ${worker.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(localizeWorkerError(worker.lastError))}</p>` : ''}
       </div>
       <div class="inline-actions">
         ${primaryAction}
@@ -2733,7 +2718,7 @@ function renderConnectorCard(connector, kakaoService = {}) {
   `;
 }
 
-function renderChannelList(channels, agents, data = state.data) {
+function renderChannelList(channels) {
   if (!channels.length) {
     return `
       <div class="empty-inline empty-inline--action">
@@ -2742,85 +2727,24 @@ function renderChannelList(channels, agents, data = state.data) {
     `;
   }
 
-  const agentMap = new Map(agents.map((agent) => [agent.name, agent]));
-  const serviceState = {
-    discord: data?.discord || {},
-    telegram: data?.telegram || {},
-    kakao: data?.kakao || {},
-  };
   return `
     <div class="card-list">
       ${channels
         .map((channel) => {
-          const owner = agentMap.get(channel.agent);
           const mode = channel.mode || (channel.reviewer || channel.arbiter ? 'tribunal' : 'single');
-          const runtime = channel.runtime || {};
-          const lastRun = runtime.lastRun || null;
-          const runtimeSessions = sortRuntimeSessions(runtime.sessions || []);
-          const claudeSessions = runtimeSessions.filter(
-            (session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId,
-          );
-          const worker = buildChannelWorkerContext(channel, agentMap, serviceState);
+          const channelMetaParts = [
+            mode === 'tribunal' ? localizeChannelMode(mode) : null,
+            localizeMessagingPlatform(channel.platform || 'discord'),
+            describeChannelTarget(channel),
+          ].filter(Boolean);
           return `
             <article class="card card--stack">
               <div class="card-main">
                 ${renderCardTitle('channels', channel.name, 'calm')}
-                ${renderMetaText(`${localizeChannelMode(mode)} · ${localizeMessagingPlatform(channel.platform || 'discord')} · ${describeChannelConnection(channel)} · ${describeChannelTarget(channel)} · ${describeChannelWorkspace(channel)}`)}
-                <div class="role-list">
-                  <span class="role-item">${renderIcon('agents', 'ui-icon')}<strong>owner</strong><span>${escapeHtml(channel.agent)}</span></span>
-                  ${
-                    mode === 'tribunal' && channel.reviewer
-                      ? `<span class="role-item">${renderIcon('agents', 'ui-icon')}<strong>reviewer</strong><span>${escapeHtml(channel.reviewer)}</span></span>`
-                      : ''
-                  }
-                  ${
-                    mode === 'tribunal' && channel.arbiter
-                      ? `<span class="role-item">${renderIcon('agents', 'ui-icon')}<strong>arbiter</strong><span>${escapeHtml(channel.arbiter)}</span></span>`
-                      : ''
-                  }
-                  ${
-                    owner
-                      ? `<span class="mini-chip">${renderIcon(resolveAgentTypeIcon(owner.agent), 'ui-icon')}${escapeHtml(localizeAgentTypeValue(owner.agent))}</span>`
-                      : ''
-                  }
-                </div>
-                ${
-                  lastRun || runtime.pendingOutboxCount
-                    ? `
-                      <div class="card-tags">
-                        ${
-                          lastRun
-                            ? `<span class="mini-chip ${escapeAttr(resolveRuntimeChipClass(lastRun.status))}">${renderIcon('server', 'ui-icon')}${escapeHtml(localizeRuntimeStatus(lastRun.status))}</span>`
-                            : ''
-                        }
-                        ${
-                          lastRun?.reviewerVerdict
-                            ? `<span class="mini-chip">${renderIcon('shield', 'ui-icon')}${escapeHtml(localizeReviewerVerdict(lastRun.reviewerVerdict))}</span>`
-                            : ''
-                        }
-                        ${
-                          runtime.pendingOutboxCount
-                            ? `<span class="mini-chip">${renderIcon('notice', 'ui-icon')}${escapeHtml(`발송 대기 ${runtime.pendingOutboxCount}`)}</span>`
-                            : ''
-                        }
-                      </div>
-                    `
-                    : ''
-                }
-                <div class="card-tags">
-                  <span class="mini-chip ${escapeAttr(worker.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(worker.label)}</span>
-                  <span class="mini-chip">${renderIcon('settings', 'ui-icon')}${escapeHtml(worker.managementLabel)}</span>
-                </div>
-                ${worker.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(worker.lastError)}</p>` : ''}
-                ${renderChannelRuntimeSessions(channel, runtimeSessions)}
+                ${renderMetaText(channelMetaParts.join(' · '))}
               </div>
               <div class="inline-actions">
                 <button type="button" class="btn-secondary" data-action="edit-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
-                ${
-                  claudeSessions.length > 0
-                    ? `<button type="button" class="btn-secondary" data-action="open-reset-channel-runtime-sessions" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', 'Claude 전체 초기화')}</button>`
-                    : ''
-                }
                 <button type="button" class="btn-danger" data-action="delete-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>
               </div>
             </article>
@@ -2829,52 +2753,6 @@ function renderChannelList(channels, agents, data = state.data) {
         .join('')}
     </div>
   `;
-}
-
-function buildChannelWorkerContext(channel, agentMap, serviceState) {
-  const platform = channel.platform || 'discord';
-  const roleAgentNames = unique([channel.agent, channel.reviewer, channel.arbiter].filter(Boolean));
-  if (platform === 'kakao') {
-    const service = serviceState.kakao?.service || {};
-    const configuredAgentNames = roleAgentNames.filter((agentName) => Boolean(agentMap.get(agentName)?.kakaoRelayConfigured));
-    return {
-      ...buildWorkerStatus({
-        configured: Boolean(channel.connector || configuredAgentNames.length),
-        running: Boolean(service.running),
-        starting: Boolean(service.starting),
-        stale: Boolean(service.stale),
-        lastError: service.lastError || '',
-      }),
-      managementLabel: channel.connector
-        ? `Kakao 연결 ${channel.connector}에서 관리`
-        : configuredAgentNames.length
-          ? `Kakao 에이전트 ${configuredAgentNames.join(', ')}에서 관리`
-          : 'Kakao 연결 설정 필요',
-    };
-  }
-
-  const tokenField = platform === 'telegram' ? 'telegramBotTokenConfigured' : 'discordTokenConfigured';
-  const serviceGroup = platform === 'telegram' ? serviceState.telegram : serviceState.discord;
-  const aggregateService = serviceGroup?.service || {};
-  const services = serviceGroup?.agentServices || {};
-  const configuredAgentNames = roleAgentNames.filter((agentName) => Boolean(agentMap.get(agentName)?.[tokenField]));
-  const channelServices = configuredAgentNames.map((agentName) => services[agentName] || (
-    aggregateService.agents?.[agentName] && (aggregateService.running || aggregateService.starting || aggregateService.stale)
-      ? aggregateService
-      : {}
-  ));
-  return {
-    ...buildWorkerStatus({
-      configured: configuredAgentNames.length > 0,
-      running: channelServices.length > 0 && channelServices.every((service) => service.running),
-      starting: channelServices.some((service) => service.starting),
-      stale: channelServices.some((service) => service.stale),
-      lastError: channelServices.find((service) => service.lastError)?.lastError || '',
-    }),
-    managementLabel: configuredAgentNames.length
-      ? `에이전트 ${configuredAgentNames.join(', ')}에서 관리`
-      : '에이전트 토큰 설정 필요',
-  };
 }
 
 function buildWorkerStatus({ configured, running, starting, stale, lastError }) {
@@ -2931,65 +2809,6 @@ function buildWorkerStatus({ configured, running, starting, stale, lastError }) 
     stale: false,
     lastError: lastError || '',
   };
-}
-
-function sortRuntimeSessions(sessions) {
-  const roleRank = new Map([
-    ['owner', 0],
-    ['reviewer', 1],
-    ['arbiter', 2],
-  ]);
-  return [...sessions].sort((left, right) => {
-    const leftRank = roleRank.get(left?.role) ?? 99;
-    const rightRank = roleRank.get(right?.role) ?? 99;
-    return leftRank - rightRank || String(left?.role || '').localeCompare(String(right?.role || ''));
-  });
-}
-
-function renderChannelRuntimeSessions(channel, sessions) {
-  if (!sessions.length) {
-    return '';
-  }
-  const claudeCount = sessions.filter(
-    (session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId,
-  ).length;
-  return `
-    <div class="runtime-session-panel" aria-label="채널 런타임 세션">
-      <div class="runtime-session-head">
-        <span>${renderIcon('ai', 'ui-icon')}세션</span>
-        <strong>${escapeHtml(claudeCount ? 'Claude' : '재사용 없음')}</strong>
-      </div>
-      <div class="runtime-session-list">
-        ${sessions
-          .map((session) => {
-            const canReset = session.runtimeBackend === 'claude-cli' && session.runtimeSessionId;
-            return `
-              <div class="runtime-session-row">
-                <div class="runtime-session-main">
-                  <strong>${escapeHtml(`${channel.name}:${session.role || 'unknown'}`)}</strong>
-                  <span>${escapeHtml([
-                    session.agentName || 'agent 미지정',
-                    localizeRuntimeBackend(session.runtimeBackend),
-                    localizeSessionPolicy(session.sessionPolicy),
-                  ].filter(Boolean).join(' · '))}</span>
-                  ${
-                    session.runtimeSessionId
-                      ? `<code>${escapeHtml(formatRuntimeSessionId(session.runtimeSessionId))}</code>`
-                      : ''
-                  }
-                </div>
-                ${
-                  canReset
-                    ? `<button type="button" class="btn-secondary btn-compact" data-action="open-reset-channel-runtime-sessions" data-name="${escapeAttr(channel.name)}" data-role="${escapeAttr(session.role || '')}" ${state.busy ? 'disabled' : ''}>${escapeHtml(`${localizeAgentRole(session.role)} 초기화`)}</button>`
-                    : `<span class="mini-chip">${escapeHtml(localizeSessionPolicy(session.sessionPolicy))}</span>`
-                }
-              </div>
-            `;
-          })
-          .join('')}
-      </div>
-    </div>
-  `;
 }
 
 function buildAiListStatusChip(agentType, status, ready) {
@@ -3589,57 +3408,6 @@ function renderAdminPasswordModal() {
             <button type="submit" class="btn-primary" ${state.busy || hasErrors ? 'disabled' : ''}${hasErrors && errorText ? ` title="${escapeAttr(errorText)}"` : ''}>${renderButtonLabel('edit', submitLabel)}</button>
           </div>
         </form>
-      </div>
-    </section>
-  `;
-}
-
-function renderRuntimeResetModal() {
-  const modal = state.runtimeResetModal || {};
-  const channel = state.data?.channels?.find((entry) => entry.name === modal.channelName) || null;
-  const sessions = sortRuntimeSessions(channel?.runtime?.sessions || []);
-  const targetSessions = modal.role
-    ? sessions.filter((session) => session.role === modal.role)
-    : sessions.filter((session) => session.runtimeBackend === 'claude-cli');
-  const scopeLabel = modal.role ? `${channel?.name || modal.channelName}:${modal.role}` : channel?.name || modal.channelName;
-  const resetLabel = modal.role ? `${localizeAgentRole(modal.role)} role` : '채널 전체 Claude role';
-
-  return `
-    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="Claude 세션 초기화">
-      <div class="modal-backdrop" data-action="close-runtime-reset-modal"></div>
-      <div class="panel modal-card modal-card--small">
-        <div class="section-head">
-          <div class="section-title-group">
-            <span class="section-title-icon">${renderIcon('refresh', 'ui-icon')}</span>
-            <h2>Claude 세션 초기화</h2>
-          </div>
-          <button type="button" class="btn-secondary" data-action="close-runtime-reset-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
-        </div>
-        <div class="runtime-reset-body">
-          <p><strong>${escapeHtml(scopeLabel)}</strong>의 저장된 Claude CLI 세션 매핑을 지웁니다.</p>
-          <p>삭제 대상은 ${escapeHtml(resetLabel)}입니다. 다음 실행부터 새 Claude 세션으로 시작하고, 과거 run 기록과 메시지는 유지됩니다.</p>
-          ${
-            targetSessions.length
-              ? `
-                  <div class="runtime-reset-targets">
-                    ${targetSessions
-                      .map((session) => `
-                        <span class="mini-chip">${escapeHtml([
-                          session.role || 'unknown',
-                          session.agentName || 'agent 미지정',
-                          formatRuntimeSessionId(session.runtimeSessionId),
-                        ].filter(Boolean).join(' · '))}</span>
-                      `)
-                      .join('')}
-                  </div>
-                `
-              : '<p class="field-hint">현재 지울 Claude 세션 매핑이 없습니다.</p>'
-          }
-        </div>
-        <div class="actions">
-          <button type="button" class="btn-danger" data-action="confirm-reset-channel-runtime-sessions" ${state.busy || !targetSessions.length ? 'disabled' : ''}>${renderButtonLabel('refresh', '초기화')}</button>
-          <button type="button" class="btn-secondary" data-action="close-runtime-reset-modal" ${state.busy ? 'disabled' : ''}>취소</button>
-        </div>
       </div>
     </section>
   `;
@@ -6104,96 +5872,19 @@ function describeChannelTarget(channel) {
   return `${channel?.discordChannelId || '-'}${guildSuffix}`;
 }
 
-function describeChannelConnection(channel) {
-  return channel?.connector ? `연결 ${channel.connector}` : '기존 연결';
-}
 
-function describeChannelWorkspace(channel) {
-  const baseWorkspace = channel?.workspace || getDefaultChannelWorkspace();
-  const overrides = [
-    channel?.ownerWorkspace ? `owner=${channel.ownerWorkspace}` : null,
-    channel?.reviewerWorkspace ? `reviewer=${channel.reviewerWorkspace}` : null,
-    channel?.arbiterWorkspace ? `arbiter=${channel.arbiterWorkspace}` : null,
-  ].filter(Boolean);
-  return overrides.length > 0
-    ? `${baseWorkspace} · ${overrides.join(' · ')}`
-    : baseWorkspace;
-}
-
-function localizeRuntimeStatus(value) {
-  if (value === 'completed') {
-    return '최근 완료';
-  }
-  if (value === 'failed') {
-    return '실패';
-  }
-  if (value === 'owner_running') {
-    return 'owner 실행 중';
-  }
-  if (value === 'reviewer_running') {
-    return 'reviewer 실행 중';
-  }
-  if (value === 'arbiter_running') {
-    return 'arbiter 실행 중';
-  }
-  if (value === 'awaiting_revision') {
-    return '수정 대기';
-  }
-  if (value === 'queued') {
-    return '대기';
-  }
-  return value || '';
-}
-
-function localizeRuntimeBackend(value) {
-  if (value === 'claude-cli') {
-    return 'Claude CLI';
-  }
-  return value || 'backend 없음';
-}
-
-function localizeSessionPolicy(value) {
-  if (value === 'sticky') {
-    return 'sticky';
-  }
-  if (value === 'ephemeral') {
-    return 'ephemeral';
-  }
-  return value || 'policy 없음';
-}
-
-function formatRuntimeSessionId(value) {
-  const normalized = String(value || '').trim();
-  if (!normalized) {
+function localizeWorkerError(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
     return '';
   }
-  if (normalized.length <= 12) {
-    return normalized;
+  if (/ECONNREFUSED|ENOTFOUND|fetch failed|network|socket|TLS|timeout/iu.test(raw)) {
+    return '외부 API 연결이 잠시 실패했습니다. 워커가 자동으로 다시 시도합니다.';
   }
-  return `${normalized.slice(0, 8)}…${normalized.slice(-4)}`;
-}
-
-function localizeReviewerVerdict(value) {
-  if (value === 'approved') {
-    return '승인';
+  if (/auth|unauthorized|forbidden|login|401|403/iu.test(raw)) {
+    return '인증이 실패했습니다. 토큰이나 로그인 상태를 확인하세요.';
   }
-  if (value === 'blocked') {
-    return '수정 필요';
-  }
-  if (value === 'invalid') {
-    return '판정 오류';
-  }
-  return value || '';
-}
-
-function resolveRuntimeChipClass(status) {
-  if (status === 'completed') {
-    return 'mini-chip--ok';
-  }
-  if (status === 'failed') {
-    return 'mini-chip--danger';
-  }
-  return '';
+  return raw.length > 160 ? `${raw.slice(0, 160)}…` : raw;
 }
 
 function localizeAgentTypeValue(value) {

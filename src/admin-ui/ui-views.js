@@ -54,7 +54,7 @@ export function renderChannelsView(ctx) {
         </div>
         <button type="button" class="btn-primary" data-action="open-channel-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}채널 추가</button>
       </div>
-      ${renderChannelList(state.data.channels, state.data.agents, state.data)}
+      ${renderChannelList(state.data.channels)}
     </section>
     <section class="panel section-panel">
       <div class="section-head">

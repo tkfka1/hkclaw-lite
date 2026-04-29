@@ -58,16 +58,39 @@ test('agents page keeps the operator surface simple', () => {
   assert.doesNotMatch(viewsSource, /전체 \$\{stats\.agents\.length\}/u);
 });
 
-test('channels page exposes role-scoped runtime session controls', () => {
+test('channels page keeps cards focused on the actual receiving target', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(appSource, /const channelMetaParts = \[/u);
+  assert.match(appSource, /describeChannelTarget\(channel\)/u);
+  assert.doesNotMatch(appSource, /renderChannelRuntimeSessions/u);
+  assert.doesNotMatch(appSource, /open-reset-channel-runtime-sessions/u);
+  assert.doesNotMatch(appSource, /confirm-reset-channel-runtime-sessions/u);
+  assert.doesNotMatch(appSource, /runtimeResetModal/u);
+  assert.doesNotMatch(appSource, /buildChannelWorkerContext/u);
+  assert.doesNotMatch(appSource, /worker\.managementLabel/u);
+  assert.doesNotMatch(appSource, /localizeRuntimeStatus/u);
+  assert.doesNotMatch(appSource, /localizeRuntimeBackend/u);
+  assert.doesNotMatch(appSource, /localizeSessionPolicy/u);
+  assert.doesNotMatch(appSource, /resolveRuntimeChipClass/u);
+  assert.doesNotMatch(appSource, /formatRuntimeSessionId/u);
+  assert.doesNotMatch(appSource, /pendingOutboxCount/u);
+  assert.doesNotMatch(styles, /runtime-session/u);
+  assert.doesNotMatch(styles, /runtime-reset/u);
+});
+
+test('admin state auto-refresh keeps recovered worker status from looking stuck', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
 
-  assert.match(appSource, /renderChannelRuntimeSessions/u);
-  assert.match(appSource, /data-role=/u);
-  assert.match(appSource, /open-reset-channel-runtime-sessions/u);
-  assert.match(appSource, /confirm-reset-channel-runtime-sessions/u);
-  assert.match(appSource, /channel\.name.*session\.role/us);
-  assert.doesNotMatch(appSource, /채널\+역할 세션 \$\{sessions\.length\}/u);
-  assert.doesNotMatch(appSource, /run \$\{session\.runCount/u);
+  assert.match(appSource, /STATE_REFRESH_INTERVAL_MS\s*=\s*5_000/u);
+  assert.match(appSource, /function startStateAutoRefresh/u);
+  assert.match(appSource, /refreshState\(\{ silent: true \}\)/u);
+  assert.match(appSource, /function canAutoRefreshState/u);
+  assert.match(appSource, /function localizeWorkerError/u);
+  assert.match(appSource, /외부 API 연결이 잠시 실패했습니다/u);
+  assert.doesNotMatch(appSource, /escapeHtml\(worker\.lastError\)/u);
+  assert.doesNotMatch(appSource, /value: context\.agentService\.lastError/u);
 });
 
 test('channels page exposes reusable connector management', () => {
@@ -81,7 +104,7 @@ test('channels page exposes reusable connector management', () => {
   assert.doesNotMatch(appSource, /restart-channel-receiver/u);
   assert.doesNotMatch(appSource, /receiver\/start/u);
   assert.doesNotMatch(appSource, /receiver\/restart/u);
-  assert.match(appSource, /buildChannelWorkerContext/u);
+  assert.doesNotMatch(appSource, /buildChannelWorkerContext/u);
   assert.match(appSource, /Kakao 워커 시작/u);
   assert.doesNotMatch(appSource, /KakaoTalk 수신 워커는 연결 단위로 관리합니다/u);
   assert.doesNotMatch(appSource, /채널은 라우팅 규칙만 저장합니다/u);
