@@ -332,6 +332,8 @@ test('resolveManagedAgentCli uses the bundled package json override', () => {
 
   assert.equal(resolved?.source, 'bundled');
   assert.equal(resolved?.command, process.execPath);
+  assert.equal(resolved?.packageName, '@openai/codex');
+  assert.equal(resolved?.packageVersion, '0.0.0-test');
   assert.deepEqual(resolved?.argsPrefix, [bundledScriptPath]);
 });
 
@@ -344,6 +346,8 @@ test('resolveManagedAgentCli prefers the bundled Codex native binary when availa
   });
 
   assert.equal(resolved?.source, 'bundled');
+  assert.equal(resolved?.packageName, '@openai/codex');
+  assert.equal(resolved?.packageVersion, '0.0.0-test');
   assert.match(resolved?.command || '', /codex-linux-x64\/vendor\/x86_64-unknown-linux-musl\/codex\/codex$/u);
   assert.deepEqual(resolved?.argsPrefix, []);
   assert.match(resolved?.envPatch?.PATH || '', /^.+codex-linux-x64\/vendor\/x86_64-unknown-linux-musl\/path/u);

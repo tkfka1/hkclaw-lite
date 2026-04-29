@@ -2205,6 +2205,7 @@ async function startCodexAuthFlow(projectRoot, payload = {}) {
 
   const spec = resolveAgentAuthCommand('codex', 'login', payload);
   const env = buildManagedAgentEnv(projectRoot, 'codex');
+  const runtime = inspectAgentRuntime(projectRoot, { agent: 'codex' });
   const child = spawnResolvedCommand(spec.command, spec.args, {
     agentType: 'codex',
     cwd: process.cwd(),
@@ -2289,6 +2290,7 @@ async function startCodexAuthFlow(projectRoot, payload = {}) {
     output: flow.output || '(출력 없음)',
     details: {
       summary: flow.code ? '링크를 열고 코드를 입력하세요.' : '로그인을 시작했습니다.',
+      ...buildRuntimeDetailFields(runtime),
       url: flow.url,
       code: flow.code,
       loginStarted: true,
@@ -2430,8 +2432,10 @@ async function startClaudeAuthFlow(projectRoot, payload = {}) {
         completionHint:
           '같은 환경의 터미널에서 Claude CLI 로그인을 완료한 뒤 상태 확인을 누르세요.',
         loginMode,
-        runtimeSource: runtime.source,
-        runtimeDetail: runtime.detail,
+        ...buildRuntimeDetailFields({
+          ready: true,
+          ...runtime,
+        }),
         sharedLogin: true,
         authScope: 'local-user',
         externalCli: true,
@@ -2477,6 +2481,10 @@ async function startClaudeAuthFlow(projectRoot, payload = {}) {
       details: {
         summary: '브라우저에서 로그인을 완료하세요.',
         loginStarted: true,
+        ...buildRuntimeDetailFields({
+          ready: true,
+          ...runtime,
+        }),
         requiresCode: true,
         completionHint:
           '브라우저 인증 뒤 최종 callback URL 전체를 붙여넣고 로그인 완료를 누르세요.',
@@ -2514,8 +2522,10 @@ async function completeClaudeAuthFlow(projectRoot, payload = {}) {
           loggedIn: false,
           pendingLogin: false,
           requiresCode: false,
-          runtimeSource: runtime.source,
-          runtimeDetail: runtime.detail,
+          ...buildRuntimeDetailFields({
+            ready: true,
+            ...runtime,
+          }),
           sharedLogin: true,
           authScope: 'local-user',
           externalCli: true,
@@ -2539,6 +2549,7 @@ async function completeClaudeAuthFlow(projectRoot, payload = {}) {
   );
 
   try {
+    const runtime = resolveClaudeCli(buildManagedAgentEnv(projectRoot, 'claude-code'));
     const completion = await flow.bridge.request('auth.complete', {
       authorizationCode: callback.authorizationCode,
       state: resolvedState,
@@ -2557,6 +2568,10 @@ async function completeClaudeAuthFlow(projectRoot, payload = {}) {
       details: {
         summary: 'Claude Code CLI 로그인 완료',
         loggedIn: true,
+        ...buildRuntimeDetailFields({
+          ready: Boolean(runtime),
+          ...(runtime || {}),
+        }),
         authMethod: 'oauth',
         account,
       },
@@ -2615,6 +2630,10 @@ async function startGeminiAuthFlow(projectRoot) {
     details: {
       summary: '브라우저에서 Google 로그인을 완료하세요.',
       loginStarted: true,
+      ...buildRuntimeDetailFields({
+        ready: true,
+        ...authRuntime.cli,
+      }),
       requiresCode: true,
       completionHint: '브라우저 인증 뒤 표시된 authorization code를 붙여넣고 로그인 완료를 누르세요.',
       pendingLogin: true,
@@ -2659,8 +2678,11 @@ async function completeGeminiAuthFlow(projectRoot, payload = {}) {
     details: {
       summary: 'Gemini CLI Google 로그인 완료',
       loggedIn: true,
+      ...buildRuntimeDetailFields({
+        ready: true,
+        ...authRuntime.cli,
+      }),
       ready: true,
-      runtimeReady: true,
       authMethod: 'google',
       account,
     },
@@ -2689,6 +2711,10 @@ async function logoutGeminiAuthFlow(projectRoot) {
     details: {
       summary: '로그아웃됨',
       loggedIn: false,
+      ...buildRuntimeDetailFields({
+        ready: true,
+        ...authRuntime.cli,
+      }),
       authMethod: 'google',
     },
     exitCode: 0,
@@ -3005,6 +3031,7 @@ async function readGeminiAuthState(projectRoot) {
 
 async function readAgentStatus(projectRoot, agentType, payload = {}) {
   if (agentType === 'codex') {
+    const runtime = inspectAgentRuntime(projectRoot, { agent: 'codex' });
     const authResult = await runManagedCliAuthAction(projectRoot, agentType, 'status', payload);
     const loggedIn = Boolean(authResult?.details?.loggedIn);
     if (loggedIn && getCodexAuthFlow(projectRoot)) {
@@ -3016,13 +3043,17 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
     return {
       ...authResult,
       output: [
+        formatRuntimeStatusLine(runtime),
+        loggedIn ? '로그인: 완료' : '로그인: 미완료',
         authResult.output,
         pendingFlow ? '브라우저 로그인: 진행 중' : '',
         pendingCode ? `디바이스 코드: ${pendingCode}` : '',
-        '인증 저장소: 이 머신의 로컬 Codex 로그인 상태를 그대로 사용합니다.',
+        '인증 저장소: hkclaw-lite 서버 사용자 HOME의 Codex 세션',
       ].filter(Boolean).join('\n'),
       details: {
         ...(authResult.details || {}),
+        ...buildRuntimeDetailFields(runtime),
+        ready: Boolean(runtime.ready && loggedIn),
         pendingLogin: Boolean(pendingFlow),
         requiresCode: Boolean(pendingFlow),
         completionHint: pendingFlow
@@ -3031,7 +3062,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
         url: pendingUrl,
         code: pendingCode,
         sharedLogin: true,
-        authScope: 'local-user',
+        authScope: 'server-user-home',
       },
     };
   }
@@ -3064,11 +3095,11 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
     const activeFlow = loggedIn ? null : getClaudeAuthFlow(projectRoot);
     const ready = Boolean(runtime.ready && loggedIn);
     const outputLines = [
-      runtime.ready ? '런타임: 준비됨' : `런타임: ${runtime.detail || '미설치'}`,
+      formatRuntimeStatusLine(runtime),
       loggedIn
         ? `로그인: 완료 (${authResult.details.authMethod || 'account'})`
         : '로그인: 미완료',
-      '인증 저장소: 이 머신의 로컬 Claude 로그인 상태를 그대로 사용합니다.',
+      '인증 저장소: hkclaw-lite 서버 사용자 HOME의 Claude 세션',
       activeFlow
         ? `브라우저 로그인: 진행 중 (${activeFlow.loginMode === 'console' ? 'console' : 'claude.ai'})`
         : '',
@@ -3087,9 +3118,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
           : activeFlow
             ? 'Claude Code CLI 브라우저 로그인 진행 중'
             : 'Claude Code CLI 로그인이 필요합니다.',
-        runtimeReady: runtime.ready,
-        runtimeSource: runtime.source || '',
-        runtimeDetail: runtime.detail || '',
+        ...buildRuntimeDetailFields(runtime),
         ready,
         pendingLogin: Boolean(activeFlow),
         requiresCode: Boolean(activeFlow),
@@ -3100,7 +3129,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
         manualUrl: activeFlow?.manualUrl || '',
         automaticUrl: activeFlow?.automaticUrl || '',
         sharedLogin: true,
-        authScope: 'local-user',
+        authScope: 'server-user-home',
         externalCli: runtime.source === 'external',
       },
     };
@@ -3132,7 +3161,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
     const ready = runtimeReady && loggedIn;
     const activeFlow = loggedIn ? null : getGeminiAuthFlow(projectRoot);
     const outputLines = [
-      runtimeReady ? '런타임: 준비됨' : `런타임: ${runtime.detail || '미설치'}`,
+      formatRuntimeStatusLine(runtime),
       loggedIn
         ? `Google 로그인: 완료${geminiLogin.email ? ` (${geminiLogin.email})` : ''}`
         : 'Google 로그인: 미완료',
@@ -3154,7 +3183,7 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
               ? 'Gemini CLI Google 로그인이 필요합니다.'
               : '런타임 준비 필요',
         loggedIn,
-        runtimeReady,
+        ...buildRuntimeDetailFields(runtime),
         ready,
         authMethod: loggedIn ? 'google' : 'none',
         email: geminiLogin.email || '',
@@ -3208,6 +3237,33 @@ async function readAgentStatus(projectRoot, agentType, payload = {}) {
   }
 
   assert(false, `Auth actions are not supported for agent type "${agentType}".`);
+}
+
+function buildRuntimeDetailFields(runtime = {}) {
+  return {
+    runtimeReady: Boolean(runtime.ready),
+    runtimeSource: runtime.source || '',
+    runtimePackageName: runtime.packageName || '',
+    runtimePackageVersion: runtime.packageVersion || '',
+    runtimeDetail: runtime.detail || '',
+  };
+}
+
+function formatRuntimeStatusLine(runtime = {}) {
+  if (!runtime.ready) {
+    return `런타임: ${runtime.detail || '미설치'}`;
+  }
+  const packageLabel = formatRuntimePackageLabel(runtime);
+  return packageLabel ? `런타임: 준비됨 (${packageLabel})` : '런타임: 준비됨';
+}
+
+function formatRuntimePackageLabel(runtime = {}) {
+  const packageName = String(runtime.packageName || '').trim();
+  const packageVersion = String(runtime.packageVersion || '').trim();
+  if (!packageName) {
+    return '';
+  }
+  return packageVersion ? `${packageName}@${packageVersion}` : packageName;
 }
 
 async function runManagedCliAuthAction(projectRoot, agentType, action, payload = {}) {

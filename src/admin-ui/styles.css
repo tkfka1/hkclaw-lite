@@ -567,6 +567,8 @@ strong,
 .detail-list,
 .wizard-auth,
 .wizard-result,
+.runtime-summary-card,
+.model-field,
 .login-panel,
 .usage-summary-card,
 .local-llm-current,
@@ -595,7 +597,9 @@ strong,
 .card-tags,
 .actions,
 .wizard-auth-actions,
-.wizard-auth-state {
+.wizard-auth-state,
+.model-actions,
+.model-field-head {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -2339,12 +2343,110 @@ button:focus-visible {
   background: rgba(53, 92, 255, 0.07);
 }
 
+.runtime-summary-card {
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(216, 225, 234, 0.92);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.runtime-summary-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.runtime-summary-main p {
+  margin: 3px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.runtime-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.runtime-path {
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .modal-card--ai {
-  width: min(720px, calc(100vw - 24px));
+  width: min(900px, calc(100vw - 24px));
 }
 
 .auth-form-grid {
   align-items: stretch;
+}
+
+.wizard-auth-action-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.wizard-auth-actions--primary,
+.wizard-auth-actions--secondary {
+  align-items: center;
+}
+
+.wizard-auth-actions--primary {
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.035);
+}
+
+.wizard-auth-actions--secondary {
+  gap: 8px;
+}
+
+.model-field-head {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.model-mode-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.model-default-card {
+  display: grid;
+  gap: 3px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(53, 92, 255, 0.12);
+  background: rgba(53, 92, 255, 0.055);
+}
+
+.model-default-card strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.model-default-card span {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.model-actions {
+  align-items: center;
 }
 
 @media (max-width: 1080px) {
@@ -2497,9 +2599,14 @@ button:focus-visible {
 
   .inline-actions,
   .wizard-auth-actions,
-  .wizard-auth-state {
+  .wizard-auth-state,
+  .model-actions {
     width: 100%;
     display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .model-mode-row {
     grid-template-columns: 1fr;
   }
 

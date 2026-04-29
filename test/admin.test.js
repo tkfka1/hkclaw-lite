@@ -2592,18 +2592,24 @@ test('admin server reports codex, Claude ACP, Gemini, and local LLM status detai
         const snapshot = await requestJson(`${url}/api/ai-statuses`);
         assert.equal(snapshot.response.status, 200, JSON.stringify(snapshot.payload));
         assert.equal(snapshot.payload.statuses.codex.authResult.details.loggedIn, true);
+        assert.equal(snapshot.payload.statuses.codex.authResult.details.runtimePackageName, '@openai/codex');
+        assert.equal(snapshot.payload.statuses.codex.authResult.details.runtimePackageVersion, '0.0.0-test');
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.ready, true);
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.loggedIn, true);
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.authMethod, 'claudeai');
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.runtimeSource, 'bundled');
+        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.runtimePackageName, '@anthropic-ai/claude-agent-sdk');
+        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.runtimePackageVersion, '0.0.0-test');
         assert.match(
           snapshot.payload.statuses['claude-code'].authResult.details.runtimeDetail,
-          /@anthropic-ai\/claude-agent-sdk/u,
+          /@anthropic-ai\/claude-agent-sdk@0\.0\.0-test/u,
         );
         assert.equal('credentialKey' in snapshot.payload.statuses['claude-code'].authResult.details, false);
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.ready, true);
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.loggedIn, true);
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.authMethod, 'google');
+        assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.runtimePackageName, '@google/gemini-cli');
+        assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.runtimePackageVersion, '0.0.0-test');
         assert.equal('credentialKey' in snapshot.payload.statuses['gemini-cli'].authResult.details, false);
         assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.baseUrl, 'http://127.0.0.1:11434/v1');
         assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.primaryConnection, 'LLM1');

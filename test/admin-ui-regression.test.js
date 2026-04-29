@@ -211,7 +211,14 @@ test('AI auth manager explains the Claude and browser login flow before actions'
   assert.match(appSource, /3\. 브라우저 완료 후 주소 붙여넣기/u);
   assert.match(appSource, /외부 Claude CLI는 웹 callback 단계가 없습니다/u);
   assert.match(appSource, /showCompleteLoginButton/u);
+  assert.match(appSource, /function\s+renderAiRuntimeSummary\s*\(/u);
+  assert.match(appSource, /runtimePackageVersion/u);
+  assert.match(appSource, /hkclaw-lite가 포함한 Codex CLI/u);
+  assert.match(appSource, /모델 목록 불러오기/u);
+  assert.doesNotMatch(appSource, /Codex는 hkclaw-lite 전용 저장소/u);
   assert.match(styles, /\.modal-card--ai\s*\{/u);
+  assert.match(styles, /\.runtime-summary-card/u);
+  assert.match(styles, /\.model-default-card/u);
   assert.match(styles, /\.auth-step\.is-active/u);
 });
 

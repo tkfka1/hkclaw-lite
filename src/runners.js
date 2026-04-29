@@ -1068,8 +1068,10 @@ export function resolveManagedAgentCli(agentType, env = process.env) {
     source: 'bundled',
     command: process.execPath,
     argsPrefix: [bundled.scriptPath],
+    packageName: spec.packageName,
+    packageVersion: bundled.packageVersion || '',
     scriptPath: bundled.scriptPath,
-    detail: `${spec.packageName} (${bundled.scriptPath})`,
+    detail: formatRuntimeDetail(spec.packageName, bundled.packageVersion, bundled.scriptPath),
     envPatch: {},
   };
 }
@@ -1109,6 +1111,7 @@ export function resolveClaudeCli(env = process.env) {
   const spec = MANAGED_AGENT_RUNTIMES['claude-code'];
   const packageJsonOverride = String(env[spec.packageJsonEnv] || '').trim();
   let packageJsonPath = packageJsonOverride;
+  let packageJson = null;
   if (!packageJsonPath) {
     try {
       packageJsonPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk/package.json');
@@ -1126,6 +1129,12 @@ export function resolveClaudeCli(env = process.env) {
     }
   }
 
+  try {
+    packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  } catch {
+    packageJson = null;
+  }
+
   const cliPath = path.resolve(path.dirname(packageJsonPath), 'cli.js');
   if (!fs.existsSync(cliPath)) {
     return null;
@@ -1135,7 +1144,9 @@ export function resolveClaudeCli(env = process.env) {
     source: 'bundled',
     command: process.execPath,
     argsPrefix: [cliPath],
-    detail: `@anthropic-ai/claude-agent-sdk (${cliPath})`,
+    packageName: spec.packageName,
+    packageVersion: typeof packageJson?.version === 'string' ? packageJson.version : '',
+    detail: formatRuntimeDetail(spec.packageName, packageJson?.version, cliPath),
     envPatch: {},
   };
 }
@@ -1169,6 +1180,8 @@ function resolveExplicitClaudeCli(env = process.env) {
     source: 'external',
     command: resolvedCommand,
     argsPrefix: [],
+    packageName: '',
+    packageVersion: '',
     detail: `external Claude CLI (${resolvedCommand})`,
     envPatch: {},
   };
@@ -1180,6 +1193,8 @@ function buildManagedAgentRuntimeStatus(agentType, workdir) {
   return {
     ready: Boolean(runtime),
     source: runtime?.source || null,
+    packageName: runtime?.packageName || spec.packageName,
+    packageVersion: runtime?.packageVersion || '',
     detail:
       runtime?.detail ||
       `bundled dependency ${spec.packageName} is not installed`,
@@ -1319,6 +1334,7 @@ function resolveCodexNativeBundle(spec, env = process.env) {
   }
 
   const codexPackageDir = path.dirname(codexPackageJsonPath);
+  const codexPackageVersion = readPackageJsonVersion(codexPackageJsonPath);
   const bundleDirCandidates = [
     path.join(path.dirname(codexPackageDir), bundleSpec.packageName.split('/')[1]),
     codexPackageDir,
@@ -1342,7 +1358,9 @@ function resolveCodexNativeBundle(spec, env = process.env) {
       source: 'bundled',
       command: binaryPath,
       argsPrefix: [],
-      detail: `${bundleSpec.packageName} (${binaryPath})`,
+      packageName: spec.packageName,
+      packageVersion: codexPackageVersion,
+      detail: formatRuntimeDetail(spec.packageName, codexPackageVersion, binaryPath),
       envPatch: {
         CODEX_MANAGED_BY_NPM: '1',
         PATH: prependPathSegment(env.PATH || process.env.PATH || '', rgDir),
@@ -1351,6 +1369,20 @@ function resolveCodexNativeBundle(spec, env = process.env) {
   }
 
   return null;
+}
+
+function readPackageJsonVersion(packageJsonPath) {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    return typeof packageJson.version === 'string' ? packageJson.version : '';
+  } catch {
+    return '';
+  }
+}
+
+function formatRuntimeDetail(packageName, version, pathText) {
+  const normalizedVersion = String(version || '').trim();
+  return `${packageName}${normalizedVersion ? `@${normalizedVersion}` : ''} (${pathText})`;
 }
 
 function resolveManagedPackageJson(packageName, overridePath) {

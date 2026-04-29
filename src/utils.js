@@ -206,6 +206,7 @@ export function resolveBundledNodeCli(
     return {
       packageName,
       binaryName,
+      packageVersion: typeof packageJson.version === 'string' ? packageJson.version : '',
       scriptPath,
     };
   } catch {

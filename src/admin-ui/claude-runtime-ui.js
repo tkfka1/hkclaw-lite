@@ -23,8 +23,9 @@ export function getClaudeRuntimeSourceBadge(details = {}) {
 export function getClaudeRuntimeSourceHintLines(details = {}) {
   const lines = [];
   const badge = getClaudeRuntimeSourceBadge(details);
+  const runtimeVersion = formatRuntimeVersion(details);
   if (badge) {
-    lines.push(`런타임: ${badge.label}`);
+    lines.push(`런타임: ${[badge.label, runtimeVersion].filter(Boolean).join(' · ')}`);
   }
   if (details?.runtimeSource === 'external') {
     lines.push('로컬 터미널의 Claude 로그인 상태를 공유합니다. 웹에서는 상태 확인과 테스트만 실행합니다.');
@@ -36,4 +37,13 @@ export function getClaudeRuntimeSourceHintLines(details = {}) {
     lines.push(`경로: ${runtimeDetail}`);
   }
   return lines;
+}
+
+function formatRuntimeVersion(details = {}) {
+  const packageName = String(details?.runtimePackageName || '').trim();
+  const packageVersion = String(details?.runtimePackageVersion || '').trim();
+  if (!packageName && !packageVersion) {
+    return '';
+  }
+  return packageVersion ? `${packageName || 'CLI'} v${packageVersion}` : packageName;
 }

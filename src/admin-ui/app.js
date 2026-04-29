@@ -3164,6 +3164,7 @@ function renderAiModal() {
         <div data-form="ai-manager" class="form">
           ${renderAiManagerGuide(entry.value, ready, authResult, testResult)}
           <div class="ai-modal-body">${renderAiStatusChips(entry.value, authResult, testResult, ready)}</div>
+          ${renderAiRuntimeSummary(entry.value, authResult)}
           ${renderAiUsageSummary(entry.value, usageSummary)}
           ${renderAiAuthFields(entry.value)}
           ${renderAiCredentialFields(entry.value)}
@@ -3171,7 +3172,7 @@ function renderAiModal() {
           ${
             authSupported
               ? `<div class="wizard-auth-action-stack">
-                  <div class="wizard-auth-actions">
+                  <div class="wizard-auth-actions wizard-auth-actions--primary">
                     <button type="button" class="${loginButtonClass}" data-action="ai-auth-login" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('login', labels.login)}</button>
                     ${
                       showCompleteLoginButton
@@ -3197,7 +3198,7 @@ function renderAiModal() {
                       ${renderButtonLabel('play', labels.test)}
                     </button>
                   </div>
-                  <div class="wizard-auth-actions">
+                  <div class="wizard-auth-actions wizard-auth-actions--secondary">
                     <button type="button" class="btn-secondary" data-action="ai-auth-logout" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '로그아웃')}</button>
                     ${
                       credentialEditingSupported && entry.value !== 'local-llm'
@@ -3209,11 +3210,6 @@ function renderAiModal() {
                           >
                             ${renderButtonLabel('shield', '자격정보 저장')}
                           </button>`
-                        : ''
-                    }
-                    ${
-                      entry.value === 'codex'
-                        ? '<div class="field-hint">Codex는 hkclaw-lite 전용 저장소가 아니라 이 머신의 로컬 Codex 로그인 상태를 그대로 사용합니다.</div>'
                         : ''
                     }
                   </div>
@@ -3283,6 +3279,10 @@ function renderAiStatusChips(agentType, authResult, testResult, ready) {
   if (runtimeSourceChip) {
     chips.push(runtimeSourceChip);
   }
+  const versionChip = buildAiRuntimeVersionChip(authResult?.details || {});
+  if (versionChip) {
+    chips.push(versionChip);
+  }
   if (authResult?.details?.configured !== undefined && agentType !== 'codex') {
     const configured = Boolean(authResult?.details?.configured);
     const label = agentType === 'local-llm' ? '연결' : 'API 키';
@@ -3304,25 +3304,129 @@ function renderAiStatusChips(agentType, authResult, testResult, ready) {
 }
 
 function buildAiRuntimeSourceChip(agentType, details) {
-  if (agentType !== 'claude-code') {
+  if (!['codex', 'claude-code', 'gemini-cli'].includes(agentType)) {
     return '';
   }
-  const badge = getClaudeRuntimeSourceBadge(details);
-  if (!badge) {
+  const badge = getAiRuntimeSourceBadge(agentType, details);
+  if (!badge.label) {
     return '';
   }
-  return `<div class="auth-chip ${badge.ok ? 'is-ok' : ''}"${badge.title ? ` title="${escapeAttr(badge.title)}"` : ''}>${escapeHtml(badge.label)}</div>`;
+  return `<div class="auth-chip ${badge.ok ? 'is-ok' : ''}"${badge.title ? ` title="${escapeAttr(badge.title)}"` : ''}>${renderIcon('server', 'ui-icon')}${escapeHtml(badge.label)}</div>`;
 }
 
 function buildAiRuntimeSourceMiniChip(agentType, details) {
-  if (agentType !== 'claude-code') {
+  if (!['codex', 'claude-code', 'gemini-cli'].includes(agentType)) {
     return '';
   }
-  const badge = getClaudeRuntimeSourceBadge(details);
-  if (!badge) {
+  const badge = getAiRuntimeSourceBadge(agentType, details);
+  const version = formatAiRuntimeVersion(details);
+  const label = [badge.label, version].filter(Boolean).join(' · ');
+  if (!label) {
     return '';
   }
-  return `<span class="mini-chip ${badge.ok ? 'mini-chip--ok' : ''}"${badge.title ? ` title="${escapeAttr(badge.title)}"` : ''}>${escapeHtml(badge.label)}</span>`;
+  return `<span class="mini-chip ${badge.ok ? 'mini-chip--ok' : ''}"${badge.title ? ` title="${escapeAttr(badge.title)}"` : ''}>${escapeHtml(label)}</span>`;
+}
+
+function buildAiRuntimeVersionChip(details) {
+  const version = formatAiRuntimeVersion(details);
+  if (!version) {
+    return '';
+  }
+  return `<div class="auth-chip is-ok">${renderIcon('tokens', 'ui-icon')}${escapeHtml(version)}</div>`;
+}
+
+function renderAiRuntimeSummary(agentType, authResult) {
+  if (!['codex', 'claude-code', 'gemini-cli'].includes(agentType)) {
+    return '';
+  }
+  const details = authResult?.details || {};
+  const badge = getAiRuntimeSourceBadge(agentType, details);
+  const runtimeLabel = badge.label || 'CLI 런타임';
+  const version = formatAiRuntimeVersion(details);
+  const detail = optionalDraftText(details.runtimeDetail);
+  const storageLabel = getAiAuthStorageLabel(agentType, details);
+  const body = getAiRuntimeSummaryBody(agentType, details);
+  return `
+    <div class="runtime-summary-card">
+      <div class="runtime-summary-main">
+        <span class="card-title-icon violet">${renderIcon('server', 'ui-icon')}</span>
+        <div>
+          <strong>${escapeHtml(runtimeLabel)}</strong>
+          <p>${escapeHtml(body)}</p>
+        </div>
+      </div>
+      <div class="runtime-summary-meta">
+        ${version ? `<span class="mini-chip mini-chip--ok">${escapeHtml(version)}</span>` : ''}
+        ${storageLabel ? `<span class="mini-chip">${escapeHtml(storageLabel)}</span>` : ''}
+        ${detail ? `<span class="runtime-path" title="${escapeAttr(detail)}">${escapeHtml(detail)}</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function getAiRuntimeSourceBadge(agentType, details = {}) {
+  if (agentType === 'claude-code') {
+    const badge = getClaudeRuntimeSourceBadge(details);
+    if (badge) {
+      return badge;
+    }
+  }
+  if (agentType === 'codex') {
+    return {
+      ok: details.runtimeReady !== false,
+      label: details.runtimeSource === 'bundled' ? '번들 Codex CLI' : 'Codex CLI',
+      title: details.runtimeDetail || '',
+    };
+  }
+  if (agentType === 'gemini-cli') {
+    return {
+      ok: details.runtimeReady !== false,
+      label: details.runtimeSource === 'bundled' ? '번들 Gemini CLI' : 'Gemini CLI',
+      title: details.runtimeDetail || '',
+    };
+  }
+  return { ok: false, label: '', title: '' };
+}
+
+function formatAiRuntimeVersion(details = {}) {
+  const packageName = optionalDraftText(details.runtimePackageName);
+  const version = optionalDraftText(details.runtimePackageVersion);
+  if (!packageName && !version) {
+    return '';
+  }
+  if (!version) {
+    return packageName;
+  }
+  return packageName ? `${packageName} v${version}` : `v${version}`;
+}
+
+function getAiAuthStorageLabel(agentType, details = {}) {
+  if (agentType === 'codex') {
+    return details.authScope === 'server-user-home' ? '서버 HOME 로그인' : '로컬 로그인 공유';
+  }
+  if (agentType === 'claude-code') {
+    return details.externalCli ? '외부 CLI 로그인 공유' : '서버 HOME 로그인';
+  }
+  if (agentType === 'gemini-cli') {
+    return '서버 HOME Google 로그인';
+  }
+  return '';
+}
+
+function getAiRuntimeSummaryBody(agentType, details = {}) {
+  if (agentType === 'codex') {
+    return 'hkclaw-lite가 포함한 Codex CLI를 실행합니다. 로그인 세션은 이 서버 사용자 HOME에 저장됩니다.';
+  }
+  if (agentType === 'claude-code' && details.externalCli) {
+    return '환경변수로 지정한 외부 Claude CLI를 사용합니다. 웹은 로그인 상태 확인과 테스트 호출만 담당합니다.';
+  }
+  if (agentType === 'claude-code') {
+    return 'hkclaw-lite가 포함한 Claude Code CLI 런타임을 사용합니다. 브라우저 로그인 후 callback URL로 완료합니다.';
+  }
+  if (agentType === 'gemini-cli') {
+    return 'hkclaw-lite가 포함한 Gemini CLI를 사용합니다. Google 인증 코드를 붙여넣으면 이 서버 HOME에 저장됩니다.';
+  }
+  return '이 런타임을 통해 상태 확인과 테스트 호출을 실행합니다.';
 }
 
 function renderAiUsageSummary(agentType, usageSummary) {
@@ -5421,16 +5525,25 @@ function renderModelField({
   const placeholder = examples[0] || '';
   const canUseDefault = supportsDefaultModelMode(agentType);
   const canLookupCatalog = supportsModelCatalogLookup(agentType);
+  const modeLabel = modelMode === 'custom' || !canUseDefault
+    ? '모델 직접 지정'
+    : '기본 모델 사용';
   return `
-    <div class="field field-full">
-      <label for="${escapeAttr(inputId)}">${renderRequiredLabel('모델')}</label>
+    <div class="field field-full model-field">
+      <div class="model-field-head">
+        <label for="${escapeAttr(inputId)}">${renderRequiredLabel('모델')}</label>
+        <span class="mini-chip">${escapeHtml(modeLabel)}</span>
+      </div>
       ${
         canUseDefault
           ? `
-              <select name="${escapeAttr(modelModeInputName)}">
-                <option value="default" ${modelMode !== 'custom' ? 'selected' : ''}>default</option>
-                <option value="custom" ${modelMode === 'custom' ? 'selected' : ''}>custom</option>
-              </select>
+              <div class="model-mode-row">
+                <select name="${escapeAttr(modelModeInputName)}" aria-label="모델 선택 방식">
+                  <option value="default" ${modelMode !== 'custom' ? 'selected' : ''}>기본값 사용</option>
+                  <option value="custom" ${modelMode === 'custom' ? 'selected' : ''}>직접 입력</option>
+                </select>
+                <div class="field-hint">기본값은 hkclaw-lite가 런타임별 권장 모델을 선택합니다.</div>
+              </div>
             `
           : ''
       }
@@ -5449,14 +5562,19 @@ function renderModelField({
       }
       ${
         canUseDefault && modelMode !== 'custom'
-          ? '<div class="field-hint">기본 모델 사용</div>'
+          ? `
+              <div class="model-default-card">
+                <strong>기본 모델을 사용합니다</strong>
+                <span>${escapeHtml(examples.length ? `예: ${examples.join(', ')}` : '모델을 비워두고 런타임 기본값을 사용합니다.')}</span>
+              </div>
+            `
           : ''
       }
-      ${examples.length ? `<div class="field-hint">예: ${escapeHtml(examples.join(', '))}</div>` : ''}
+      ${examples.length && (!canUseDefault || modelMode === 'custom') ? `<div class="field-hint">예: ${escapeHtml(examples.join(', '))}</div>` : ''}
       ${
         canLookupCatalog
           ? `
-              <div class="wizard-auth-actions">
+              <div class="model-actions">
                 <button
                   type="button"
                   class="btn-secondary"
@@ -5464,7 +5582,7 @@ function renderModelField({
                   data-scope="${escapeAttr(catalogScope)}"
                   ${state.busy ? 'disabled' : ''}
                 >
-                  모델 불러오기
+                  ${renderButtonLabel('refresh', '모델 목록 불러오기')}
                 </button>
                 ${
                   modelCatalog?.defaultModel
@@ -5475,7 +5593,7 @@ function renderModelField({
                         data-scope="${escapeAttr(catalogScope)}"
                         ${state.busy ? 'disabled' : ''}
                       >
-                        권장 기본값 적용
+                        ${renderButtonLabel('sparkles', '권장 기본값 적용')}
                       </button>`
                     : ''
                 }
