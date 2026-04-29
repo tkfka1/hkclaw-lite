@@ -75,6 +75,16 @@ const fakeKakaoServicePath = path.join(
   'fixtures',
   'fake-kakao-service.mjs',
 );
+const previousChannelAutostart = process.env.HKCLAW_LITE_CHANNEL_AUTOSTART;
+process.env.HKCLAW_LITE_CHANNEL_AUTOSTART = '0';
+
+test.after(() => {
+  if (previousChannelAutostart === undefined) {
+    delete process.env.HKCLAW_LITE_CHANNEL_AUTOSTART;
+  } else {
+    process.env.HKCLAW_LITE_CHANNEL_AUTOSTART = previousChannelAutostart;
+  }
+});
 
 function createProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-test-'));
@@ -1466,6 +1476,124 @@ test('admin snapshot scopes channel worker requirements to connector platform ro
       ],
     );
   });
+});
+
+test('admin server auto-starts receivers for configured channels', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  const previousAutostart = process.env.HKCLAW_LITE_CHANNEL_AUTOSTART;
+  const previousDiscordEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+  const previousTelegramEntry = process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY;
+  const previousKakaoEntry = process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_CHANNEL_AUTOSTART = '1';
+  process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeDiscordServicePath;
+  process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY = fakeTelegramServicePath;
+  process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = fakeKakaoServicePath;
+
+  const config = loadConfig(projectRoot);
+  config.agents['discord-worker'] = buildAgentDefinition(projectRoot, 'discord-worker', {
+    name: 'discord-worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'discord',
+    discordToken: 'discord-token',
+  });
+  config.agents['telegram-worker'] = buildAgentDefinition(projectRoot, 'telegram-worker', {
+    name: 'telegram-worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    platform: 'telegram',
+    telegramBotToken: 'telegram-token',
+  });
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+  });
+  config.connectors['kakao-main'] = buildConnectorDefinition('kakao-main', {
+    name: 'kakao-main',
+    type: 'kakao',
+    kakaoRelayUrl: 'https://relay.example/',
+  });
+  config.channels['discord-ops'] = buildChannelDefinition(projectRoot, config, 'discord-ops', {
+    name: 'discord-ops',
+    platform: 'discord',
+    discordChannelId: '123456789012345678',
+    workspace: 'workspace',
+    agent: 'discord-worker',
+  });
+  config.channels['telegram-alerts'] = buildChannelDefinition(projectRoot, config, 'telegram-alerts', {
+    name: 'telegram-alerts',
+    platform: 'telegram',
+    telegramChatId: '-100111222333',
+    workspace: 'workspace',
+    agent: 'telegram-worker',
+  });
+  config.channels['kakao-support'] = buildChannelDefinition(projectRoot, config, 'kakao-support', {
+    name: 'kakao-support',
+    platform: 'kakao',
+    connector: 'kakao-main',
+    kakaoChannelId: 'support',
+    workspace: 'workspace',
+    agent: 'worker',
+  });
+  saveConfig(projectRoot, config);
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const discord = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.['discord-worker']?.running ? snapshot : null;
+      });
+      assert.equal(discord?.agentServices?.['discord-worker']?.desiredRunning, true);
+
+      const telegram = await waitFor(() => {
+        const snapshot = buildTelegramServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.['telegram-worker']?.running ? snapshot : null;
+      });
+      assert.equal(telegram?.agentServices?.['telegram-worker']?.desiredRunning, true);
+
+      const kakao = await waitFor(() => {
+        const snapshot = buildKakaoServiceSnapshot(projectRoot);
+        return snapshot.running ? snapshot : null;
+      });
+      assert.equal(kakao?.desiredRunning, true);
+
+      const { payload } = await requestJson(`${url}/api/state`);
+      assert.equal(payload.discord.service.running, true);
+      assert.equal(payload.telegram.service.running, true);
+      assert.equal(payload.kakao.service.running, true);
+
+      await Promise.allSettled([
+        requestJson(`${url}/api/discord-service/stop`, { method: 'POST' }),
+        requestJson(`${url}/api/telegram-service/stop`, { method: 'POST' }),
+        requestJson(`${url}/api/kakao-service/stop`, { method: 'POST' }),
+      ]);
+    });
+  } finally {
+    if (previousAutostart === undefined) {
+      process.env.HKCLAW_LITE_CHANNEL_AUTOSTART = '0';
+    } else {
+      process.env.HKCLAW_LITE_CHANNEL_AUTOSTART = previousAutostart;
+    }
+    if (previousDiscordEntry === undefined) {
+      delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousDiscordEntry;
+    }
+    if (previousTelegramEntry === undefined) {
+      delete process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_TELEGRAM_SERVICE_ENTRY = previousTelegramEntry;
+    }
+    if (previousKakaoEntry === undefined) {
+      delete process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY = previousKakaoEntry;
+    }
+  }
 });
 
 test('admin server can start, restart, and stop Discord service', async () => {

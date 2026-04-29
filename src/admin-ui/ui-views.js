@@ -240,7 +240,11 @@ function renderChannelWorkerCard(entry, state, escapeHtml) {
     : '';
   const countLabel = hasChannels ? `${entry.count}개 채널` : '채널 없음';
   const copy = hasChannels
-    ? `${entry.label} 메시지를 받을 채널이 준비되어 있습니다.`
+    ? running || starting
+      ? `${entry.label} 자동 수신 중입니다.`
+      : stale
+        ? `${entry.label} 수신 확인 필요.`
+        : `${entry.label} 채널은 자동 수신 대상입니다.`
     : running || starting || stale
       ? `${entry.label} 수신은 켜져 있지만 받을 채널이 없습니다. 채널을 추가하거나 수신을 꺼도 됩니다.`
       : `${entry.label} 메시지를 받으려면 먼저 채널을 하나 추가하세요.`;

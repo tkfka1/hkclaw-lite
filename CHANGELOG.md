@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.16 - 2026-04-29
+
+### Added
+- Auto-start required Discord, Telegram, and KakaoTalk receivers when configured channels exist.
+
 ## 1.0.15 - 2026-04-29
 
 ### Added
