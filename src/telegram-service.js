@@ -21,6 +21,7 @@ const TELEGRAM_OUTBOX_FLUSH_INTERVAL_MS = 1_000;
 const TELEGRAM_COMMAND_POLL_INTERVAL_MS = 1_000;
 const TELEGRAM_HEARTBEAT_INTERVAL_MS = 10_000;
 const TELEGRAM_UPDATES_TIMEOUT_SECONDS = 2;
+const TELEGRAM_TYPING_ACTION_INTERVAL_MS = 4_000;
 
 export async function serveTelegram(projectRoot, { agentName = null } = {}) {
   const config = loadConfig(projectRoot);
@@ -256,6 +257,7 @@ async function pollTelegramUpdates({
       await handleInboundTelegramMessage({
         projectRoot,
         clients,
+        client,
         inboundAgentName: botName,
         workerAgentName,
         message,
@@ -277,6 +279,7 @@ async function pollTelegramUpdates({
 async function handleInboundTelegramMessage({
   projectRoot,
   clients,
+  client,
   inboundAgentName,
   workerAgentName,
   message,
@@ -320,17 +323,31 @@ async function handleInboundTelegramMessage({
   assert(fs.existsSync(workdir), `Workspace does not exist: ${workdir}`);
 
   let runId = null;
-  try {
-    const result = await executeChannelTurn({
-      projectRoot,
-      config,
-      channel,
-      prompt,
-      workdir,
-    });
-    runId = result.runId || null;
-  } catch (error) {
-    runId = error?.runtimeRunId || null;
+  await withTelegramTypingIndicator(client, chatId, { threadId }, async () => {
+    try {
+      const result = await executeChannelTurn({
+        projectRoot,
+        config,
+        channel,
+        prompt,
+        workdir,
+      });
+      runId = result.runId || null;
+    } catch (error) {
+      runId = error?.runtimeRunId || null;
+      if (runId) {
+        await flushTelegramOutboxForRun(
+          projectRoot,
+          clients,
+          channel,
+          runId,
+          chatId,
+          { agentName: workerAgentName, fallbackThreadId: threadId },
+        );
+      }
+      throw error;
+    }
+
     if (runId) {
       await flushTelegramOutboxForRun(
         projectRoot,
@@ -341,19 +358,55 @@ async function handleInboundTelegramMessage({
         { agentName: workerAgentName, fallbackThreadId: threadId },
       );
     }
-    throw error;
+  });
+}
+
+export async function withTelegramTypingIndicator(client, chatId, options, task) {
+  const stopTyping = startTelegramTypingIndicator(client, chatId, options);
+  try {
+    return await task();
+  } finally {
+    stopTyping();
+  }
+}
+
+function startTelegramTypingIndicator(client, chatId, options = {}) {
+  if (!client?.token || !chatId) {
+    return () => {};
   }
 
-  if (runId) {
-    await flushTelegramOutboxForRun(
-      projectRoot,
-      clients,
-      channel,
-      runId,
-      chatId,
-      { agentName: workerAgentName, fallbackThreadId: threadId },
-    );
-  }
+  const intervalMs = Math.max(
+    100,
+    Number(options.intervalMs || TELEGRAM_TYPING_ACTION_INTERVAL_MS),
+  );
+  const threadId = options.threadId || null;
+  let stopped = false;
+  let inFlight = false;
+
+  const sendTyping = async () => {
+    if (stopped || inFlight) {
+      return;
+    }
+    inFlight = true;
+    try {
+      await sendTelegramChatAction(client, chatId, 'typing', { threadId });
+    } catch (error) {
+      console.error(`Telegram typing indicator error: ${toErrorMessage(error)}`);
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  void sendTyping();
+  const timer = setInterval(() => {
+    void sendTyping();
+  }, intervalMs);
+  timer.unref?.();
+
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 async function processTelegramServiceCommands({
@@ -440,6 +493,20 @@ async function sendTelegramText(client, chatId, text, { threadId = null } = {}) 
       await callTelegramApi(client.token, 'sendMessage', payload);
     }
   }
+}
+
+async function sendTelegramChatAction(client, chatId, action, { threadId = null } = {}) {
+  assert(client?.token, 'Telegram client is not available for this role.');
+  assert(chatId, 'Telegram chat id is required.');
+  const payload = {
+    chat_id: chatId,
+    action,
+    ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+  };
+  if (typeof client.__send === 'function') {
+    return await client.__send('sendChatAction', payload);
+  }
+  return await callTelegramApi(client.token, 'sendChatAction', payload);
 }
 
 function formatTelegramErrorMessage(error) {

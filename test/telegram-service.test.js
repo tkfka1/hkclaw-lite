@@ -8,6 +8,7 @@ import {
   flushPendingTelegramOutbox,
   flushTelegramOutboxForRun,
   formatTelegramRoleMessage,
+  withTelegramTypingIndicator,
 } from '../src/telegram-service.js';
 import {
   enqueueRuntimeOutboxEvent,
@@ -24,6 +25,10 @@ import {
 
 function createProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-telegram-test-'));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 test('telegram formatter labels tribunal roles clearly', () => {
@@ -137,6 +142,39 @@ test('telegram service flushes queued runtime outbox events', async () => {
     limit: 10,
   });
   assert.equal(pending.length, 0);
+});
+
+test('telegram typing indicator stays active while a task runs', async () => {
+  const sent = [];
+  const client = {
+    token: 'telegram-token',
+    async __send(method, payload) {
+      sent.push({ method, payload });
+      return { ok: true };
+    },
+  };
+
+  await withTelegramTypingIndicator(
+    client,
+    '-100123',
+    { threadId: '77', intervalMs: 20 },
+    async () => {
+      await sleep(225);
+    },
+  );
+
+  const actions = sent.filter((entry) => entry.method === 'sendChatAction');
+  assert.ok(actions.length >= 2);
+  assert.ok(actions.every((entry) => entry.payload.action === 'typing'));
+  assert.equal(String(actions[0].payload.chat_id), '-100123');
+  assert.equal(actions[0].payload.message_thread_id, 77);
+
+  const countAfterStop = actions.length;
+  await sleep(130);
+  assert.equal(
+    sent.filter((entry) => entry.method === 'sendChatAction').length,
+    countAfterStop,
+  );
 });
 
 test('telegram service flushes pending outbox events after restart', async () => {

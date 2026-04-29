@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.18 - 2026-04-29
+
+### Added
+- Kept Telegram typing indicators alive while channel turns are processing and flushing responses.
+
 ## 1.0.17 - 2026-04-29
 
 ### Changed
