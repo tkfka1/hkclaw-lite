@@ -88,20 +88,22 @@ jobs:
           fi
 
       - name: Publish package to npm
-        if: steps.npm_status.outputs.published != 'true' && steps.npm_status.outputs.token_available == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
-
-      - name: Note skipped npm publish
-        if: steps.npm_status.outputs.published != 'true' && steps.npm_status.outputs.token_available != 'true'
+        if: steps.npm_status.outputs.published != 'true'
         shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "::warning::Repository secret NPM_TOKEN is not configured; skipping npm publish and continuing with GitHub Release assets."
+          set -euo pipefail
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            npm publish --access public --provenance
+          else
+            echo "::notice::Repository secret NPM_TOKEN is not configured; attempting npm trusted publishing via OIDC."
+            npm publish --access public
+          fi
 
       - name: Prepare Homebrew formula
         id: homebrew_formula
-        if: steps.npm_status.outputs.published == 'true' || steps.npm_status.outputs.token_available == 'true'
         shell: bash
         run: |
           set -euo pipefail
