@@ -2529,6 +2529,7 @@ function renderAgentCard(agent, context) {
 
 function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}, kakaoAgents = {}) {
   const mappedChannels = Array.isArray(agent.mappedChannels) ? agent.mappedChannels : [];
+  const agentPlatform = agent.platform || 'discord';
   const channelPlatforms = unique(
     mappedChannels
       .map((channel) => channel.platform || 'discord')
@@ -2546,10 +2547,18 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
       .map((channel) => channel.platform || 'discord')
       .filter(Boolean),
   );
-  const connectorOnly = mappedChannels.length > 0 && connectorPlatforms.length > 0 && legacyCredentialPlatforms.length === 0;
-  const platform = legacyCredentialPlatforms[0] || channelPlatforms[0] || agent.platform || 'discord';
+  const agentCredentialConfiguredByPlatform = {
+    discord: Boolean(agent.discordTokenConfigured),
+    telegram: Boolean(agent.telegramBotTokenConfigured),
+    kakao: Boolean(agent.kakaoAgentCredentialConfigured),
+  };
+  const ownsConnectorOnlyRoute = mappedChannels.length > 0 && connectorPlatforms.length > 0 && legacyCredentialPlatforms.length === 0;
+  const connectorOnly = ownsConnectorOnlyRoute && agentPlatform === 'kakao' && !agentCredentialConfiguredByPlatform.kakao;
+  const platform = connectorOnly
+    ? connectorPlatforms[0] || channelPlatforms[0] || agentPlatform
+    : agentPlatform;
   const isDiscordPlatform = platform === 'discord';
-  const platformLabels = (channelPlatforms.length ? channelPlatforms : [platform]).map((value) =>
+  const platformLabels = (connectorOnly && connectorPlatforms.length ? connectorPlatforms : [platform]).map((value) =>
     localizeMessagingPlatform(value),
   );
   const platformLabel = platformLabels.join(' / ');

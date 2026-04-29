@@ -118,7 +118,7 @@ export function renderHomebrewFormula({
   end
 
   service do
-    run [opt_bin/"hkclaw-lite", "--root", var/"hkclaw-lite", "admin", "--host", "0.0.0.0", "--port", "5687"]
+    run [opt_bin/"hkclaw-lite", "--root", var/"hkclaw-lite", "admin", "--host", "0.0.0.0", "--port", "5687", "--foreground"]
     working_dir var/"hkclaw-lite"
     keep_alive true
     log_path var/"log/hkclaw-lite.log"

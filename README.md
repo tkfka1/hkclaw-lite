@@ -59,7 +59,13 @@ brew install tkfka1/tap/hkclaw-lite
 hkclaw-lite admin
 ```
 
-백그라운드 서비스로 항상 켜둘 때:
+Homebrew로 설치한 macOS에서는 `hkclaw-lite admin`이 launchd 서비스를 자동 등록/시작한다. 터미널에 묶어서 직접 띄우고 싶을 때만:
+
+```bash
+hkclaw-lite admin --foreground
+```
+
+서비스를 수동으로 관리할 때:
 
 ```bash
 brew services start tkfka1/tap/hkclaw-lite
@@ -67,7 +73,7 @@ brew services restart hkclaw-lite
 brew services stop hkclaw-lite
 ```
 
-Homebrew 서비스는 `/usr/local/var/hkclaw-lite` 또는 `/opt/homebrew/var/hkclaw-lite`를 프로젝트 루트로 쓰고, `hkclaw-lite admin --host 0.0.0.0 --port 5687`로 실행한다.
+Homebrew 서비스는 `/usr/local/var/hkclaw-lite` 또는 `/opt/homebrew/var/hkclaw-lite`를 프로젝트 루트로 쓰고, `0.0.0.0:5687`로 실행한다.
 
 Homebrew formula는 npm release tarball을 받아 `std_npm_args`로 설치하므로 npm 배포 버전과 같은 CLI/선택 의존성(Codex/Gemini/Claude 번들)을 사용한다.
 

@@ -521,6 +521,7 @@ function buildAgentSummaries(projectRoot, config, channels) {
       telegramConnected: Boolean(telegramRuntime.connected),
       telegramUsername: telegramRuntime.username || '',
       telegramService: telegramServiceState,
+      kakaoAgentCredentialConfigured: Boolean(agent.kakaoRelayToken || agent.kakaoSessionToken || kakaoRuntime.tokenConfigured),
       kakaoConnected: Boolean(kakaoRuntime.connected),
       kakaoRelayUrl: kakaoRuntime.relayUrl || agent.kakaoRelayUrl || '',
       kakaoPairingCode: kakaoRuntime.pairingCode || '',

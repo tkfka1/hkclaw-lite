@@ -121,7 +121,10 @@ test('agent cards distinguish connector-managed channels from legacy agent token
 
   assert.match(adminStateSource, /platform:\s*channel\.platform/u);
   assert.match(adminStateSource, /connector:\s*channel\.connector/u);
+  assert.match(adminStateSource, /kakaoAgentCredentialConfigured/u);
   assert.match(appSource, /connectorOnly/u);
+  assert.match(appSource, /agentCredentialConfiguredByPlatform/u);
+  assert.match(appSource, /ownsConnectorOnlyRoute && agentPlatform === 'kakao'/u);
   assert.match(appSource, /Kakao 연결 사용/u);
   assert.match(appSource, /Kakao 수신 사용/u);
   assert.match(appSource, /채널 화면에서 관리/u);

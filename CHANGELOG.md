@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.15 - 2026-04-29
+
+### Added
+- Made Homebrew/macOS `hkclaw-lite admin` automatically start the launchd service, with `--foreground` for direct terminal mode.
+
+### Fixed
+- Kept Telegram agents labeled as Telegram even when their channel list includes Kakao connector-backed routes.
+
 ## 1.0.14 - 2026-04-29
 
 ### Added
