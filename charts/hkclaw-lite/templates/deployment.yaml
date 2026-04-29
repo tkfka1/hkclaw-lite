@@ -123,6 +123,7 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "hkclaw-lite.adminSecretName" . }}
+                optional: true
           {{- end }}
           {{- if .Values.service.enabled }}
           ports:
@@ -207,6 +208,7 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "hkclaw-lite.adminSecretName" . }}
+                optional: true
           {{- end }}
           volumeMounts:
             - name: state

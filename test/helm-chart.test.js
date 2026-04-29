@@ -26,3 +26,15 @@ test('Helm chart defaults to single-Pod Recreate rollouts for RWO state PVCs', (
   assert.match(readme, /READY 2\/2.+한 Pod 안의 웹 어드민 컨테이너와 Kakao sidecar 두 컨테이너/us);
   assert.match(readme, /RollingUpdate의 `maxSurge=1`.+기본 운영 형태와 맞지 않는다/us);
 });
+
+test('Helm chart does not require an initial admin password secret to start', () => {
+  const values = readRepoFile('charts/hkclaw-lite/values.yaml');
+  const deploymentTemplate = readRepoFile('charts/hkclaw-lite/templates/deployment.yaml');
+  const adminSecretTemplate = readRepoFile('charts/hkclaw-lite/templates/admin-secret.yaml');
+
+  assert.match(values, /Admin auth is optional/u);
+  assert.match(values, /login stays disabled/u);
+  assert.match(deploymentTemplate, /secretRef:\n\s+name: \{\{ include "hkclaw-lite\.adminSecretName" \. \}\}\n\s+optional: true/u);
+  assert.doesNotMatch(adminSecretTemplate, /adminSecret\.stringData must contain/u);
+  assert.match(adminSecretTemplate, /\{\{- with \.Values\.adminSecret\.stringData \}\}/u);
+});

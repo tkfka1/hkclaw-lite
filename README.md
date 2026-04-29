@@ -158,7 +158,8 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 - 클러스터 내부 권한이 필요하면 명시적으로 `serviceAccount.automountServiceAccountToken=true` 로 켜고, 필요한 RBAC를 별도로 붙여야 한다.
 - 클러스터 외부 권한이 필요하면 kubeconfig를 Secret/PVC/extraVolume 등으로 직접 마운트하거나 환경 변수로 넘겨야 한다.
 - GitOps 운영에서는 앱 저장소를 직접 `kubectl apply` 하는 방식보다, values 저장소의 image tag/digest를 갱신하고 Argo CD가 sync 하게 두는 방식이 기본이다.
-- 관리자 암호는 `HKCLAW_LITE_ADMIN_PASSWORD` 로 bootstrap 할 수 있다. Helm에서는 `adminSecret` 또는 `adminExternalSecret`이 이 값을 주입한다.
+- 관리자 암호는 선택 사항이다. `HKCLAW_LITE_ADMIN_PASSWORD` 가 없으면 `hkclaw-lite admin`과 Helm Pod는 로그인 없이 바로 뜬다.
+- 암호가 필요할 때만 `HKCLAW_LITE_ADMIN_PASSWORD` 로 bootstrap 한다. Helm에서는 `adminSecret` 또는 `adminExternalSecret`이 이 값을 주입할 수 있지만, Secret이 비어 있거나 아직 없어도 Pod 시작은 막지 않는다.
 
 관리자 암호는 첫 시작 때 SQLite 런타임 DB로 이관된다. 이후에는 웹 어드민에서 바꾼 암호가 기준이고, 세션 쿠키 이름은 `hkclaw_lite_admin_session`, 기본 TTL은 7일이다.
 어드민 서버는 기본 보안 헤더(`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `Content-Security-Policy`)를 응답에 붙인다. HTTPS 요청에서는 `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload`도 같이 추가한다.

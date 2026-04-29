@@ -92,6 +92,8 @@ ingress:
 
 adminExternalSecret:
   enabled: false
+  # Admin auth is optional. If this ExternalSecret cannot create
+  # HKCLAW_LITE_ADMIN_PASSWORD yet, the Pod still starts with login disabled.
   annotations: {}
   refreshInterval: 1h
   secretStoreRef:
@@ -118,6 +120,8 @@ adminExternalSecret:
 
 adminSecret:
   enabled: false
+  # May be left empty to create a placeholder Secret; login stays disabled
+  # until HKCLAW_LITE_ADMIN_PASSWORD is provided or set from the web admin.
   annotations: {}
   name: hkclaw-lite-env
   type: Opaque

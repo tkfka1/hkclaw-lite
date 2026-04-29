@@ -2391,6 +2391,35 @@ test('admin server supports lightweight password login via env', async () => {
   }
 });
 
+test('admin server starts with login disabled when no initial password is configured', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousPassword = process.env.HKCLAW_LITE_ADMIN_PASSWORD;
+  delete process.env.HKCLAW_LITE_ADMIN_PASSWORD;
+
+  try {
+    await withAdminServer(projectRoot, async ({ url, passwordEnv, authEnabled }) => {
+      assert.equal(passwordEnv, 'HKCLAW_LITE_ADMIN_PASSWORD');
+      assert.equal(authEnabled, false);
+
+      const authStatus = await requestJson(`${url}/api/auth/status`);
+      assert.equal(authStatus.response.status, 200);
+      assert.equal(authStatus.payload.enabled, false);
+      assert.equal(authStatus.payload.authenticated, true);
+
+      const stateResponse = await requestJson(`${url}/api/state`);
+      assert.equal(stateResponse.response.status, 200, JSON.stringify(stateResponse.payload));
+      assert.equal(stateResponse.payload.projectRoot, projectRoot);
+    });
+  } finally {
+    if (previousPassword === undefined) {
+      delete process.env.HKCLAW_LITE_ADMIN_PASSWORD;
+    } else {
+      process.env.HKCLAW_LITE_ADMIN_PASSWORD = previousPassword;
+    }
+  }
+});
+
 test('admin password can be changed and old password stops working', async () => {
   const projectRoot = createProject();
   const passwordFile = path.join(projectRoot, '.admin-password');

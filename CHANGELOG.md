@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.13 - 2026-04-29
+
+### Changed
+- Made Helm admin password inputs optional so the web admin Pod still starts with login disabled when the bootstrap Secret is empty or not created yet.
+- Documented that `hkclaw-lite admin` starts without an initial password unless `HKCLAW_LITE_ADMIN_PASSWORD` is provided.
+
 ## 1.0.12 - 2026-04-29
 
 ### Added
