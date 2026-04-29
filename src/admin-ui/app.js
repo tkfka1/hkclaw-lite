@@ -389,6 +389,16 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'start-channel-receiver') {
+    void startChannelReceiver(button.dataset.name);
+    return;
+  }
+
+  if (action === 'restart-channel-receiver') {
+    void restartChannelReceiver(button.dataset.name);
+    return;
+  }
+
   if (action === 'reconnect-agent') {
     void reconnectAgent(button.dataset.name);
     return;
@@ -1411,6 +1421,40 @@ async function stopKakaoService() {
   }
 }
 
+async function startChannelReceiver(name) {
+  if (!name) {
+    return;
+  }
+  try {
+    await mutateJson(`/api/channels/${encodeURIComponent(name)}/receiver/start`, {
+      method: 'POST',
+    });
+    setNotice('info', `채널 "${name}" 수신을 시작하고 있습니다.`);
+    render();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function restartChannelReceiver(name) {
+  if (!name) {
+    return;
+  }
+  try {
+    await mutateJson(`/api/channels/${encodeURIComponent(name)}/receiver/restart`, {
+      method: 'POST',
+    });
+    setNotice('info', `채널 "${name}" 수신을 재시작하고 있습니다.`);
+    render();
+    void refreshStateAfterServiceCommand();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
 async function reconnectAgent(name) {
   if (!name) {
     return;
@@ -2033,7 +2077,7 @@ function renderChannelsView() {
     getDashboardStats,
     escapeHtml,
     renderConnectorList,
-    renderChannelList,
+  renderChannelList,
   });
 }
 
@@ -2721,7 +2765,7 @@ function renderAgentDetailPanel(agent, context) {
     : '미확인';
   const rows = context.connectorOnly
     ? [
-        { label: '메시지 수신', value: '채널 화면에서 관리' },
+        { label: '채널 수신', value: '채널 카드에서 관리' },
         { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
         { label: 'Sandbox', value: agent.sandbox || '기본값' },
       ]
@@ -2858,7 +2902,7 @@ function renderConnectorCard(connector, channels = []) {
   `;
 }
 
-function renderChannelList(channels, agents) {
+function renderChannelList(channels, agents, data = state.data) {
   if (!channels.length) {
     return `
       <div class="empty-inline empty-inline--action">
@@ -2868,6 +2912,11 @@ function renderChannelList(channels, agents) {
   }
 
   const agentMap = new Map(agents.map((agent) => [agent.name, agent]));
+  const serviceState = {
+    discord: data?.discord || {},
+    telegram: data?.telegram || {},
+    kakao: data?.kakao || {},
+  };
   return `
     <div class="card-list">
       ${channels
@@ -2880,6 +2929,7 @@ function renderChannelList(channels, agents) {
           const claudeSessions = runtimeSessions.filter(
             (session) => session.runtimeBackend === 'claude-cli' && session.runtimeSessionId,
           );
+          const receiver = buildChannelReceiverContext(channel, agentMap, serviceState);
           return `
             <article class="card card--stack">
               <div class="card-main">
@@ -2926,9 +2976,14 @@ function renderChannelList(channels, agents) {
                     `
                     : ''
                 }
+                <div class="card-tags">
+                  <span class="mini-chip ${escapeAttr(receiver.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(receiver.label)}</span>
+                </div>
+                ${receiver.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(receiver.lastError)}</p>` : ''}
                 ${renderChannelRuntimeSessions(channel, runtimeSessions)}
               </div>
               <div class="inline-actions">
+                ${renderChannelReceiverActions(channel, receiver)}
                 <button type="button" class="btn-secondary" data-action="edit-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
                 ${
                   claudeSessions.length > 0
@@ -2943,6 +2998,92 @@ function renderChannelList(channels, agents) {
         .join('')}
     </div>
   `;
+}
+
+function buildChannelReceiverContext(channel, agentMap, serviceState) {
+  const platform = channel.platform || 'discord';
+  if (platform === 'kakao') {
+    const service = serviceState.kakao?.service || {};
+    return buildReceiverStatus({
+      configured: Boolean(channel.connector || serviceState.kakao?.kakaoChannelCount),
+      running: Boolean(service.running),
+      starting: Boolean(service.starting),
+      stale: Boolean(service.stale),
+      lastError: service.lastError || '',
+    });
+  }
+
+  const roleAgentNames = unique([channel.agent, channel.reviewer, channel.arbiter].filter(Boolean));
+  const tokenField = platform === 'telegram' ? 'telegramBotTokenConfigured' : 'discordTokenConfigured';
+  const serviceGroup = platform === 'telegram' ? serviceState.telegram : serviceState.discord;
+  const aggregateService = serviceGroup?.service || {};
+  const services = serviceGroup?.agentServices || {};
+  const configuredAgentNames = roleAgentNames.filter((agentName) => Boolean(agentMap.get(agentName)?.[tokenField]));
+  const channelServices = configuredAgentNames.map((agentName) => services[agentName] || (
+    aggregateService.agents?.[agentName] && (aggregateService.running || aggregateService.starting || aggregateService.stale)
+      ? aggregateService
+      : {}
+  ));
+  return buildReceiverStatus({
+    configured: configuredAgentNames.length > 0,
+    running: channelServices.length > 0 && channelServices.every((service) => service.running),
+    starting: channelServices.some((service) => service.starting),
+    stale: channelServices.some((service) => service.stale),
+    lastError: channelServices.find((service) => service.lastError)?.lastError || '',
+  });
+}
+
+function buildReceiverStatus({ configured, running, starting, stale, lastError }) {
+  if (!configured) {
+    return {
+      label: '수신 설정 필요',
+      statusClass: 'mini-chip--danger',
+      canStart: false,
+      canRestart: false,
+      lastError: lastError || '',
+    };
+  }
+  if (stale) {
+    return {
+      label: '수신 확인 필요',
+      statusClass: 'mini-chip--danger',
+      canStart: true,
+      canRestart: true,
+      lastError: lastError || '',
+    };
+  }
+  if (starting) {
+    return {
+      label: '수신 시작 중',
+      statusClass: '',
+      canStart: false,
+      canRestart: false,
+      lastError: lastError || '',
+    };
+  }
+  if (running) {
+    return {
+      label: '수신 중',
+      statusClass: 'mini-chip--ok',
+      canStart: false,
+      canRestart: true,
+      lastError: lastError || '',
+    };
+  }
+  return {
+    label: '수신 대기',
+    statusClass: '',
+    canStart: true,
+    canRestart: false,
+    lastError: lastError || '',
+  };
+}
+
+function renderChannelReceiverActions(channel, receiver) {
+  if (receiver.canRestart) {
+    return `<button type="button" class="btn-secondary" data-action="restart-channel-receiver" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', '수신 재시작')}</button>`;
+  }
+  return `<button type="button" class="btn-secondary" data-action="start-channel-receiver" data-name="${escapeAttr(channel.name)}" ${state.busy || !receiver.canStart ? 'disabled' : ''}>${renderButtonLabel('play', '수신 시작')}</button>`;
 }
 
 function sortRuntimeSessions(sessions) {

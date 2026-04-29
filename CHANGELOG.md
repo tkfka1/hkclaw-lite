@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.17 - 2026-04-29
+
+### Changed
+- Replaced the platform-level message intake panel with channel-card receiver status and start/restart controls.
+
 ## 1.0.16 - 2026-04-29
 
 ### Added

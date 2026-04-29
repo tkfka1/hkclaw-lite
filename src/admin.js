@@ -556,6 +556,40 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
   }
 
   if (
+    request.method === 'POST' &&
+    pathname.startsWith('/api/channels/') &&
+    pathname.endsWith('/receiver/start')
+  ) {
+    const name = decodeEntityPath(
+      pathname.slice(0, -'/receiver/start'.length),
+      '/api/channels/',
+    );
+    writeJson(response, 200, {
+      ok: true,
+      result: await startChannelReceiverServices(projectRoot, name),
+      state: await buildAdminSnapshot(projectRoot),
+    });
+    return;
+  }
+
+  if (
+    request.method === 'POST' &&
+    pathname.startsWith('/api/channels/') &&
+    pathname.endsWith('/receiver/restart')
+  ) {
+    const name = decodeEntityPath(
+      pathname.slice(0, -'/receiver/restart'.length),
+      '/api/channels/',
+    );
+    writeJson(response, 200, {
+      ok: true,
+      result: await restartChannelReceiverServices(projectRoot, name),
+      state: await buildAdminSnapshot(projectRoot),
+    });
+    return;
+  }
+
+  if (
     request.method === 'DELETE' &&
     pathname.startsWith('/api/channels/') &&
     pathname.endsWith('/runtime-sessions')
@@ -1090,6 +1124,96 @@ function shouldRestoreLegacyManagedService(agentName, legacyStatus, legacySnapsh
     return false;
   }
   return Boolean(legacyAgents[agentName]);
+}
+
+async function startChannelReceiverServices(projectRoot, channelName) {
+  const targets = listChannelReceiverTargets(projectRoot, channelName);
+  assert(targets.length > 0, `Channel "${channelName}" has no receiver target to start.`);
+  return {
+    action: 'start-channel-receivers',
+    channelName,
+    receivers: await Promise.all(
+      targets.map((target) => startChannelReceiverTarget(projectRoot, target)),
+    ),
+  };
+}
+
+async function restartChannelReceiverServices(projectRoot, channelName) {
+  const targets = listChannelReceiverTargets(projectRoot, channelName);
+  assert(targets.length > 0, `Channel "${channelName}" has no receiver target to restart.`);
+  return {
+    action: 'restart-channel-receivers',
+    channelName,
+    receivers: await Promise.all(
+      targets.map((target) => restartChannelReceiverTarget(projectRoot, target)),
+    ),
+  };
+}
+
+function listChannelReceiverTargets(projectRoot, channelName) {
+  const config = loadConfig(projectRoot);
+  const channel = config.channels?.[channelName];
+  assert(channel, `Channel "${channelName}" does not exist.`);
+  const platform = channel.platform || 'discord';
+
+  if (platform === 'kakao') {
+    if (channel.connector || listConfiguredKakaoRuntimeTargets(projectRoot).length > 0) {
+      return [{ platform: 'kakao', agentName: null }];
+    }
+    return [];
+  }
+
+  const tokenField = platform === 'telegram' ? 'telegramBotToken' : 'discordToken';
+  const seen = new Set();
+  const targets = [];
+  for (const agentName of getChannelRoleAgentNames(channel)) {
+    if (seen.has(agentName)) {
+      continue;
+    }
+    seen.add(agentName);
+    const agent = config.agents?.[agentName];
+    if (agent && String(agent[tokenField] || '').trim()) {
+      targets.push({ platform, agentName });
+    }
+  }
+  return targets;
+}
+
+async function startChannelReceiverTarget(projectRoot, target) {
+  if (target.platform === 'telegram') {
+    if (isTelegramAgentServiceActive(projectRoot, target.agentName)) {
+      return { action: 'start', platform: target.platform, agentName: target.agentName, skipped: 'already-running' };
+    }
+    return await startTelegramServiceProcess(projectRoot, target.agentName);
+  }
+  if (target.platform === 'kakao') {
+    const platformService = buildKakaoPlatformServiceSnapshot(projectRoot);
+    if (platformService.running || platformService.starting || platformService.pidAlive) {
+      return { action: 'start', platform: target.platform, agentName: null, skipped: 'already-running' };
+    }
+    return await startAllKakaoServiceProcesses(projectRoot);
+  }
+  if (isDiscordAgentServiceActive(projectRoot, target.agentName)) {
+    return { action: 'start', platform: target.platform, agentName: target.agentName, skipped: 'already-running' };
+  }
+  return await startDiscordServiceProcess(projectRoot, target.agentName);
+}
+
+async function restartChannelReceiverTarget(projectRoot, target) {
+  if (target.platform === 'telegram') {
+    return isTelegramAgentServiceActive(projectRoot, target.agentName)
+      ? await restartTelegramServiceProcess(projectRoot, target.agentName)
+      : await startTelegramServiceProcess(projectRoot, target.agentName);
+  }
+  if (target.platform === 'kakao') {
+    const platformService = buildKakaoPlatformServiceSnapshot(projectRoot);
+    return platformService.running || platformService.starting || platformService.pidAlive
+      ? await restartAllKakaoServiceProcesses(projectRoot)
+      : await startAllKakaoServiceProcesses(projectRoot);
+  }
+  return isDiscordAgentServiceActive(projectRoot, target.agentName)
+    ? await restartDiscordServiceProcess(projectRoot, target.agentName)
+    : await startDiscordServiceProcess(projectRoot, target.agentName);
 }
 
 async function restoreManagedServiceProcess(projectRoot, agentName, platform) {

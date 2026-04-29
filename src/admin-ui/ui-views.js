@@ -86,8 +86,7 @@ export function renderAgentsView(ctx) {
 }
 
 export function renderChannelsView(ctx) {
-  const { state, getDashboardStats, escapeHtml, renderConnectorList, renderChannelList } = ctx;
-  const stats = getDashboardStats();
+  const { state, renderConnectorList, renderChannelList } = ctx;
   return `
     <section class="panel section-panel">
       <div class="section-head">
@@ -97,9 +96,8 @@ export function renderChannelsView(ctx) {
         </div>
         <button type="button" class="btn-primary" data-action="open-channel-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}채널 추가</button>
       </div>
-      ${renderChannelList(state.data.channels, state.data.agents)}
+      ${renderChannelList(state.data.channels, state.data.agents, state.data)}
     </section>
-    ${renderChannelWorkerPanel({ state, stats, escapeHtml })}
     <section class="panel section-panel">
       <div class="section-head">
         <div class="section-title-group">
@@ -177,136 +175,6 @@ export function renderTopologyView(ctx) {
       </div>
     </section>
   `;
-}
-
-function renderChannelWorkerPanel({ state, stats, escapeHtml }) {
-  const services = [
-    {
-      key: 'discord',
-      label: 'Discord',
-      count: stats.discordChannelCount,
-      service: state.data?.discord?.service || {},
-      startAction: 'start-discord-service',
-      restartAction: 'restart-discord-service',
-      stopAction: 'stop-discord-service',
-    },
-    {
-      key: 'telegram',
-      label: 'Telegram',
-      count: stats.telegramChannelCount,
-      service: state.data?.telegram?.service || {},
-      startAction: 'start-telegram-service',
-      restartAction: 'restart-telegram-service',
-      stopAction: 'stop-telegram-service',
-    },
-    {
-      key: 'kakao',
-      label: 'KakaoTalk',
-      count: stats.kakaoChannelCount,
-      service: state.data?.kakao?.service || {},
-      startAction: 'start-kakao-service',
-      restartAction: 'restart-kakao-service',
-      stopAction: 'stop-kakao-service',
-    },
-  ];
-
-  return `
-    <section class="panel section-panel channel-intake-panel">
-      <div class="section-head">
-        <div class="section-title-group">
-          <span class="section-title-icon">${renderIcon('server', 'ui-icon')}</span>
-          <h2>메시지 수신</h2>
-        </div>
-      </div>
-      <div class="card-list card-list--compact service-worker-list channel-intake-list">
-        ${services.map((entry) => renderChannelWorkerCard(entry, state, escapeHtml)).join('')}
-      </div>
-    </section>
-  `;
-}
-
-function renderChannelWorkerCard(entry, state, escapeHtml) {
-  const service = entry.service || {};
-  const running = Boolean(service.running);
-  const starting = Boolean(service.starting);
-  const stale = Boolean(service.stale);
-  const hasChannels = entry.count > 0;
-  const label = resolveChannelIntakeLabel({ running, starting, stale, hasChannels });
-  const statusClass = stale ? 'mini-chip--danger' : running && hasChannels ? 'mini-chip--ok' : '';
-  const cardStateClass = stale ? 'is-warning' : running && hasChannels ? 'is-live' : !hasChannels ? 'is-empty' : '';
-  const disabled = state.busy || starting || entry.count === 0;
-  const lastError = service.lastError
-    ? `<p class="field-hint field-hint--danger">${escapeHtml(service.lastError)}</p>`
-    : '';
-  const countLabel = hasChannels ? `${entry.count}개 채널` : '채널 없음';
-  const copy = hasChannels
-    ? running || starting
-      ? `${entry.label} 자동 수신 중입니다.`
-      : stale
-        ? `${entry.label} 수신 확인 필요.`
-        : `${entry.label} 채널은 자동 수신 대상입니다.`
-    : running || starting || stale
-      ? `${entry.label} 수신은 켜져 있지만 받을 채널이 없습니다. 채널을 추가하거나 수신을 꺼도 됩니다.`
-      : `${entry.label} 메시지를 받으려면 먼저 채널을 하나 추가하세요.`;
-  const primaryAction = renderChannelIntakePrimaryAction({
-    entry,
-    state,
-    running,
-    stale,
-    disabled,
-    hasChannels,
-  });
-  const stopAction =
-    running || stale || starting
-      ? `<button type="button" class="btn-secondary" data-action="${entry.stopAction}" ${state.busy || (!running && !stale && !starting) ? 'disabled' : ''}>${renderIcon('stop', 'ui-icon')}수신 끄기</button>`
-      : '';
-
-  return `
-    <article class="card card--stack service-worker-card channel-intake-card ${cardStateClass}">
-      <div class="card-main">
-        <div class="card-title-row">
-          ${renderIcon('server', 'ui-icon')}
-          <strong>${escapeHtml(`${entry.label} 채널`)}</strong>
-        </div>
-        <p class="channel-intake-copy">${escapeHtml(copy)}</p>
-        <div class="card-tags">
-          <span class="mini-chip ${statusClass}">${escapeHtml(label)}</span>
-          <span class="mini-chip">${escapeHtml(countLabel)}</span>
-        </div>
-        ${lastError}
-      </div>
-      <div class="inline-actions">
-        ${primaryAction}
-        ${stopAction}
-      </div>
-    </article>
-  `;
-}
-
-function renderChannelIntakePrimaryAction({ entry, state, running, stale, disabled, hasChannels }) {
-  if (!hasChannels && (running || stale)) {
-    return '';
-  }
-  if (running || stale) {
-    return `<button type="button" class="btn-secondary" data-action="${entry.restartAction}" ${state.busy || (!running && !stale) ? 'disabled' : ''}>${renderIcon('refresh', 'ui-icon')}다시 연결</button>`;
-  }
-  return `<button type="button" class="btn-secondary" data-action="${entry.startAction}" ${disabled ? 'disabled' : ''}>${renderIcon('play', 'ui-icon')}${hasChannels ? '수신 켜기' : '채널 추가 필요'}</button>`;
-}
-
-function resolveChannelIntakeLabel({ running, starting, stale, hasChannels }) {
-  if (!hasChannels) {
-    return '채널 먼저 추가';
-  }
-  if (stale) {
-    return '확인 필요';
-  }
-  if (starting) {
-    return '연결 중';
-  }
-  if (running) {
-    return '수신 켜짐';
-  }
-  return '수신 꺼짐';
 }
 
 export function renderAllView(ctx) {

@@ -1596,6 +1596,71 @@ test('admin server auto-starts receivers for configured channels', async () => {
   }
 });
 
+test('admin server starts and restarts receiver workers from channel controls', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeDiscordServicePath;
+
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'owner-token',
+  });
+  config.channels.ops = buildChannelDefinition(projectRoot, config, 'ops', {
+    name: 'ops',
+    platform: 'discord',
+    discordChannelId: '123456789012345678',
+    workspace: 'workspace',
+    agent: 'worker',
+  });
+  saveConfig(projectRoot, config);
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const startResponse = await requestJson(`${url}/api/channels/ops/receiver/start`, {
+        method: 'POST',
+      });
+      assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
+      assert.equal(startResponse.payload.result.action, 'start-channel-receivers');
+      assert.equal(startResponse.payload.result.channelName, 'ops');
+
+      const started = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(started?.agentServices?.worker?.desiredRunning, true);
+
+      const restartResponse = await requestJson(`${url}/api/channels/ops/receiver/restart`, {
+        method: 'POST',
+      });
+      assert.equal(restartResponse.response.status, 200, JSON.stringify(restartResponse.payload));
+      assert.equal(restartResponse.payload.result.action, 'restart-channel-receivers');
+      assert.equal(restartResponse.payload.result.channelName, 'ops');
+
+      const restarted = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(restarted?.agentServices?.worker?.desiredRunning, true);
+
+      const stopResponse = await requestJson(`${url}/api/agents/worker/stop`, {
+        method: 'POST',
+      });
+      assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
 test('admin server can start, restart, and stop Discord service', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);

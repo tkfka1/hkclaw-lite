@@ -6,7 +6,7 @@
 - 에이전트는 Codex/Claude/Gemini/local LLM/command 같은 **AI 실행 주체**다.
 - 커넥터는 **KakaoTalk 전용 연결 계정/세션**이다. 타입은 `kakao`로 고정되어 있고, Discord/Telegram 토큰은 에이전트 플랫폼 설정에서 직접 관리한다.
 - 채널은 **대화가 들어갈 논리 단위**다. Kakao 커넥터 또는 에이전트 플랫폼 설정, 대상 방/사용자 필터, 워크스페이스, 실행 모드, role 매핑, 하네스 세션 경계를 가진다.
-- 메시징 워커는 Kakao 커넥터 또는 에이전트 플랫폼 연결을 열고, 들어온 메시지는 채널이 정한 하네스로 라우팅한다. 웹 어드민에서는 **채널 → 메시지 수신**에서 플랫폼별 워커를 관리한다.
+- 메시징 워커는 Kakao 커넥터 또는 에이전트 플랫폼 연결을 열고, 들어온 메시지는 채널이 정한 하네스로 라우팅한다. 웹 어드민에서는 각 **채널 카드**에서 해당 채널 수신을 시작/재시작한다.
 - CLI 자동화가 필요하면 `topology plan/apply/export`로 에이전트/커넥터/채널 desired-state JSON을 dry-run 후 적용할 수 있다.
 - 기본 웹 주소는 `http://127.0.0.1:5687` 이다.
 
@@ -244,7 +244,7 @@ KakaoTalk 지원은 [`@openclaw/kakao-talkchannel`](https://github.com/kakao-bar
 
 - 커넥터의 `type`은 정해져 있다. KakaoTalk이면 `kakao`이고, 같은 타입의 커넥터 인스턴스는 `kakao-main`, `kakao-support`처럼 여러 개 만들 수 있다.
 - 웹 어드민의 **채널** 화면에서 KakaoTalk 커넥터를 추가/수정/삭제하고, Kakao 채널 추가/수정 모달에서 사용할 커넥터를 고른다. CLI에서는 `hkclaw-lite add connector`를 쓴다.
-- 같은 화면의 **메시지 수신** 카드에서 Discord/Telegram/KakaoTalk 플랫폼 워커를 시작/재시작/중지한다. Kakao 커넥터 기반 채널은 에이전트별 토큰 버튼이 아니라 Kakao 플랫폼 워커가 수신을 담당한다.
+- 각 **채널 카드**에서 해당 채널 수신을 시작/재시작한다. Kakao 커넥터 기반 채널은 내부적으로 Kakao 플랫폼 워커가 수신을 담당한다.
 - **커넥터 하나로 여러 hkclaw 채널을 처리할 수 있다.** 채널마다 같은 커넥터를 선택하고 `kakaoChannelId`, `kakaoUserId`, workspace, single/tribunal role 구성을 다르게 두면 된다.
 - 여러 커넥터가 필요한 경우는 서로 다른 Kakao 계정/세션/토큰, 운영 격리, 장애 격리가 필요할 때다.
 - `Kakao 연결 릴레이 URL`은 워커가 SSE를 붙을 릴레이 주소다. `OPENCLAW_TALKCHANNEL_RELAY_URL` 또는 `KAKAO_TALKCHANNEL_RELAY_URL` 환경 변수가 있으면 그 값을 기본값으로 쓴다. 값이 없으면 공유 릴레이 `https://k.tess.dev/`를 기본값으로 쓴다.
@@ -356,7 +356,7 @@ ops:owner
 - **Connector**: KakaoTalk 전용 연결 계정/세션이다. 타입은 `kakao`로 고정이고, 여러 Kakao 커넥터를 만들어 여러 Channel이 공유할 수 있다.
 - **Channel**: Discord/Telegram/KakaoTalk 대상, Kakao 커넥터 또는 에이전트 플랫폼 설정, 기본 워크스페이스, 실행 모드, role 매핑을 가진 실행 단위다.
 - **Direct Channel**: Discord DM 또는 Telegram 봇 1:1 대화다. 사용자에게는 “직접 사용”처럼 보이지만, 내부적으로는 세션/워크스페이스/outbox를 안정적으로 보존하기 위해 Channel로 저장한다.
-- **Channel worker**: Discord/Telegram/KakaoTalk 플랫폼 수신 프로세스다. Kakao 커넥터 기반 채널은 Agent 카드가 아니라 Channel 화면의 메시지 수신 카드에서 상태를 본다.
+- **Channel worker**: Discord/Telegram/KakaoTalk 플랫폼 수신 프로세스다. Kakao 커넥터 기반 채널은 Agent 카드가 아니라 Channel 카드에서 수신 상태를 본다.
 - **Role**: 한 turn 안에서 에이전트가 맡는 역할이다. 기본은 `owner`, tribunal 모드에서는 `owner`, `reviewer`, `arbiter`가 있다.
 - **Harness / runtime session**: 채널 turn을 실행하고, role별 메시지/세션/사용량/outbox를 기록하는 런타임 상태다.
 
