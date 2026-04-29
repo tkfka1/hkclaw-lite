@@ -2555,6 +2555,7 @@ function renderAgentCard(agent, context) {
       <div class="inline-actions agent-card-actions">
         ${primaryAction}
         ${stopAction}
+        ${renderTelegramAgentGetUpdatesLink(agent, context)}
         <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
         ${renderCardActionDrawer({
           title: '더보기',
@@ -3909,19 +3910,72 @@ function renderChannelTargetTypeField(platform, selectedTargetType) {
   `;
 }
 
-function renderTelegramGetUpdatesLink(channel) {
-  const agentName = optionalDraftText(channel?.agent);
-  if (!agentName) {
+function renderTelegramAgentGetUpdatesLink(agent, context = {}) {
+  if (context.connectorOnly || context.platform !== 'telegram' || !context.tokenConfigured) {
+    return '';
+  }
+  return renderTelegramGetUpdatesLinkForAgent(agent?.name, {
+    label: 'getUpdates 보기',
+    title: '이 Telegram 에이전트 봇 토큰으로 getUpdates를 엽니다.',
+  });
+}
+
+function renderTelegramGetUpdatesLinkForAgent(agentName, { label = 'getUpdates 보기', title = '' } = {}) {
+  const normalizedAgentName = optionalDraftText(agentName);
+  if (!normalizedAgentName) {
     return '';
   }
   return `
     <a
       class="btn-secondary btn-inline"
-      href="/api/telegram-get-updates?agent=${encodeURIComponent(agentName)}"
+      href="/api/telegram-get-updates?agent=${encodeURIComponent(normalizedAgentName)}"
       target="_blank"
       rel="noreferrer"
-    >getUpdates 보기</a>
+      title="${escapeAttr(title || `${normalizedAgentName} Telegram getUpdates`)}"
+    >${escapeHtml(label)}</a>
   `;
+}
+
+function renderTelegramDraftGetUpdatesLink(draft) {
+  const token = optionalDraftText(draft?.telegramBotToken);
+  const agentName = optionalDraftText(draft?.currentName || draft?.name);
+  if (!token) {
+    return '';
+  }
+  if (agentName && state.data?.agents?.some((entry) => entry.name === agentName)) {
+    return renderTelegramGetUpdatesLinkForAgent(agentName, {
+      label: 'getUpdates 링크 열기',
+      title: '저장된 Telegram 에이전트 토큰으로 getUpdates를 엽니다.',
+    });
+  }
+  return `
+    <a
+      class="btn-secondary btn-inline"
+      href="${escapeAttr(buildTelegramGetUpdatesUrlFromToken(token))}"
+      target="_blank"
+      rel="noreferrer"
+      title="입력한 Telegram 봇 토큰으로 getUpdates를 엽니다."
+    >getUpdates 링크 열기</a>
+  `;
+}
+
+function buildTelegramGetUpdatesUrlFromToken(token) {
+  return `https://api.telegram.org/bot${encodeTelegramBotTokenForApiPath(token)}/getUpdates`;
+}
+
+function encodeTelegramBotTokenForApiPath(token) {
+  return encodeURIComponent(String(token || '').trim()).replace(/%3A/giu, ':');
+}
+
+function renderTelegramChannelGetUpdatesLink(channel) {
+  const agentName = optionalDraftText(channel?.agent);
+  if (!agentName) {
+    return '';
+  }
+  return renderTelegramGetUpdatesLinkForAgent(agentName, {
+    label: '선택한 봇 getUpdates 보기',
+    title: 'owner Telegram 에이전트의 봇 토큰으로 getUpdates를 엽니다.',
+  });
 }
 
 function renderChannelModal() {
@@ -3969,7 +4023,6 @@ function renderChannelModal() {
                     <div class="field ${fieldErrorClass('channel', 'telegramChatId')}">
                       <label for="channel-telegram-chat">${renderRequiredLabel(isDirectTarget ? 'Telegram 개인 chat_id' : 'Telegram 그룹/채널 chat_id')}</label>
                       <input id="channel-telegram-chat" name="telegramChatId" value="${escapeAttr(current.telegramChatId)}" />
-                      <div class="inline-actions">${renderTelegramGetUpdatesLink(current)}</div>
                       ${renderFormError('channel', 'telegramChatId')}
                     </div>
                     ${
@@ -4031,6 +4084,7 @@ function renderChannelModal() {
             <div class="field ${fieldErrorClass('channel', 'agent')}">
               <label for="channel-agent">${renderRequiredLabel('owner 에이전트')}</label>
               <select id="channel-agent" name="agent">${renderNameOptions(agentNames, current.agent)}</select>
+              ${isTelegram ? `<div class="inline-actions">${renderTelegramChannelGetUpdatesLink(current)}</div>` : ''}
               ${renderFormError('channel', 'agent')}
             </div>
             ${
@@ -4483,6 +4537,7 @@ function renderAgentWizardRuntimeStep(draft) {
             value="${escapeAttr(platform === 'telegram' ? draft.telegramBotToken || '' : draft.discordToken || '')}"
             placeholder="${platform === 'telegram' ? 'Telegram bot token' : 'Discord bot token'}"
           />
+          ${platform === 'telegram' ? `<div class="inline-actions">${renderTelegramDraftGetUpdatesLink(draft)}</div>` : ''}
           ${renderFormError('agentWizard', tokenFieldName)}
         </div>
       `,

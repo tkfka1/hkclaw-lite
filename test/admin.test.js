@@ -940,9 +940,7 @@ test('admin server redirects Telegram getUpdates helper through the selected age
 
     assert.equal(response.status, 302);
     assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.match(location, /^https:\/\/api\.telegram\.org\/bot123456%3Atelegram-token\/getUpdates/u);
-    assert.match(location, /allowed_updates=%5B%22message%22%5D/u);
-    assert.match(location, /limit=10/u);
+    assert.equal(location, 'https://api.telegram.org/bot123456:telegram-token/getUpdates');
   });
 });
 

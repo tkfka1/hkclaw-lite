@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.19 - 2026-04-29
+
+### Changed
+- Added Telegram getUpdates links on Telegram agent cards, agent token setup, and channel owner selection using the selected bot agent token.
+
 ## 1.0.18 - 2026-04-29
 
 ### Added

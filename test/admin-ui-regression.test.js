@@ -88,6 +88,8 @@ test('channels page exposes reusable connector management', () => {
   assert.match(appSource, /Discord 사용자 ID/u);
   assert.match(appSource, /telegram-get-updates/u);
   assert.match(appSource, /getUpdates 보기/u);
+  assert.match(appSource, /getUpdates 링크 열기/u);
+  assert.match(appSource, /선택한 봇 getUpdates 보기/u);
   assert.doesNotMatch(appSource, /connector-agent-note/u);
   assert.doesNotMatch(appSource, /사용자가 봇에게 한 번 말을 걸면/u);
   assert.match(appSource, /open-connector-modal/u);

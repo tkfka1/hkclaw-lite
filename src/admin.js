@@ -4220,7 +4220,11 @@ function resolveTelegramGetUpdatesUrl(projectRoot, agentName) {
   assert(agent, `Agent "${name}" does not exist.`);
   const token = String(agent.telegramBotToken || '').trim();
   assert(token, `Agent "${name}" does not configure a Telegram bot token.`);
-  return `https://api.telegram.org/bot${encodeURIComponent(token)}/getUpdates?allowed_updates=%5B%22message%22%5D&limit=10`;
+  return `https://api.telegram.org/bot${encodeTelegramBotTokenForApiPath(token)}/getUpdates`;
+}
+
+function encodeTelegramBotTokenForApiPath(token) {
+  return encodeURIComponent(String(token || '').trim()).replace(/%3A/giu, ':');
 }
 
 function applyAdminSecurityHeaders(response, request) {
