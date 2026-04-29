@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.14 - 2026-04-29
+
+### Added
+- Added a Homebrew service definition that runs `hkclaw-lite admin` under launchd with `--host 0.0.0.0 --port 5687`.
+
 ## 1.0.13 - 2026-04-29
 
 ### Changed

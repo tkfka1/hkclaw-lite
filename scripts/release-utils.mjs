@@ -112,6 +112,20 @@ export function renderHomebrewFormula({
     bin.install_symlink libexec.glob("bin/*")
   end
 
+  def post_install
+    (var/"hkclaw-lite").mkpath
+    (var/"log").mkpath
+  end
+
+  service do
+    run [opt_bin/"hkclaw-lite", "--root", var/"hkclaw-lite", "admin", "--host", "0.0.0.0", "--port", "5687"]
+    working_dir var/"hkclaw-lite"
+    keep_alive true
+    log_path var/"log/hkclaw-lite.log"
+    error_log_path var/"log/hkclaw-lite.err.log"
+    environment_variables PATH: std_service_path_env
+  end
+
   test do
     assert_match "hkclaw-lite", shell_output("#{bin}/hkclaw-lite --help")
   end

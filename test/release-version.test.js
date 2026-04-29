@@ -95,4 +95,9 @@ test('homebrew formula renderer targets the npm release tarball', () => {
   assert.match(formula, /depends_on "node"/u);
   assert.match(formula, /system "npm", "install", \*std_npm_args/u);
   assert.match(formula, /bin\.install_symlink libexec\.glob\("bin\/\*"\)/u);
+  assert.match(formula, /\(var\/"hkclaw-lite"\)\.mkpath/u);
+  assert.match(formula, /service do/u);
+  assert.match(formula, /run \[opt_bin\/"hkclaw-lite", "--root", var\/"hkclaw-lite", "admin", "--host", "0\.0\.0\.0", "--port", "5687"\]/u);
+  assert.match(formula, /keep_alive true/u);
+  assert.match(formula, /environment_variables PATH: std_service_path_env/u);
 });
