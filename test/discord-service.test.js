@@ -17,7 +17,6 @@ import {
 import {
   buildAgentDefinition,
   buildChannelDefinition,
-  buildConnectorDefinition,
   createDefaultConfig,
   initProject,
   saveConfig,
@@ -229,7 +228,7 @@ test('discord service flushes pending outbox events after restart', async () => 
   assert.equal(pending.length, 0);
 });
 
-test('discord pending outbox can deliver through a channel connector', async () => {
+test('discord pending outbox can deliver through an agent platform route', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
 
@@ -238,14 +237,10 @@ test('discord pending outbox can deliver through a channel connector', async () 
     name: 'owner',
     agent: 'command',
     command: 'cat',
-  });
-  config.connectors.discordMain = buildConnectorDefinition('discordMain', {
-    type: 'discord',
     discordToken: 'discord-token',
   });
   config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
     name: 'main',
-    connector: 'discordMain',
     discordChannelId: '123',
     workspace: '~',
     agent: 'owner',
@@ -255,7 +250,6 @@ test('discord pending outbox can deliver through a channel connector', async () 
   const run = await startRuntimeRun(projectRoot, {
     channel: {
       name: 'main',
-      connector: 'discordMain',
       discordChannelId: '123',
       mode: 'single',
       agent: 'owner',
@@ -267,14 +261,13 @@ test('discord pending outbox can deliver through a channel connector', async () 
     runId: run.runId,
     channel: {
       name: 'main',
-      connector: 'discordMain',
       discordChannelId: '123',
       mode: 'single',
     },
     entry: {
       role: 'owner',
       agent: { name: 'owner' },
-      content: 'connector text',
+      content: 'agent route text',
       final: true,
       round: 1,
       maxRounds: 1,
@@ -284,7 +277,7 @@ test('discord pending outbox can deliver through a channel connector', async () 
 
   const sent = [];
   const clients = {
-    discordMain: {
+    owner: {
       channels: {
         async fetch(channelId) {
           return {
@@ -302,7 +295,7 @@ test('discord pending outbox can deliver through a channel connector', async () 
 
   const flushed = await flushPendingDiscordOutbox(projectRoot, clients, { limit: 10 });
   assert.equal(flushed, 1);
-  assert.deepEqual(sent, ['connector text']);
+  assert.deepEqual(sent, ['agent route text']);
 });
 
 test('discord outbox flush skips bad events and continues with valid ones', async () => {

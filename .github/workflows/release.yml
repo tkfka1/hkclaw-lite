@@ -99,6 +99,62 @@ jobs:
         run: |
           echo "::warning::Repository secret NPM_TOKEN is not configured; skipping npm publish and continuing with GitHub Release assets."
 
+      - name: Prepare Homebrew formula
+        id: homebrew_formula
+        if: steps.npm_status.outputs.published == 'true' || steps.npm_status.outputs.token_available == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_name="${{ steps.meta.outputs.package_name }}"
+          version="${{ steps.meta.outputs.version }}"
+          tarball_url="$(npm view "${package_name}@${version}" dist.tarball)"
+          sha256="$(curl -fsSL "${tarball_url}" | shasum -a 256 | awk '{print $1}')"
+          formula_path="dist/hkclaw-lite.rb"
+          node scripts/render-homebrew-formula.mjs \
+            --version "${version}" \
+            --url "${tarball_url}" \
+            --sha256 "${sha256}" \
+            --out "${formula_path}"
+          echo "formula_path=${formula_path}" >> "$GITHUB_OUTPUT"
+          echo "tarball_url=${tarball_url}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew tap
+        if: steps.homebrew_formula.outputs.formula_path != ''
+        shell: bash
+        env:
+          HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          tap_repository="${HOMEBREW_TAP_REPOSITORY:-${GITHUB_REPOSITORY_OWNER}/homebrew-tap}"
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not configured; skipping Homebrew tap update. Target tap would be ${tap_repository}."
+            exit 0
+          fi
+
+          workdir="$(mktemp -d)"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${tap_repository}.git" "${workdir}/homebrew-tap"
+          cd "${workdir}/homebrew-tap"
+          mkdir -p Formula
+          cp "${GITHUB_WORKSPACE}/${{ steps.homebrew_formula.outputs.formula_path }}" Formula/hkclaw-lite.rb
+
+          if git diff --quiet -- Formula/hkclaw-lite.rb; then
+            echo "Homebrew formula already points at hkclaw-lite ${{ steps.meta.outputs.version }}."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/hkclaw-lite.rb
+          git commit -m "Update hkclaw-lite to ${{ steps.meta.outputs.version }}" \
+            -m "Point the tap formula at the npm release tarball built from ${GITHUB_SHA}." \
+            -m "Constraint: Homebrew Node formulae should install npm tarballs with std_npm_args." \
+            -m "Confidence: high" \
+            -m "Scope-risk: narrow" \
+            -m "Tested: node scripts/render-homebrew-formula.mjs; npm view dist.tarball sha256"
+          git push origin HEAD:main
+
       - name: Upload assets to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

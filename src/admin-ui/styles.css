@@ -2794,3 +2794,122 @@ button:focus-visible {
     width: 100%;
   }
 }
+
+.connector-overview,
+.connector-form {
+  display: grid;
+  gap: 14px;
+}
+
+.connector-card-list {
+  gap: 12px;
+}
+
+.connector-card {
+  border-color: rgba(31, 157, 101, 0.22);
+  background:
+    linear-gradient(135deg, rgba(31, 157, 101, 0.08), rgba(255, 255, 255, 0.94) 42%),
+    rgba(255, 255, 255, 0.92);
+}
+
+.connector-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.connector-detail-grid > div,
+.locked-platform-card,
+.connector-agent-note,
+.legacy-connector-note,
+.connector-brief {
+  border: 1px solid rgba(216, 225, 234, 0.78);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.connector-detail-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  min-width: 0;
+}
+
+.connector-detail-grid span,
+.locked-platform-card span,
+.connector-agent-note span,
+.legacy-connector-note span,
+.connector-brief p {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.connector-detail-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connector-brief {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(31, 157, 101, 0.14), transparent 34%),
+    rgba(248, 251, 255, 0.9);
+}
+
+.connector-brief strong,
+.connector-agent-note strong,
+.legacy-connector-note strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.connector-brief p {
+  margin: 4px 0 0;
+}
+
+.locked-platform-card {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  min-height: 44px;
+  background: var(--emerald-soft);
+  color: var(--emerald);
+  border-color: rgba(31, 157, 101, 0.18);
+}
+
+.locked-platform-card strong {
+  color: var(--emerald);
+}
+
+.connector-agent-note,
+.legacy-connector-note {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+}
+
+.connector-agent-note {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.legacy-connector-note {
+  background: var(--amber-soft);
+  border-color: rgba(180, 116, 26, 0.2);
+}
+
+@media (max-width: 760px) {
+  .connector-brief,
+  .connector-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}

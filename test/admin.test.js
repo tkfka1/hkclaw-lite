@@ -1095,33 +1095,33 @@ test('admin server plans and applies topology changes with redacted results', as
       {
         name: 'auto-owner',
         agent: 'command',
-        platform: 'discord',
+        platform: 'kakao',
         command: `node ${fixturePath}`,
       },
     ],
     connectors: [
       {
-        name: 'auto-discord',
-        type: 'discord',
+        name: 'auto-kakao',
+        type: 'kakao',
         secretRefs: {
-          discordTokenEnv: 'HKCLAW_TEST_ADMIN_DISCORD_TOKEN',
+          kakaoRelayTokenEnv: 'HKCLAW_TEST_ADMIN_KAKAO_TOKEN',
         },
       },
     ],
     channels: [
       {
-        name: 'auto-discord-main',
-        platform: 'discord',
-        connector: 'auto-discord',
-        discordChannelId: '123456789012345678',
+        name: 'auto-kakao-main',
+        platform: 'kakao',
+        connector: 'auto-kakao',
+        kakaoChannelId: '*',
         workspace: 'workspace',
         agent: 'auto-owner',
       },
     ],
   };
 
-  const priorToken = process.env.HKCLAW_TEST_ADMIN_DISCORD_TOKEN;
-  process.env.HKCLAW_TEST_ADMIN_DISCORD_TOKEN = 'admin-secret-token';
+  const priorToken = process.env.HKCLAW_TEST_ADMIN_KAKAO_TOKEN;
+  process.env.HKCLAW_TEST_ADMIN_KAKAO_TOKEN = 'admin-secret-token';
   try {
     await withAdminServer(projectRoot, async ({ url }) => {
       const plan = await requestJson(`${url}/api/topology/plan`, {
@@ -1132,7 +1132,7 @@ test('admin server plans and applies topology changes with redacted results', as
       assert.equal(plan.payload.ok, true);
       assert.equal(plan.payload.result.changedCount, 3);
       assert.match(plan.payload.summary, /Topology plan: changes=3/u);
-      assert.equal(plan.payload.result.changes[1].after.discordToken, '***');
+      assert.equal(plan.payload.result.changes[1].after.kakaoRelayToken, '***');
       assert.doesNotMatch(JSON.stringify(plan.payload), /admin-secret-token/u);
       assert.equal(loadConfig(projectRoot).agents['auto-owner'], undefined);
 
@@ -1147,19 +1147,19 @@ test('admin server plans and applies topology changes with redacted results', as
 
       const config = loadConfig(projectRoot);
       assert.equal(config.agents['auto-owner'].agent, 'command');
-      assert.equal(config.connectors['auto-discord'].discordToken, 'admin-secret-token');
-      assert.equal(config.channels['auto-discord-main'].connector, 'auto-discord');
+      assert.equal(config.connectors['auto-kakao'].kakaoRelayToken, 'admin-secret-token');
+      assert.equal(config.channels['auto-kakao-main'].connector, 'auto-kakao');
 
       const exported = await requestJson(`${url}/api/topology/export`);
       assert.equal(exported.response.status, 200, JSON.stringify(exported.payload));
-      assert.equal(exported.payload.spec.connectors[0].discordToken, '***');
+      assert.equal(exported.payload.spec.connectors[0].kakaoRelayToken, '***');
       assert.doesNotMatch(JSON.stringify(exported.payload), /admin-secret-token/u);
     });
   } finally {
     if (priorToken === undefined) {
-      delete process.env.HKCLAW_TEST_ADMIN_DISCORD_TOKEN;
+      delete process.env.HKCLAW_TEST_ADMIN_KAKAO_TOKEN;
     } else {
-      process.env.HKCLAW_TEST_ADMIN_DISCORD_TOKEN = priorToken;
+      process.env.HKCLAW_TEST_ADMIN_KAKAO_TOKEN = priorToken;
     }
   }
 });
@@ -1339,46 +1339,60 @@ test('admin snapshot scopes channel worker requirements to connector platform ro
     });
     assert.equal(agentResponse.response.status, 200, JSON.stringify(agentResponse.payload));
 
-    for (const definition of [
-      {
-        name: 'discord-main',
-        type: 'discord',
-        discordToken: 'discord-token',
+    const telegramAgentResponse = await requestJson(`${url}/api/agents`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'telegram-worker',
+          agent: 'command',
+          platform: 'telegram',
+          telegramBotToken: 'telegram-token',
+          command: `node ${fixturePath}`,
+        },
       },
-      {
-        name: 'telegram-main',
-        type: 'telegram',
-        telegramBotToken: 'telegram-token',
+    });
+    assert.equal(telegramAgentResponse.response.status, 200, JSON.stringify(telegramAgentResponse.payload));
+
+    const discordAgentResponse = await requestJson(`${url}/api/agents`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'discord-worker',
+          agent: 'command',
+          platform: 'discord',
+          discordToken: 'discord-token',
+          command: `node ${fixturePath}`,
+        },
       },
-      {
-        name: 'kakao-main',
-        type: 'kakao',
-        kakaoRelayUrl: 'https://relay.example/',
+    });
+    assert.equal(discordAgentResponse.response.status, 200, JSON.stringify(discordAgentResponse.payload));
+
+    const connectorResponse = await requestJson(`${url}/api/connectors`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'kakao-main',
+          type: 'kakao',
+          kakaoRelayUrl: 'https://relay.example/',
+        },
       },
-    ]) {
-      const response = await requestJson(`${url}/api/connectors`, {
-        method: 'POST',
-        body: { definition },
-      });
-      assert.equal(response.response.status, 200, JSON.stringify(response.payload));
-    }
+    });
+    assert.equal(connectorResponse.response.status, 200, JSON.stringify(connectorResponse.payload));
 
     for (const definition of [
       {
         name: 'discord-ops',
         platform: 'discord',
-        connector: 'discord-main',
         discordChannelId: '123456789012345678',
         workspace: 'workspace',
-        agent: 'worker',
+        agent: 'discord-worker',
       },
       {
         name: 'telegram-alerts',
         platform: 'telegram',
-        connector: 'telegram-main',
         telegramChatId: '-100111222333',
         workspace: 'workspace',
-        agent: 'worker',
+        agent: 'telegram-worker',
       },
       {
         name: 'kakao-support',
@@ -1403,14 +1417,12 @@ test('admin snapshot scopes channel worker requirements to connector platform ro
     assert.equal(payload.telegram.telegramChannelCount, 1);
     assert.equal(payload.kakao.kakaoChannelCount, 1);
 
-    assert.equal(payload.discord.agents.worker.required, false);
-    assert.equal(payload.telegram.agents.worker.required, false);
+    assert.equal(payload.discord.agents['discord-worker'].required, true);
+    assert.equal(payload.telegram.agents['telegram-worker'].required, true);
     assert.equal(payload.kakao.agents.worker.required, false);
 
-    assert.equal(payload.discord.agents['discord-main'].connector, true);
-    assert.equal(payload.discord.agents['discord-main'].required, true);
-    assert.equal(payload.telegram.agents['telegram-main'].connector, true);
-    assert.equal(payload.telegram.agents['telegram-main'].required, true);
+    assert.equal(payload.discord.agents['discord-worker'].connector, false);
+    assert.equal(payload.telegram.agents['telegram-worker'].connector, false);
     assert.equal(payload.kakao.agents['kakao-main'].connector, true);
     assert.equal(payload.kakao.agents['kakao-main'].required, true);
 
@@ -1422,9 +1434,7 @@ test('admin snapshot scopes channel worker requirements to connector platform ro
         connector: channel.connector,
       })),
       [
-        { name: 'discord-ops', platform: 'discord', connector: 'discord-main' },
         { name: 'kakao-support', platform: 'kakao', connector: 'kakao-main' },
-        { name: 'telegram-alerts', platform: 'telegram', connector: 'telegram-main' },
       ],
     );
   });

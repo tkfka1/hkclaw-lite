@@ -72,3 +72,49 @@ export function assertVersionConsistency(versions, expectedVersion) {
     throw new Error(`Release metadata is out of sync for ${targetVersion}: ${details}`);
   }
 }
+
+const SHA256_RE = /^[0-9a-f]{64}$/u;
+
+export function buildNpmTarballUrl(packageName, version) {
+  const normalizedVersion = normalizeVersion(version);
+  const encodedName = encodeURIComponent(packageName).replace(/^%40/u, '@');
+  const tarballName = packageName.includes('/') ? packageName.split('/').pop() : packageName;
+  return `https://registry.npmjs.org/${encodedName}/-/${tarballName}-${normalizedVersion}.tgz`;
+}
+
+export function renderHomebrewFormula({
+  version,
+  sha256,
+  tarballUrl = buildNpmTarballUrl('hkclaw-lite', version),
+} = {}) {
+  const normalizedVersion = normalizeVersion(version);
+  const normalizedSha256 = String(sha256 || '').trim().toLowerCase();
+  if (!SHA256_RE.test(normalizedSha256)) {
+    throw new Error('Homebrew formula sha256 must be a 64 character lowercase hex digest.');
+  }
+  const normalizedTarballUrl = String(tarballUrl || '').trim();
+  if (!/^https:\/\//u.test(normalizedTarballUrl)) {
+    throw new Error('Homebrew formula URL must be an https URL.');
+  }
+
+  return `class HkclawLite < Formula
+  desc "Discord/Telegram/KakaoTalk AI agent runtime with a local web admin"
+  homepage "https://github.com/tkfka1/hkclaw-lite"
+  url "${normalizedTarballUrl}"
+  sha256 "${normalizedSha256}"
+  license "MIT"
+  version "${normalizedVersion}"
+
+  depends_on "node"
+
+  def install
+    system "npm", "install", *std_npm_args
+    bin.install_symlink libexec.glob("bin/*")
+  end
+
+  test do
+    assert_match "hkclaw-lite", shell_output("#{bin}/hkclaw-lite --help")
+  end
+end
+`;
+}

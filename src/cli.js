@@ -30,6 +30,7 @@ import {
   AGENT_TYPE_CHOICES,
   CLAUDE_PERMISSION_MODE_CHOICES,
   CHANNEL_MODE_CHOICES,
+  CONNECTOR_PLATFORM_CHOICES,
   CODEX_SANDBOX_CHOICES,
   DASHBOARD_ALL_AGENTS,
   DEFAULT_ADMIN_PORT,
@@ -1620,43 +1621,32 @@ async function promptForConnectorDefinition(prompter, config, options) {
       return true;
     },
   });
-  const type = await prompter.askChoice('Connector type', MESSAGING_PLATFORM_CHOICES, {
-    defaultValue: initial.type || initial.platform || 'kakao',
-  });
-  const description = await prompter.askText('Connector description (optional)', {
+  const connectorPlatform = CONNECTOR_PLATFORM_CHOICES[0];
+  console.log(`Connector type: ${connectorPlatform.label} (${connectorPlatform.description})`);
+  const description = await prompter.askText('Connector memo (optional)', {
     defaultValue: initial.description,
     allowEmpty: true,
   });
   const definition = {
     name,
-    type,
+    type: 'kakao',
     description,
   };
-  if (type === 'telegram') {
-    definition.telegramBotToken = await prompter.askText('Telegram bot token', {
-      defaultValue: initial.telegramBotToken,
-    });
-  } else if (type === 'kakao') {
-    definition.kakaoRelayUrl = await prompter.askText('Kakao connection relay URL', {
-      defaultValue: initial.kakaoRelayUrl || getDefaultKakaoRelayUrl(),
+  definition.kakaoRelayUrl = await prompter.askText('Kakao TalkChannel relay URL', {
+    defaultValue: initial.kakaoRelayUrl || getDefaultKakaoRelayUrl(),
+    allowEmpty: true,
+  });
+  definition.kakaoRelayToken = await prompter.askText(
+    'Kakao connection token (optional; empty creates a pairing session)',
+    {
+      defaultValue: initial.kakaoRelayToken,
       allowEmpty: true,
-    });
-    definition.kakaoRelayToken = await prompter.askText(
-      'Kakao connection token (optional; empty creates a pairing session)',
-      {
-        defaultValue: initial.kakaoRelayToken,
-        allowEmpty: true,
-      },
-    );
-    definition.kakaoSessionToken = await prompter.askText('Kakao session token (optional)', {
-      defaultValue: initial.kakaoSessionToken,
-      allowEmpty: true,
-    });
-  } else {
-    definition.discordToken = await prompter.askText('Discord bot token', {
-      defaultValue: initial.discordToken,
-    });
-  }
+    },
+  );
+  definition.kakaoSessionToken = await prompter.askText('Kakao session token (optional)', {
+    defaultValue: initial.kakaoSessionToken,
+    allowEmpty: true,
+  });
   return definition;
 }
 
@@ -2318,14 +2308,14 @@ Execution model:
 Usage:
   hkclaw-lite init [--root DIR] [--force]
   hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
-  hkclaw-lite discord serve [--root DIR] [--connector <name>|--agent <legacy-agent-name>]
-  hkclaw-lite telegram serve [--root DIR] [--connector <name>|--agent <legacy-agent-name>]
-  hkclaw-lite kakao serve [--root DIR] [--connector <name>|--agent <legacy-agent-name>]
+  hkclaw-lite discord serve [--root DIR] [--agent <legacy-agent-name>]
+  hkclaw-lite telegram serve [--root DIR] [--agent <legacy-agent-name>]
+  hkclaw-lite kakao serve [--root DIR] [--connector <kakao-name>|--agent <legacy-agent-name>]
   hkclaw-lite backup export <file> [--root DIR] [--no-watchers] [--no-logs]
   hkclaw-lite backup import <file> [--root DIR] [--force]
   hkclaw-lite migrate --from <project-root> [--root DIR] [--force]
   hkclaw-lite add agent
-  hkclaw-lite add connector
+  hkclaw-lite add connector   # KakaoTalk reusable connection only
   hkclaw-lite add channel
   hkclaw-lite add dashboard
   hkclaw-lite edit agent <name>
@@ -2363,14 +2353,14 @@ Usage:
 Examples:
   hkclaw-lite admin
   hkclaw-lite admin --host 0.0.0.0 --port ${DEFAULT_ADMIN_PORT}
-  hkclaw-lite discord serve --connector discord-main
-  hkclaw-lite telegram serve --connector telegram-main
+  hkclaw-lite discord serve --agent discord-main
+  hkclaw-lite telegram serve --agent telegram-main
   hkclaw-lite kakao serve --connector kakao-main
   hkclaw-lite backup export ./backups/project.json
   hkclaw-lite backup import ./backups/project.json --root ./restored
   hkclaw-lite migrate --from ../old-project --root ./new-project
   hkclaw-lite add agent
-  hkclaw-lite add connector
+  hkclaw-lite add connector   # KakaoTalk reusable connection only
   hkclaw-lite add channel
   hkclaw-lite add dashboard
   hkclaw-lite run --channel discord-main --message "summarize the repo"

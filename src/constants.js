@@ -71,6 +71,13 @@ export const MESSAGING_PLATFORM_CHOICES = [
     description: 'Use a Kakao TalkChannel relay session or token',
   },
 ];
+export const CONNECTOR_PLATFORM_CHOICES = [
+  {
+    value: 'kakao',
+    label: 'KakaoTalk',
+    description: 'Reusable connectors are reserved for Kakao TalkChannel relay sessions',
+  },
+];
 export const CODEX_SANDBOX_CHOICES = [
   {
     value: 'workspace-write',

@@ -17,7 +17,6 @@ import {
 import {
   buildAgentDefinition,
   buildChannelDefinition,
-  buildConnectorDefinition,
   createDefaultConfig,
   initProject,
   saveConfig,
@@ -213,7 +212,7 @@ test('telegram service flushes pending outbox events after restart', async () =>
   assert.equal(pending.length, 0);
 });
 
-test('telegram pending outbox can deliver through a channel connector', async () => {
+test('telegram pending outbox can deliver through an agent platform route', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
 
@@ -221,16 +220,13 @@ test('telegram pending outbox can deliver through a channel connector', async ()
   config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
     name: 'owner',
     agent: 'command',
+    platform: 'telegram',
     command: 'cat',
-  });
-  config.connectors.telegramMain = buildConnectorDefinition('telegramMain', {
-    type: 'telegram',
     telegramBotToken: 'telegram-token',
   });
   config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
     name: 'main',
     platform: 'telegram',
-    connector: 'telegramMain',
     telegramChatId: '-100123',
     workspace: '~',
     agent: 'owner',
@@ -241,7 +237,6 @@ test('telegram pending outbox can deliver through a channel connector', async ()
     channel: {
       name: 'main',
       platform: 'telegram',
-      connector: 'telegramMain',
       telegramChatId: '-100123',
       mode: 'single',
       agent: 'owner',
@@ -254,14 +249,13 @@ test('telegram pending outbox can deliver through a channel connector', async ()
     channel: {
       name: 'main',
       platform: 'telegram',
-      connector: 'telegramMain',
       telegramChatId: '-100123',
       mode: 'single',
     },
     entry: {
       role: 'owner',
       agent: { name: 'owner' },
-      content: 'connector text',
+      content: 'agent route text',
       final: true,
       round: 1,
       maxRounds: 1,
@@ -271,7 +265,7 @@ test('telegram pending outbox can deliver through a channel connector', async ()
 
   const sent = [];
   const clients = {
-    telegramMain: {
+    owner: {
       token: 'telegram-token',
       async __send(method, payload) {
         sent.push({ method, payload });
@@ -283,7 +277,7 @@ test('telegram pending outbox can deliver through a channel connector', async ()
   const flushed = await flushPendingTelegramOutbox(projectRoot, clients, { limit: 10 });
   assert.equal(flushed, 1);
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].payload.text, 'connector text');
+  assert.equal(sent[0].payload.text, 'agent route text');
 });
 
 test('telegram outbox flush skips bad events and continues with valid ones', async () => {

@@ -104,11 +104,11 @@ export function renderChannelsView(ctx) {
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
-          <h2>채널 연결</h2>
+          <h2>KakaoTalk 연결</h2>
         </div>
-        <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}연결 추가</button>
+        <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}Kakao 연결 추가</button>
       </div>
-      <p class="field-hint">플랫폼 계정·토큰 설정입니다. 보통은 채널 하나에 연결 하나만 고르면 됩니다.</p>
+      <p class="field-hint">커넥터는 KakaoTalk 전용입니다. Discord/Telegram 토큰은 에이전트 설정에서 관리하고, Kakao TalkChannel 릴레이·페어링 세션만 여기서 재사용합니다.</p>
       ${renderConnectorList(state.data.connectors || [], state.data.channels || [])}
     </section>
   `;
@@ -162,7 +162,7 @@ export function renderTopologyView(ctx) {
           <button type="button" class="btn-primary" data-action="topology-apply" ${state.busy ? 'disabled' : ''}>${renderIcon('play', 'ui-icon')}Apply</button>
         </div>
       </div>
-      <p class="field-hint">에이전트·채널 연결·채널을 desired-state JSON으로 검토하고 적용합니다. 토큰은 직접 넣지 말고 <code>secretRefs.*Env</code>를 사용하세요.</p>
+      <p class="field-hint">에이전트·KakaoTalk 연결·채널을 desired-state JSON으로 검토하고 적용합니다. 커넥터는 KakaoTalk 전용이며 토큰은 직접 넣지 말고 <code>secretRefs.*Env</code>를 사용하세요.</p>
       <div class="topology-grid" data-form="topology">
         <label class="field topology-editor">
           <span>Topology JSON</span>

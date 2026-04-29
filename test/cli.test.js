@@ -144,6 +144,14 @@ test('channels can reference a reusable messaging connector', () => {
     }).type,
     'kakao',
   );
+  assert.throws(
+    () =>
+      buildConnectorDefinition('discordMain', {
+        type: 'discord',
+        discordToken: 'discord-token',
+      }),
+    /KakaoTalk-only/u,
+  );
   const config = loadConfig(cwd);
   config.agents.owner = buildAgentDefinition(cwd, 'owner', {
     name: 'owner',
@@ -186,7 +194,7 @@ test('channels can reference a reusable messaging connector', () => {
   assert.match(blockedRemove.stderr, /referenced by channels: kakao/u);
 
   const editConnector = runCli(cwd, ['edit', 'connector', 'kakaoMain'], {
-    input: ['kakaoOps', '', 'Ops Kakao account', 'https://relay2.example/', '', ''].join('\n'),
+    input: ['kakaoOps', 'Ops Kakao account', 'https://relay2.example/', '', ''].join('\n'),
   });
   assert.equal(editConnector.status, 0, editConnector.stderr);
 
@@ -343,9 +351,9 @@ test('topology rejects inline secrets and redacts secret env refs', () => {
       version: 1,
       connectors: [
         {
-          name: 'auto-discord',
-          type: 'discord',
-          discordToken: 'super-secret-token',
+          name: 'auto-kakao',
+          type: 'kakao',
+          kakaoRelayToken: 'super-secret-token',
         },
       ],
     }),
@@ -353,7 +361,7 @@ test('topology rejects inline secrets and redacts secret env refs', () => {
 
   const inline = runCli(cwd, ['topology', 'plan', '--file', inlinePath]);
   assert.notEqual(inline.status, 0);
-  assert.match(inline.stderr, /Inline secret field connectors\[0\]\.discordToken is not allowed/u);
+  assert.match(inline.stderr, /Inline secret field connectors\[0\]\.kakaoRelayToken is not allowed/u);
 
   const refPath = path.join(cwd, 'secret-ref.json');
   fs.writeFileSync(
@@ -362,10 +370,10 @@ test('topology rejects inline secrets and redacts secret env refs', () => {
       version: 1,
       connectors: [
         {
-          name: 'auto-discord',
-          type: 'discord',
+          name: 'auto-kakao',
+          type: 'kakao',
           secretRefs: {
-            discordTokenEnv: 'HKCLAW_TEST_DISCORD_TOKEN',
+            kakaoRelayTokenEnv: 'HKCLAW_TEST_KAKAO_TOKEN',
           },
         },
       ],
@@ -373,16 +381,16 @@ test('topology rejects inline secrets and redacts secret env refs', () => {
   );
 
   const apply = runCli(cwd, ['topology', 'apply', '--file', refPath, '--yes'], {
-    env: { HKCLAW_TEST_DISCORD_TOKEN: 'resolved-secret-token' },
+    env: { HKCLAW_TEST_KAKAO_TOKEN: 'resolved-secret-token' },
   });
   assert.equal(apply.status, 0, apply.stderr);
   assert.doesNotMatch(apply.stdout, /resolved-secret-token/u);
-  assert.equal(loadConfig(cwd).connectors['auto-discord'].discordToken, 'resolved-secret-token');
+  assert.equal(loadConfig(cwd).connectors['auto-kakao'].kakaoRelayToken, 'resolved-secret-token');
 
   const exported = runCli(cwd, ['topology', 'export']);
   assert.equal(exported.status, 0, exported.stderr);
   assert.doesNotMatch(exported.stdout, /resolved-secret-token/u);
-  assert.match(exported.stdout, /"discordToken": "\*\*\*"/u);
+  assert.match(exported.stdout, /"kakaoRelayToken": "\*\*\*"/u);
 });
 
 test('add agent auto-initializes project metadata when missing', () => {

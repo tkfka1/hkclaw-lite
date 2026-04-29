@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   CHANNEL_MODE_CHOICES,
+  CONNECTOR_PLATFORM_CHOICES,
   CONTAINER_CHANNEL_WORKSPACE,
   CONFIG_FILENAME,
   CURRENT_CONFIG_VERSION,
@@ -555,6 +556,7 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
     merged.reviewRounds = parseOptionalInteger(merged.reviewRounds, 'reviewRounds');
   }
   if (merged.platform === 'telegram') {
+    merged.connector = undefined;
     merged.discordChannelId = undefined;
     merged.guildId = undefined;
     merged.kakaoChannelId = undefined;
@@ -566,6 +568,7 @@ export function buildChannelDefinition(projectRoot, config, name, input, existin
     merged.telegramThreadId = undefined;
     merged.kakaoChannelId = merged.kakaoChannelId || '*';
   } else {
+    merged.connector = undefined;
     merged.telegramChatId = undefined;
     merged.telegramThreadId = undefined;
     merged.kakaoChannelId = undefined;
@@ -583,63 +586,51 @@ export function buildConnectorDefinition(name, input = {}, existing = {}) {
     'Connector name may only contain letters, numbers, dot, underscore, and dash.',
   );
 
-  const connectorCredentials = {
-    discordToken: input.discordToken ?? input['discord-token'] ?? existing.discordToken,
-    telegramBotToken:
-      input.telegramBotToken ??
-      input['telegram-bot-token'] ??
-      existing.telegramBotToken,
-    kakaoRelayUrl:
-      input.kakaoRelayUrl ??
-      input['kakao-relay-url'] ??
-      input.relayUrl ??
-      input['relay-url'] ??
-      existing.kakaoRelayUrl,
-    kakaoRelayToken:
-      input.kakaoRelayToken ??
-      input['kakao-relay-token'] ??
-      input.relayToken ??
-      input['relay-token'] ??
-      existing.kakaoRelayToken,
-    kakaoSessionToken:
-      input.kakaoSessionToken ??
-      input['kakao-session-token'] ??
-      input.sessionToken ??
-      input['session-token'] ??
-      existing.kakaoSessionToken,
-  };
+  const explicitType = normalizeOptionalString(
+    input.type ?? input.platform ?? input['platform'] ?? existing.type,
+  );
+  assert(
+    !explicitType || CONNECTOR_PLATFORM_CHOICES.some((entry) => entry.value === explicitType),
+    `Connectors are KakaoTalk-only; configure ${explicitType || 'non-Kakao'} credentials on the agent instead.`,
+  );
+
+  const discordToken = normalizeOptionalString(
+    input.discordToken ?? input['discord-token'] ?? existing.discordToken,
+  );
+  const telegramBotToken = normalizeOptionalString(
+    input.telegramBotToken ?? input['telegram-bot-token'] ?? existing.telegramBotToken,
+  );
+  assert(
+    !discordToken && !telegramBotToken,
+    'Connectors are KakaoTalk-only; configure Discord or Telegram tokens on the agent instead.',
+  );
 
   const merged = {
     ...stripManagedFields(existing),
-    type: resolveMessagingPlatform(
-      input.type ?? input.platform ?? input['platform'] ?? existing.type,
-      {
-        ...existing,
-        ...connectorCredentials,
-      },
-    ),
+    type: 'kakao',
     description: normalizeOptionalString(input.description ?? existing.description),
-    discordToken: normalizeOptionalString(connectorCredentials.discordToken),
-    telegramBotToken: normalizeOptionalString(connectorCredentials.telegramBotToken),
-    kakaoRelayUrl: normalizeOptionalString(connectorCredentials.kakaoRelayUrl),
-    kakaoRelayToken: normalizeOptionalString(connectorCredentials.kakaoRelayToken),
-    kakaoSessionToken: normalizeOptionalString(connectorCredentials.kakaoSessionToken),
+    kakaoRelayUrl: normalizeOptionalString(
+      input.kakaoRelayUrl ??
+        input['kakao-relay-url'] ??
+        input.relayUrl ??
+        input['relay-url'] ??
+        existing.kakaoRelayUrl,
+    ),
+    kakaoRelayToken: normalizeOptionalString(
+      input.kakaoRelayToken ??
+        input['kakao-relay-token'] ??
+        input.relayToken ??
+        input['relay-token'] ??
+        existing.kakaoRelayToken,
+    ),
+    kakaoSessionToken: normalizeOptionalString(
+      input.kakaoSessionToken ??
+        input['kakao-session-token'] ??
+        input.sessionToken ??
+        input['session-token'] ??
+        existing.kakaoSessionToken,
+    ),
   };
-
-  if (merged.type === 'telegram') {
-    merged.discordToken = undefined;
-    merged.kakaoRelayUrl = undefined;
-    merged.kakaoRelayToken = undefined;
-    merged.kakaoSessionToken = undefined;
-  } else if (merged.type === 'kakao') {
-    merged.discordToken = undefined;
-    merged.telegramBotToken = undefined;
-  } else {
-    merged.telegramBotToken = undefined;
-    merged.kakaoRelayUrl = undefined;
-    merged.kakaoRelayToken = undefined;
-    merged.kakaoSessionToken = undefined;
-  }
 
   validateConnectorDefinition(name, merged);
   return sortObjectKeys(merged);
@@ -1225,32 +1216,43 @@ function normalizeConnectorRecords(connectors) {
   return Object.fromEntries(
     Object.entries(connectors).map(([name, connector]) => [
       name,
-      buildConnectorDefinition(name, connector),
+      normalizeConnectorRecord(name, connector),
     ]),
   );
 }
 
-function buildLegacyAgentConnector(platform, agent) {
-  if (platform === 'telegram' && typeof agent.telegramBotToken === 'string' && agent.telegramBotToken.trim()) {
-    return {
-      type: 'telegram',
-      telegramBotToken: agent.telegramBotToken.trim(),
-      description: 'Migrated from agent platform settings',
-    };
+function normalizeConnectorRecord(name, connector) {
+  const type = resolveMessagingPlatform(connector?.type ?? connector?.platform, connector);
+  if (type === 'kakao') {
+    return buildConnectorDefinition(name, connector);
   }
+
+  return normalizeLegacyNonKakaoConnector(type, connector);
+}
+
+function normalizeLegacyNonKakaoConnector(type, connector = {}) {
+  const normalizedType = type === 'telegram' ? 'telegram' : 'discord';
+  const next = {
+    type: normalizedType,
+    description: normalizeOptionalString(connector.description),
+  };
+  if (normalizedType === 'telegram') {
+    next.telegramBotToken = normalizeOptionalString(
+      connector.telegramBotToken ?? connector['telegram-bot-token'],
+    );
+  } else {
+    next.discordToken = normalizeOptionalString(connector.discordToken ?? connector['discord-token']);
+  }
+  return sortObjectKeys(next);
+}
+
+function buildLegacyAgentConnector(platform, agent) {
   if (platform === 'kakao') {
     return {
       type: 'kakao',
       kakaoRelayUrl: normalizeOptionalString(agent.kakaoRelayUrl),
       kakaoRelayToken: normalizeOptionalString(agent.kakaoRelayToken),
       kakaoSessionToken: normalizeOptionalString(agent.kakaoSessionToken),
-      description: 'Migrated from agent platform settings',
-    };
-  }
-  if (platform === 'discord' && typeof agent.discordToken === 'string' && agent.discordToken.trim()) {
-    return {
-      type: 'discord',
-      discordToken: agent.discordToken.trim(),
       description: 'Migrated from agent platform settings',
     };
   }

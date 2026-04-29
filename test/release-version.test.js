@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 
 import {
   assertVersionConsistency,
+  buildNpmTarballUrl,
   normalizeVersion,
   readReleaseManifestVersions,
+  renderHomebrewFormula,
   updateChartYamlVersion,
   updatePackageJsonVersion,
   updatePackageLockVersion,
@@ -77,4 +79,20 @@ test('assertVersionConsistency reports the mismatched release metadata field', (
       ),
     /chartVersion=1.3.9/u,
   );
+});
+
+test('homebrew formula renderer targets the npm release tarball', () => {
+  const sha256 = 'a'.repeat(64);
+  assert.equal(
+    buildNpmTarballUrl('hkclaw-lite', 'v1.4.0'),
+    'https://registry.npmjs.org/hkclaw-lite/-/hkclaw-lite-1.4.0.tgz',
+  );
+
+  const formula = renderHomebrewFormula({ version: 'v1.4.0', sha256 });
+  assert.match(formula, /class HkclawLite < Formula/u);
+  assert.match(formula, /url "https:\/\/registry\.npmjs\.org\/hkclaw-lite\/-\/hkclaw-lite-1\.4\.0\.tgz"/u);
+  assert.match(formula, /sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"/u);
+  assert.match(formula, /depends_on "node"/u);
+  assert.match(formula, /system "npm", "install", \*std_npm_args/u);
+  assert.match(formula, /bin\.install_symlink libexec\.glob\("bin\/\*"\)/u);
 });
