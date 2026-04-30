@@ -54,7 +54,7 @@ export function resolveAgentEffortChoices(agentType, model) {
     case 'codex':
       return resolveOpenAiEffortChoices(model);
     case 'claude-code':
-      return ['low', 'medium', 'high', 'max'];
+      return ['low', 'medium', 'high', 'xhigh', 'max'];
     case 'gemini-cli':
       return resolveGeminiEffortChoices(model);
     default:
@@ -202,7 +202,7 @@ async function listLocalLlmModels(payload, env) {
 function resolveOpenAiEffortChoices(model) {
   const id = String(model || '').trim().toLowerCase();
   if (!id) {
-    return ['low', 'medium', 'high'];
+    return ['none', 'low', 'medium', 'high', 'xhigh'];
   }
   if (id === 'gpt-5-pro' || id.startsWith('gpt-5-pro-')) {
     return ['high'];
@@ -211,7 +211,9 @@ function resolveOpenAiEffortChoices(model) {
     id === 'gpt-5.2-pro' ||
     id.startsWith('gpt-5.2-pro-') ||
     id === 'gpt-5.4-pro' ||
-    id.startsWith('gpt-5.4-pro-')
+    id.startsWith('gpt-5.4-pro-') ||
+    id === 'gpt-5.5-pro' ||
+    id.startsWith('gpt-5.5-pro-')
   ) {
     return ['medium', 'high', 'xhigh'];
   }
@@ -221,6 +223,7 @@ function resolveOpenAiEffortChoices(model) {
   if (
     id.startsWith('gpt-5.2') ||
     id.startsWith('gpt-5.4') ||
+    id.startsWith('gpt-5.5') ||
     id.startsWith('gpt-5.4-mini') ||
     id.startsWith('gpt-5.4-nano')
   ) {

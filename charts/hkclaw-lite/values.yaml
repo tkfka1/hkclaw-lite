@@ -28,6 +28,12 @@ serviceAccount:
   annotations: {}
   name: ""
 
+storageResize:
+  # Disabled by default: enabling lets the web admin patch this release's PVCs.
+  # Also requires a StorageClass with allowVolumeExpansion=true.
+  rbac:
+    enabled: false
+
 podAnnotations: {}
 podLabels: {}
 enableServiceLinks: false
@@ -53,7 +59,7 @@ state:
     storageClassName: ""
     accessModes:
       - ReadWriteOnce
-    size: 5Gi
+    size: 25Gi
 
 workspace:
   enabled: false
@@ -64,7 +70,7 @@ workspace:
     storageClassName: ""
     accessModes:
       - ReadWriteOnce
-    size: 20Gi
+    size: 25Gi
 
 bootstrapBackup:
   enabled: false

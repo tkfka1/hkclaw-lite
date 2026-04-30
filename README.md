@@ -147,8 +147,9 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 - `admin --host 0.0.0.0 --port 5687`
 - `HOME=/home/hkclaw`
 - 상태 저장용 PVC 사용
+- state PVC 기본 크기는 `25Gi`
 - 기본 채널 워크스페이스는 `/home/hkclaw/workspace`
-- 별도 workspace PVC는 기본 비활성화
+- 별도 workspace PVC는 기본 비활성화, 켜면 기본 크기는 `25Gi`
 - KakaoTalk 상시 수신은 `workers.kakao.enabled=true` 로 같은 Pod 안의 `kakao serve` sidecar를 켤 수 있다.
 - 기본 Deployment 전략은 `Recreate` 다. state/workspace PVC가 `ReadWriteOnce` 이고 runtime SQLite DB와 플랫폼 워커 상태를 한 Pod가 소유해야 하므로 배포 중에도 중복 Pod를 만들지 않는다.
 
@@ -166,13 +167,28 @@ kubectl port-forward svc/hkclaw-lite 5687:5687
 
 즉 Helm 기본 배포는 단일 웹 어드민 Pod 기준이고, 별도 role Pod가 필요할 때만 `args`를 override 하면 된다.
 
+### Helm 스토리지 확장
+
+차트가 직접 만드는 state/workspace PVC는 `25Gi` 미만으로 설정할 수 없다. 운영 중 용량을 키울 때는 웹 어드민의 **전체 설정 → 스토리지** 화면에서 현재 PVC를 확인하고 `+25GB`, `+50GB`, `+100GB` 단위로 확장을 요청할 수 있다.
+
+이 기능은 기본 비활성화다. 클러스터 StorageClass가 `allowVolumeExpansion=true` 를 지원할 때만 켠다.
+
+```bash
+helm upgrade --install hkclaw-lite ./charts/hkclaw-lite \
+  --set image.repository=ghcr.io/tkfka1/hkclaw-lite \
+  --set image.tag=latest \
+  --set storageResize.rbac.enabled=true
+```
+
+`storageResize.rbac.enabled=true` 는 이 릴리스의 state/workspace PVC에 대한 `get`/`patch` 권한만 Role로 붙이고, Pod의 ServiceAccount 토큰 자동 마운트를 켠다. 기존 PVC 이름을 쓰는 경우에도 해당 claim 이름만 대상으로 제한된다.
+
 ### Kubernetes / GitOps 인증 기준
 
 이미지 안에는 `kubectl`과 `argocd`가 들어있지만, 차트가 클러스터 권한을 자동으로 열어주지는 않는다.
 
 - 기본값은 `serviceAccount.create=true`, `serviceAccount.automountServiceAccountToken=false` 다.
 - 그래서 Pod 안에서 `kubectl`을 실행해도 기본 ServiceAccount 토큰이 자동 주입되지 않는다.
-- 클러스터 내부 권한이 필요하면 명시적으로 `serviceAccount.automountServiceAccountToken=true` 로 켜고, 필요한 RBAC를 별도로 붙여야 한다.
+- 클러스터 내부 권한이 필요하면 명시적으로 `serviceAccount.automountServiceAccountToken=true` 로 켜고, 필요한 RBAC를 별도로 붙여야 한다. 스토리지 확장만 필요하면 `storageResize.rbac.enabled=true` 를 쓰면 된다.
 - 클러스터 외부 권한이 필요하면 kubeconfig를 Secret/PVC/extraVolume 등으로 직접 마운트하거나 환경 변수로 넘겨야 한다.
 - GitOps 운영에서는 앱 저장소를 직접 `kubectl apply` 하는 방식보다, values 저장소의 image tag/digest를 갱신하고 Argo CD가 sync 하게 두는 방식이 기본이다.
 - 관리자 암호는 선택 사항이다. `HKCLAW_LITE_ADMIN_PASSWORD` 가 없으면 `hkclaw-lite admin`과 Helm Pod는 로그인 없이 바로 뜬다.

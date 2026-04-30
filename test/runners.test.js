@@ -250,12 +250,18 @@ function createFakeGeminiCliBundle() {
   fs.writeFileSync(
     scriptPath,
     `#!/usr/bin/env node
+import fs from 'node:fs';
+
+const settingsPath = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH || '';
 const payload = {
+  args: process.argv.slice(2),
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   googleApiKey: process.env.GOOGLE_API_KEY || '',
   googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
   googleCloudAccessToken: process.env.GOOGLE_CLOUD_ACCESS_TOKEN || '',
   googleGenAiUseGca: process.env.GOOGLE_GENAI_USE_GCA || '',
+  geminiCliSystemSettingsPath: settingsPath,
+  geminiCliSystemSettings: settingsPath ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : null,
   _meta: {
     quota: {
       token_count: {
@@ -480,6 +486,56 @@ test('runAgentTurn strips Gemini process-env auth overrides and forces managed G
         ),
         true,
       );
+    },
+  );
+});
+
+test('runAgentTurn maps Gemini effort to a temporary model config override', async () => {
+  const projectRoot = createTempDir();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  const fakePackageJson = createFakeGeminiCliBundle();
+
+  await withEnv(
+    {
+      HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      const output = await runAgentTurn({
+        projectRoot,
+        agent: {
+          name: 'gemini-agent',
+          agent: 'gemini-cli',
+          model: 'gemini-2.5-flash',
+          effort: 'high',
+        },
+        prompt: 'Return exactly OK.',
+        rawPrompt: 'Return exactly OK.',
+        workdir: 'workspace',
+      });
+
+      const parsed = JSON.parse(output);
+      assert.equal(parsed.args.includes('-m'), true);
+      assert.equal(parsed.args[parsed.args.indexOf('-m') + 1], 'gemini-2.5-flash');
+      assert.match(parsed.geminiCliSystemSettingsPath, /settings\.json$/u);
+      assert.deepEqual(parsed.geminiCliSystemSettings, {
+        modelConfigs: {
+          customOverrides: [
+            {
+              match: {
+                model: 'gemini-2.5-flash',
+              },
+              modelConfig: {
+                generateContentConfig: {
+                  thinkingConfig: {
+                    thinkingBudget: 24576,
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
     },
   );
 });

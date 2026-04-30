@@ -409,30 +409,96 @@ async function runGeminiCli({
     fullPrompt: prompt,
   }));
   geminiEnv.GOOGLE_GENAI_USE_GCA = 'true';
-
-  const result = await runChildProcess({
-    command: cli.command,
-    args,
-    cwd: executionWorkdir,
-    env: applyEnvPatch(geminiEnv, cli.envPatch),
-    timeoutMs: service.timeoutMs,
-  });
+  const tempDir = createGeminiEffortSettingsDir(service);
+  if (tempDir) {
+    geminiEnv.GEMINI_CLI_SYSTEM_SETTINGS_PATH = path.join(tempDir, 'settings.json');
+  }
 
   try {
-    const parsed = JSON.parse(result.stdout);
-    const text =
-      parsed.text ||
-      parsed.responseJson?.candidates?.[0]?.content?.parts
-        ?.map((part) => part.text || '')
-        .join('\n')
-        .trim();
-    return {
-      text: trimTrailingWhitespace(text || result.stdout).trim(),
-      usage: extractGeminiCliUsage(parsed),
-    };
-  } catch {
-    return trimTrailingWhitespace(result.stdout).trim();
+    const result = await runChildProcess({
+      command: cli.command,
+      args,
+      cwd: executionWorkdir,
+      env: applyEnvPatch(geminiEnv, cli.envPatch),
+      timeoutMs: service.timeoutMs,
+    });
+
+    try {
+      const parsed = JSON.parse(result.stdout);
+      const text =
+        parsed.text ||
+        parsed.responseJson?.candidates?.[0]?.content?.parts
+          ?.map((part) => part.text || '')
+          .join('\n')
+          .trim();
+      return {
+        text: trimTrailingWhitespace(text || result.stdout).trim(),
+        usage: extractGeminiCliUsage(parsed),
+      };
+    } catch {
+      return trimTrailingWhitespace(result.stdout).trim();
+    }
+  } finally {
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   }
+}
+
+function createGeminiEffortSettingsDir(service) {
+  const thinkingConfig = resolveGeminiThinkingConfig(service.model, service.effort);
+  if (!thinkingConfig) {
+    return null;
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-gemini-'));
+  const settingsPath = path.join(tempDir, 'settings.json');
+  const override = {
+    match: service.model ? { model: service.model } : { overrideScope: 'core' },
+    modelConfig: {
+      generateContentConfig: {
+        thinkingConfig,
+      },
+    },
+  };
+  fs.writeFileSync(
+    settingsPath,
+    JSON.stringify({
+      modelConfigs: {
+        customOverrides: [override],
+      },
+    }),
+  );
+  return tempDir;
+}
+
+function resolveGeminiThinkingConfig(model, effort) {
+  const value = String(effort || '').trim().toLowerCase();
+  if (!value) {
+    return null;
+  }
+
+  const id = String(model || '').trim().toLowerCase();
+  if (id.startsWith('gemini-3')) {
+    if (value === 'minimal' || value === 'low') {
+      return { thinkingLevel: 'LOW' };
+    }
+    if (value === 'medium' || value === 'high') {
+      return { thinkingLevel: 'HIGH' };
+    }
+    return null;
+  }
+
+  const thinkingBudgets = {
+    none: 0,
+    minimal: 512,
+    low: 2048,
+    medium: 8192,
+    high: 24576,
+  };
+  return Object.hasOwn(thinkingBudgets, value)
+    ? { thinkingBudget: thinkingBudgets[value] }
+    : null;
 }
 
 async function runLocalLlm({

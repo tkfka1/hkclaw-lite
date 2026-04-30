@@ -2864,6 +2864,110 @@ test('admin server starts with login disabled when no initial password is config
   }
 });
 
+test('admin server exposes storage inspection and resize APIs', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-storage-'));
+  const kubectlPath = path.join(tempDir, 'kubectl');
+  const statePath = path.join(tempDir, 'storage-state.json');
+  const logPath = path.join(tempDir, 'kubectl-calls.jsonl');
+  fs.writeFileSync(
+    statePath,
+    JSON.stringify({
+      'state-claim': '25Gi',
+      'workspace-claim': '40Gi',
+    }),
+  );
+  fs.writeFileSync(
+    kubectlPath,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.HKCLAW_LITE_TEST_KUBECTL_LOG, JSON.stringify(args) + '\\n');
+const statePath = process.env.HKCLAW_LITE_TEST_KUBECTL_STATE_FILE;
+const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+
+if (args.includes('get') && args.includes('pvc')) {
+  const claimName = args[args.indexOf('pvc') + 1];
+  const storage = state[claimName];
+  if (!storage) {
+    process.stderr.write('pvc not found\\n');
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify({
+    spec: { resources: { requests: { storage } } },
+    status: { phase: 'Bound', capacity: { storage } },
+  }));
+  process.exit(0);
+}
+
+if (args.includes('patch') && args.includes('pvc')) {
+  const claimName = args[args.indexOf('pvc') + 1];
+  const patch = JSON.parse(args.at(-1));
+  state[claimName] = patch.spec.resources.requests.storage;
+  fs.writeFileSync(statePath, JSON.stringify(state));
+  process.stdout.write('patched\\n');
+  process.exit(0);
+}
+
+process.stderr.write('unexpected kubectl args: ' + args.join(' ') + '\\n');
+process.exit(2);
+`,
+    { mode: 0o755 },
+  );
+
+  const previousEnv = {
+    HKCLAW_LITE_ADMIN_PASSWORD: process.env.HKCLAW_LITE_ADMIN_PASSWORD,
+    HKCLAW_LITE_TEST_KUBECTL_LOG: process.env.HKCLAW_LITE_TEST_KUBECTL_LOG,
+    HKCLAW_LITE_TEST_KUBECTL_STATE_FILE: process.env.HKCLAW_LITE_TEST_KUBECTL_STATE_FILE,
+    HKCLAW_LITE_STORAGE_NAMESPACE: process.env.HKCLAW_LITE_STORAGE_NAMESPACE,
+    HKCLAW_LITE_STORAGE_STATE_PVC: process.env.HKCLAW_LITE_STORAGE_STATE_PVC,
+    HKCLAW_LITE_STORAGE_WORKSPACE_PVC: process.env.HKCLAW_LITE_STORAGE_WORKSPACE_PVC,
+    PATH: process.env.PATH,
+  };
+  delete process.env.HKCLAW_LITE_ADMIN_PASSWORD;
+  process.env.PATH = `${tempDir}:${process.env.PATH || ''}`;
+  process.env.HKCLAW_LITE_TEST_KUBECTL_LOG = logPath;
+  process.env.HKCLAW_LITE_TEST_KUBECTL_STATE_FILE = statePath;
+  process.env.HKCLAW_LITE_STORAGE_NAMESPACE = 'hkclaw-admin-test';
+  process.env.HKCLAW_LITE_STORAGE_STATE_PVC = 'state-claim';
+  process.env.HKCLAW_LITE_STORAGE_WORKSPACE_PVC = 'workspace-claim';
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const status = await requestJson(`${url}/api/storage`);
+      assert.equal(status.response.status, 200, JSON.stringify(status.payload));
+      assert.equal(status.payload.result.namespace, 'hkclaw-admin-test');
+      assert.equal(
+        status.payload.result.targets.find((target) => target.name === 'workspace')?.currentGi,
+        40,
+      );
+
+      const resized = await requestJson(`${url}/api/storage/resize`, {
+        method: 'POST',
+        body: {
+          target: 'workspace',
+          sizeGi: 50,
+        },
+      });
+      assert.equal(resized.response.status, 200, JSON.stringify(resized.payload));
+      assert.equal(resized.payload.result.target.claimName, 'workspace-claim');
+      assert.equal(resized.payload.result.target.currentGi, 50);
+
+      const calls = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+      assert.equal(calls.some((args) => args.includes('patch') && args.includes('workspace-claim')), true);
+    });
+  } finally {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});
+
 test('admin password can be changed and old password stops working', async () => {
   const projectRoot = createProject();
   const passwordFile = path.join(projectRoot, '.admin-password');
@@ -3908,7 +4012,13 @@ test('admin server lists model options for provider APIs and curated Claude ACP 
               ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
             );
             assert.equal(claude.payload.result.defaultModel, 'claude-sonnet-4-6');
-            assert.deepEqual(claude.payload.result.models[0].efforts, ['low', 'medium', 'high', 'max']);
+            assert.deepEqual(claude.payload.result.models[0].efforts, [
+              'low',
+              'medium',
+              'high',
+              'xhigh',
+              'max',
+            ]);
 
             const gemini = await requestJson(`${url}/api/agent-models`, {
               method: 'POST',

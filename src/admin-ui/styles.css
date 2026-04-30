@@ -1418,6 +1418,21 @@ strong,
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.2fr);
 }
 
+.storage-status-list {
+  display: grid;
+  gap: 8px;
+}
+
+.storage-status-row {
+  grid-template-columns: auto minmax(0, 0.5fr) minmax(0, 1fr);
+}
+
+.storage-size-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

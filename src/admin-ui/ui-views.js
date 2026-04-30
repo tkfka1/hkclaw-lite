@@ -160,6 +160,19 @@ export function renderAllView(ctx) {
           </div>
         </article>
         <article
+          class="card card--clickable settings-card"
+          data-action="open-storage-modal"
+          data-clickable="true"
+          role="button"
+          tabindex="${state.busy ? '-1' : '0'}"
+          aria-disabled="${state.busy ? 'true' : 'false'}"
+        >
+          <div class="card-main">
+            <strong class="card-title">스토리지</strong>
+            <span class="card-meta">25GB 이상으로 확장</span>
+          </div>
+        </article>
+        <article
           class="card card--clickable card--danger settings-card"
           ${state.auth.enabled ? 'data-action="logout" data-clickable="true"' : ''}
           role="button"

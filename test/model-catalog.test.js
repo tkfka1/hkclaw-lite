@@ -4,6 +4,13 @@ import assert from 'node:assert/strict';
 import { resolveAgentEffortChoices } from '../src/model-catalog.js';
 
 test('codex effort choices expand for xhigh-capable models', () => {
+  assert.deepEqual(resolveAgentEffortChoices('codex', ''), [
+    'none',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+  ]);
   assert.deepEqual(resolveAgentEffortChoices('codex', 'gpt-5.4'), [
     'none',
     'low',
@@ -41,6 +48,7 @@ test('claude effort choices stay within cli-supported values', () => {
     'low',
     'medium',
     'high',
+    'xhigh',
     'max',
   ]);
 });

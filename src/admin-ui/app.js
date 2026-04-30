@@ -29,6 +29,9 @@ const NOTICE_AUTO_DISMISS_MS = 4_500;
 const STATE_REFRESH_INTERVAL_MS = 5_000;
 const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'topology', 'ai', 'tokens', 'all']);
 const ADMIN_PASSWORD_FIELD_NAMES = ['currentPassword', 'newPassword', 'confirmPassword'];
+const STORAGE_MIN_GB = 25;
+const STORAGE_DEFAULT_GB = 25;
+const STORAGE_INCREMENTS_GB = [25, 50, 100];
 let noticeTimer = null;
 let stateRefreshTimer = null;
 let aiManagerStatusPollTimer = null;
@@ -54,9 +57,12 @@ const state = {
   channelModalOpen: false,
   localLlmModalOpen: false,
   adminPasswordModalOpen: false,
+  storageModalOpen: false,
   connectorDraft: null,
   channelDraft: null,
   localLlmDraft: null,
+  storageStatus: null,
+  storageDraft: createBlankStorageDraft(),
   agentWizard: null,
   aiManager: null,
   aiStatuses: {},
@@ -66,6 +72,7 @@ const state = {
     channel: {},
     localLlm: {},
     adminPassword: {},
+    storage: {},
   },
 };
 
@@ -149,6 +156,7 @@ function canAutoRefreshState() {
       !state.channelModalOpen &&
       !state.localLlmModalOpen &&
       !state.adminPasswordModalOpen &&
+      !state.storageModalOpen &&
       !hasOpenActionDrawer() &&
       !state.agentWizard &&
       !state.aiManager,
@@ -179,7 +187,7 @@ function handleClick(event) {
 
   const action = button.dataset.action;
 
-  if (state.busy && ['open-ai-modal', 'open-admin-password-modal', 'logout'].includes(action)) {
+  if (state.busy && ['open-ai-modal', 'open-admin-password-modal', 'open-storage-modal', 'logout'].includes(action)) {
     return;
   }
 
@@ -299,6 +307,36 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'open-storage-modal') {
+    state.storageModalOpen = true;
+    state.storageDraft = createBlankStorageDraft();
+    clearFormErrors('storage');
+    render();
+    void refreshStorageStatus();
+    return;
+  }
+
+  if (action === 'close-storage-modal') {
+    state.storageModalOpen = false;
+    clearFormErrors('storage');
+    render();
+    return;
+  }
+
+  if (action === 'refresh-storage-status') {
+    void refreshStorageStatus();
+    return;
+  }
+
+  if (action === 'storage-size-delta') {
+    applyStorageDelta(Number(button.dataset.delta || 0));
+    return;
+  }
+
+  if (action === 'storage-reset-default') {
+    resetStorageDraftToDefault();
+    return;
+  }
 
   if (action === 'logout' && !state.auth.enabled) {
     return;
@@ -814,6 +852,15 @@ function handleInput(event) {
       }
       return;
     }
+    if (target.closest('[data-form="storage"]') && target.name) {
+      state.storageDraft[target.name] = target.value;
+      if (target.name === 'target') {
+        state.storageDraft.sizeGi = String(resolveSelectedStorageTarget()?.currentGi || STORAGE_DEFAULT_GB);
+      }
+      setFormErrors('storage', collectStorageErrors());
+      render();
+      return;
+    }
     if (target.closest('[data-form="topology"]') && target.name === 'topologySpec') {
       state.topologyDraft = target.value;
       state.topologyResult = null;
@@ -948,6 +995,12 @@ async function handleSubmit(event) {
 
     if (kind === 'admin-password') {
       await changeAdminPassword(form);
+      return;
+    }
+
+    if (kind === 'storage') {
+      await resizeStorageFromUi(form);
+      return;
     }
   } catch (error) {
     if (error?.name === 'ValidationError' && error?.formScope) {
@@ -1020,6 +1073,102 @@ async function changeAdminPassword(form) {
   clearFormErrors('adminPassword');
   setNotice('info', '관리자 비밀번호를 변경했습니다.');
   render();
+}
+
+async function refreshStorageStatus() {
+  try {
+    const response = await requestJson('/api/storage');
+    state.storageStatus = response.result || null;
+    if (!optionalDraftText(state.storageDraft?.target)) {
+      state.storageDraft.target = state.storageStatus?.targets?.[0]?.name || 'state';
+    }
+    if (!optionalDraftText(state.storageDraft?.sizeGi)) {
+      state.storageDraft.sizeGi = String(resolveSelectedStorageTarget()?.currentGi || STORAGE_DEFAULT_GB);
+    }
+    setFormErrors('storage', collectStorageErrors());
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function resizeStorageFromUi(form) {
+  const values = new FormData(form);
+  state.storageDraft = {
+    target: optionalText(values, 'target') || state.storageDraft.target || 'state',
+    sizeGi: optionalText(values, 'sizeGi') || state.storageDraft.sizeGi || '',
+  };
+  const errors = collectStorageErrors();
+  if (Object.keys(errors).length > 0) {
+    throw createValidationError('storage', errors);
+  }
+
+  const response = await mutateJson('/api/storage/resize', {
+    method: 'POST',
+    body: {
+      target: state.storageDraft.target,
+      sizeGi: Number(state.storageDraft.sizeGi),
+    },
+  });
+  const nextStatus = await requestJson('/api/storage').catch(() => null);
+  state.storageStatus = nextStatus?.result || {
+    ...(state.storageStatus || {}),
+    targets: updateStorageTargetInStatus(response.result?.target),
+  };
+  clearFormErrors('storage');
+  setNotice('info', '스토리지 확장을 요청했습니다.');
+  render();
+}
+
+function updateStorageTargetInStatus(updatedTarget) {
+  const targets = Array.isArray(state.storageStatus?.targets) ? state.storageStatus.targets : [];
+  if (!updatedTarget?.name) {
+    return targets;
+  }
+  if (!targets.length) {
+    return [updatedTarget];
+  }
+  return targets.map((entry) => (entry.name === updatedTarget.name ? updatedTarget : entry));
+}
+
+function applyStorageDelta(delta) {
+  const current = Number.parseInt(String(state.storageDraft.sizeGi || ''), 10);
+  const base = Number.isInteger(current)
+    ? current
+    : Number(resolveSelectedStorageTarget()?.currentGi || STORAGE_DEFAULT_GB);
+  const next = Math.max(STORAGE_MIN_GB, base + delta);
+  state.storageDraft.sizeGi = String(next);
+  setFormErrors('storage', collectStorageErrors());
+  render();
+}
+
+function resetStorageDraftToDefault() {
+  state.storageDraft.sizeGi = String(
+    Math.max(STORAGE_DEFAULT_GB, resolveSelectedStorageTarget()?.currentGi || 0),
+  );
+  setFormErrors('storage', collectStorageErrors());
+  render();
+}
+
+function collectStorageErrors() {
+  const errors = {};
+  const draft = state.storageDraft || {};
+  if (!optionalDraftText(draft.target)) {
+    errors.target = '대상을 선택하세요.';
+  }
+  const value = Number.parseInt(String(draft.sizeGi || ''), 10);
+  if (!Number.isInteger(value)) {
+    errors.sizeGi = '용량을 입력하세요.';
+  } else if (value < STORAGE_MIN_GB) {
+    errors.sizeGi = `${STORAGE_MIN_GB}GB 이상만 가능합니다.`;
+  } else {
+    const currentGi = resolveSelectedStorageTarget()?.currentGi;
+    if (Number.isInteger(currentGi) && value < currentGi) {
+      errors.sizeGi = `현재 ${currentGi}GB보다 작게 줄일 수 없습니다.`;
+    }
+  }
+  return errors;
 }
 
 async function saveAgentWizard() {
@@ -1753,6 +1902,7 @@ function render() {
     ${state.channelModalOpen ? renderChannelModal() : ''}
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
+    ${state.storageModalOpen ? renderStorageModal() : ''}
   `);
   restoreRenderState(previousViewState);
 }
@@ -3438,6 +3588,102 @@ function renderAdminPasswordModal() {
   `;
 }
 
+function renderStorageModal() {
+  const status = state.storageStatus || {};
+  const draft = state.storageDraft || createBlankStorageDraft();
+  const targets = Array.isArray(status.targets) && status.targets.length
+    ? status.targets
+    : [
+        {
+          name: 'state',
+          label: '상태 저장소',
+          claimName: 'hkclaw-lite-state',
+          currentGi: null,
+          available: false,
+        },
+        {
+          name: 'workspace',
+          label: '워크스페이스',
+          claimName: 'hkclaw-lite-workspace',
+          currentGi: null,
+          available: false,
+        },
+      ];
+  const selectedTarget = resolveSelectedStorageTarget();
+  const errors = collectStorageErrors();
+  const hasErrors = Object.keys(errors).length > 0;
+  const errorText = Object.values(errors).find(Boolean) || '';
+
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="스토리지">
+      <div class="modal-backdrop" data-action="close-storage-modal"></div>
+      <div class="panel modal-card modal-card--small">
+        <div class="section-head">
+          <div class="section-title-group">
+            <span class="section-title-icon">${renderIcon('server', 'ui-icon')}</span>
+            <h2>스토리지</h2>
+          </div>
+          <button type="button" class="btn-secondary" data-action="close-storage-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
+        </div>
+        <form data-form="storage" class="form">
+          ${renderFormErrorSummary('storage')}
+          <div class="storage-status-list">
+            ${targets.map((target) => renderStorageTargetStatus(target)).join('')}
+          </div>
+          <div class="form-grid">
+            <div class="field ${fieldErrorClass('storage', 'target')}">
+              <label for="storage-target">${renderRequiredLabel('대상')}</label>
+              <select id="storage-target" name="target">
+                ${targets
+                  .map(
+                    (target) =>
+                      `<option value="${escapeAttr(target.name)}" ${target.name === draft.target ? 'selected' : ''}>${escapeHtml(target.label || target.name)}</option>`,
+                  )
+                  .join('')}
+              </select>
+              ${renderFormError('storage', 'target')}
+            </div>
+            <div class="field ${fieldErrorClass('storage', 'sizeGi')}">
+              <label for="storage-size">${renderRequiredLabel('요청 용량')}</label>
+              <input id="storage-size" name="sizeGi" type="number" min="${STORAGE_MIN_GB}" step="1" value="${escapeAttr(draft.sizeGi || String(STORAGE_DEFAULT_GB))}" />
+              <div class="field-hint">${STORAGE_MIN_GB}GB 아래로는 설정할 수 없습니다.${selectedTarget?.currentGi ? ` 현재 ${selectedTarget.currentGi}GB` : ''}</div>
+              ${renderFormError('storage', 'sizeGi')}
+            </div>
+          </div>
+          <div class="storage-size-actions">
+            ${STORAGE_INCREMENTS_GB.map(
+              (amount) =>
+                `<button type="button" class="btn-secondary" data-action="storage-size-delta" data-delta="${amount}" ${state.busy ? 'disabled' : ''}>+${amount}GB</button>`,
+            ).join('')}
+            <button type="button" class="btn-secondary" data-action="storage-reset-default" ${state.busy ? 'disabled' : ''}>기본값 초기화</button>
+            <button type="button" class="btn-secondary" data-action="refresh-storage-status" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', '새로고침')}</button>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn-primary" ${state.busy || hasErrors ? 'disabled' : ''}${hasErrors && errorText ? ` title="${escapeAttr(errorText)}"` : ''}>${renderButtonLabel('edit', '적용')}</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderStorageTargetStatus(target) {
+  const label = target.label || target.name || '스토리지';
+  const current = Number.isInteger(target.currentGi)
+    ? `${target.currentGi}GB`
+    : target.requestedSize || '확인 안 됨';
+  const detail = target.available
+    ? `${target.claimName || '-'} · ${target.phase || 'PVC'}`
+    : target.error || '클러스터 연결 필요';
+  return `
+    <div class="agent-result-row storage-status-row">
+      <span class="mini-chip">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(current)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </div>
+  `;
+}
+
 function renderConnectorModal() {
   const current = state.connectorDraft || createBlankConnector();
   const isEditing = Boolean(optionalDraftText(current.currentName));
@@ -3985,6 +4231,7 @@ function focusFirstInvalidField(scope) {
     channel: '[data-form="channel"]',
     localLlm: '[data-form="local-llm-connection"]',
     adminPassword: '[data-form="admin-password"]',
+    storage: '[data-form="storage"]',
   };
   const scopeSelector = selectorMap[scope];
   if (!scopeSelector) {
@@ -4032,17 +4279,22 @@ function getAgentWizardSteps(draft) {
   steps.push(
     {
       id: 'model',
-      question: '모델은 뭘로 할까요?',
-      body: renderModelField({
-        inputId: 'wizard-agent-model',
-        inputName: 'model',
-        agentType: draft.agent,
-        value: draft.model,
-        modelMode: draft.modelMode,
-        modelModeInputName: 'modelMode',
-        catalogScope: 'agent-wizard',
-        modelCatalog: state.agentWizard?.modelCatalog || null,
-      }),
+      question: '모델과 추론 강도는 뭘로 할까요?',
+      body: `
+        <div class="form-grid">
+          ${renderModelField({
+            inputId: 'wizard-agent-model',
+            inputName: 'model',
+            agentType: draft.agent,
+            value: draft.model,
+            modelMode: draft.modelMode,
+            modelModeInputName: 'modelMode',
+            catalogScope: 'agent-wizard',
+            modelCatalog: state.agentWizard?.modelCatalog || null,
+          })}
+          ${renderEffortField(draft)}
+        </div>
+      `,
     },
     {
       id: 'fallback',
@@ -4059,7 +4311,6 @@ function getAgentWizardSteps(draft) {
       question: '응답 옵션을 정할까요?',
       body: `
         <div class="form-grid">
-          ${renderEffortField(draft)}
           <div class="field ${fieldErrorClass('agentWizard', 'timeoutMs')}">
             <label for="wizard-agent-timeout">제한 시간(ms)</label>
             <input id="wizard-agent-timeout" name="timeoutMs" value="${escapeAttr(draft.timeoutMs)}" />
@@ -4320,7 +4571,7 @@ function validateAgentWizardStep() {
     }
   }
 
-  if (currentStep.id === 'execution' && optionalDraftText(draft.effort)) {
+  if (currentStep.id === 'model' && optionalDraftText(draft.effort)) {
     const efforts = getEffortChoices(draft.agent, draft.model);
     if (efforts.length > 0 && !efforts.includes(optionalDraftText(draft.effort))) {
       throw new Error('선택한 모델에서 지원하지 않는 추론 강도입니다.');
@@ -4388,6 +4639,12 @@ function collectAgentWizardStepErrors() {
     ) {
       errors.model = '모델을 입력하세요.';
     }
+    if (optionalDraftText(draft.effort)) {
+      const efforts = getEffortChoices(draft.agent, draft.model);
+      if (efforts.length > 0 && !efforts.includes(optionalDraftText(draft.effort))) {
+        errors.effort = '이 모델에서 지원하지 않는 강도입니다.';
+      }
+    }
   }
 
   if (currentStep.id === 'fallback') {
@@ -4399,18 +4656,10 @@ function collectAgentWizardStepErrors() {
     }
   }
 
-  if (currentStep.id === 'execution') {
-    if (optionalDraftText(draft.timeoutMs)) {
-      const timeout = Number(optionalDraftText(draft.timeoutMs));
-      if (!Number.isInteger(timeout) || timeout <= 0) {
-        errors.timeoutMs = '1 이상의 정수만 입력하세요.';
-      }
-    }
-    if (optionalDraftText(draft.effort)) {
-      const efforts = getEffortChoices(draft.agent, draft.model);
-      if (efforts.length > 0 && !efforts.includes(optionalDraftText(draft.effort))) {
-        errors.effort = '이 모델에서 지원하지 않는 강도입니다.';
-      }
+  if (currentStep.id === 'execution' && optionalDraftText(draft.timeoutMs)) {
+    const timeout = Number(optionalDraftText(draft.timeoutMs));
+    if (!Number.isInteger(timeout) || timeout <= 0) {
+      errors.timeoutMs = '1 이상의 정수만 입력하세요.';
     }
   }
 
@@ -5579,6 +5828,19 @@ function createBlankChannel() {
   };
 }
 
+function createBlankStorageDraft() {
+  return {
+    target: 'state',
+    sizeGi: String(STORAGE_DEFAULT_GB),
+  };
+}
+
+function resolveSelectedStorageTarget() {
+  const targetName = optionalDraftText(state.storageDraft?.target) || 'state';
+  const targets = Array.isArray(state.storageStatus?.targets) ? state.storageStatus.targets : [];
+  return targets.find((entry) => entry.name === targetName) || targets[0] || null;
+}
+
 function getDefaultChannelWorkspace() {
   return state.data?.defaults?.channelWorkspace || DEFAULT_CHANNEL_WORKSPACE;
 }
@@ -6105,11 +6367,11 @@ function usesModelField(agentType) {
 function getEffortChoices(agentType, model) {
   const id = String(model || '').trim().toLowerCase();
   if (agentType === 'claude-code') {
-    return ['low', 'medium', 'high', 'max'];
+    return ['low', 'medium', 'high', 'xhigh', 'max'];
   }
   if (agentType === 'codex') {
     if (!id) {
-      return ['low', 'medium', 'high'];
+      return ['none', 'low', 'medium', 'high', 'xhigh'];
     }
     if (id === 'gpt-5-pro' || id.startsWith('gpt-5-pro-')) {
       return ['high'];
@@ -6118,7 +6380,9 @@ function getEffortChoices(agentType, model) {
       id === 'gpt-5.2-pro' ||
       id.startsWith('gpt-5.2-pro-') ||
       id === 'gpt-5.4-pro' ||
-      id.startsWith('gpt-5.4-pro-')
+      id.startsWith('gpt-5.4-pro-') ||
+      id === 'gpt-5.5-pro' ||
+      id.startsWith('gpt-5.5-pro-')
     ) {
       return ['medium', 'high', 'xhigh'];
     }
@@ -6128,6 +6392,7 @@ function getEffortChoices(agentType, model) {
     if (
       id.startsWith('gpt-5.2') ||
       id.startsWith('gpt-5.4') ||
+      id.startsWith('gpt-5.5') ||
       id.startsWith('gpt-5.4-mini') ||
       id.startsWith('gpt-5.4-nano')
     ) {
@@ -6398,6 +6663,21 @@ function localizeErrorMessage(message) {
   }
   if (/^Unsupported effort ".+" for agent ".+" model ".+"\.$/u.test(text)) {
     return '선택한 모델에서 지원하지 않는 추론 강도입니다.';
+  }
+  if (text === 'storage must be a storage size in Gi.') {
+    return '스토리지 용량을 입력하세요.';
+  }
+  if (text === 'storage must be at least 25Gi.') {
+    return '스토리지는 25GB 이상만 가능합니다.';
+  }
+  if (/^storage cannot be smaller than current size/u.test(text)) {
+    return '현재 용량보다 작게 줄일 수 없습니다.';
+  }
+  if (/^Unknown storage target /u.test(text)) {
+    return '알 수 없는 스토리지 대상입니다.';
+  }
+  if (/kubectl을 찾지 못했습니다/u.test(text)) {
+    return 'kubectl을 찾지 못했습니다. 클러스터 접근 설정을 확인하세요.';
   }
   if (text === 'local-llm agents require a model.') {
     return '로컬 LLM은 모델이 필요합니다.';

@@ -38,3 +38,27 @@ test('Helm chart does not require an initial admin password secret to start', ()
   assert.doesNotMatch(adminSecretTemplate, /adminSecret\.stringData must contain/u);
   assert.match(adminSecretTemplate, /\{\{- with \.Values\.adminSecret\.stringData \}\}/u);
 });
+
+test('Helm chart keeps managed storage at or above 25Gi by default', () => {
+  const values = readRepoFile('charts/hkclaw-lite/values.yaml');
+  const helpers = readRepoFile('charts/hkclaw-lite/templates/_helpers.tpl');
+  const deploymentTemplate = readRepoFile('charts/hkclaw-lite/templates/deployment.yaml');
+  const serviceAccountTemplate = readRepoFile('charts/hkclaw-lite/templates/serviceaccount.yaml');
+  const statePvcTemplate = readRepoFile('charts/hkclaw-lite/templates/state-pvc.yaml');
+  const storageRbacTemplate = readRepoFile('charts/hkclaw-lite/templates/storage-rbac.yaml');
+  const workspacePvcTemplate = readRepoFile('charts/hkclaw-lite/templates/workspace-pvc.yaml');
+
+  assert.match(values, /state:\n[\s\S]*?persistence:\n[\s\S]*?size: 25Gi/u);
+  assert.match(values, /workspace:\n[\s\S]*?persistence:\n[\s\S]*?size: 25Gi/u);
+  assert.match(values, /storageResize:\n[\s\S]*?enabled: false/u);
+  assert.match(helpers, /define "hkclaw-lite\.requireStorageAtLeast25Gi"/u);
+  assert.match(helpers, /must be at least 25Gi/u);
+  assert.match(statePvcTemplate, /requireStorageAtLeast25Gi" \(list "state\.persistence\.size"/u);
+  assert.match(workspacePvcTemplate, /requireStorageAtLeast25Gi" \(list "workspace\.persistence\.size"/u);
+  assert.match(deploymentTemplate, /HKCLAW_LITE_STORAGE_STATE_PVC/u);
+  assert.match(deploymentTemplate, /HKCLAW_LITE_STORAGE_WORKSPACE_PVC/u);
+  assert.match(deploymentTemplate, /or \.Values\.serviceAccount\.automountServiceAccountToken \.Values\.storageResize\.rbac\.enabled/u);
+  assert.match(serviceAccountTemplate, /or \.Values\.serviceAccount\.automountServiceAccountToken \.Values\.storageResize\.rbac\.enabled/u);
+  assert.match(storageRbacTemplate, /persistentvolumeclaims/u);
+  assert.match(storageRbacTemplate, /verbs:\n\s+- get\n\s+- patch/u);
+});

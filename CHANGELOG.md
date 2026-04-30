@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.20 - 2026-04-30
+
+### Added
+- Added web admin storage inspection and PVC expansion controls for Helm deployments, guarded by opt-in Kubernetes RBAC.
+- Added Gemini CLI thinking-budget overrides and exposed model-step reasoning effort selection in the agent wizard.
+
+### Changed
+- Raised managed Helm state/workspace PVC defaults to `25Gi` and blocked chart-rendered managed claims below that floor.
+- Expanded Codex/Claude effort choices for newer `gpt-5.5` and `xhigh`-capable runtimes.
+
 ## 1.0.19 - 2026-04-29
 
 ### Changed
