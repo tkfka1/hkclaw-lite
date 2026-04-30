@@ -17,6 +17,8 @@ process.stdout.write(
     `hasChannel=${input.includes('- discord channel: discord-main')}`,
     `raw=${process.env.HKCLAW_LITE_RAW_PROMPT || ''}`,
     `workdir=${process.env.HKCLAW_LITE_WORKDIR || ''}`,
+    `access=${process.env.HKCLAW_LITE_AGENT_ACCESS_MODE || ''}`,
+    `dangerous=${process.env.HKCLAW_LITE_AGENT_DANGEROUS || ''}`,
     `customEnv=${process.env.HKCLAW_LITE_TEST_CUSTOM_ENV || ''}`,
   ].join('\n') + '\n',
 );

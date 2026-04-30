@@ -23,6 +23,9 @@
 - `@anthropic-ai/claude-agent-sdk@0.2.119`
 - `@google/gemini-cli@0.39.1`
 
+에이전트별 접근 범위는 `read-only`, `workspace-write`, `danger-full-access` 중에서 고를 수 있다.
+Codex는 기존 sandbox/approval 우회 플래그로, Gemini CLI는 approval mode(`plan`/`auto_edit`/`yolo`)로 매핑되고, local LLM에는 런타임 컨텍스트로, command 에이전트에는 `HKCLAW_LITE_AGENT_ACCESS_MODE` 환경 변수로 전달된다. Claude Code는 `bypassPermissions` 권한 모드가 전체 권한에 해당한다.
+
 Claude 외부 CLI를 쓰고 싶다면:
 
 ```bash

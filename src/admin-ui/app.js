@@ -1031,6 +1031,7 @@ async function saveAgentWizard() {
   const values = state.agentWizard?.draft || createBlankAgent();
   const currentName = optionalDraftText(state.agentWizard?.currentName);
   const platform = optionalDraftText(values.platform) || 'discord';
+  const accessMode = resolveAgentAccessMode(values);
   const definition = {
     name: requiredDraftText(values.name, 'name'),
     agent: requiredDraftText(values.agent, 'agent'),
@@ -1044,16 +1045,16 @@ async function saveAgentWizard() {
     skills: parseListText(values.skillsText),
     contextFiles: parseListText(values.contextFilesText),
     sandbox:
-      values.agent === 'codex'
-        ? resolveCodexAccessMode(values)
+      supportsAgentAccessMode(values.agent)
+        ? accessMode
         : optionalDraftText(values.sandbox),
     permissionMode:
       values.agent === 'claude-code'
         ? optionalDraftText(values.permissionMode)
         : undefined,
     dangerous:
-      values.agent === 'codex'
-        ? resolveCodexAccessMode(values) === 'danger-full-access'
+      supportsAgentAccessMode(values.agent)
+        ? accessMode === 'danger-full-access'
         : undefined,
     discordToken:
       platform === 'discord'
@@ -2582,6 +2583,17 @@ function unique(values = []) {
   return Array.from(new Set(values));
 }
 
+function formatAgentAccessSummary(agent) {
+  const permissionMode = optionalDraftText(agent?.permissionMode);
+  if (permissionMode) {
+    return localizeOptionLabel({ value: permissionMode });
+  }
+  const accessMode =
+    optionalDraftText(agent?.sandbox) ||
+    (agent?.dangerous ? 'danger-full-access' : '');
+  return accessMode ? localizeOptionLabel({ value: accessMode }) : '기본값';
+}
+
 function renderAgentDetailPanel(agent, context) {
   const channels = (agent.mappedChannels || []).map((channel) => {
     const role = channel.role ? ` · ${localizeAgentRole(channel.role)}` : '';
@@ -2591,16 +2603,17 @@ function renderAgentDetailPanel(agent, context) {
   const runtimeStatus = agent.runtime
     ? `${agent.runtime.ready ? '준비됨' : '확인 필요'} · ${agent.runtime.source || 'unknown'}`
     : '미확인';
+  const accessSummary = formatAgentAccessSummary(agent);
   const rows = context.connectorOnly
     ? [
         { label: '수신 연결', value: 'Kakao 연결에서 관리' },
         { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
-        { label: 'Sandbox', value: agent.sandbox || '기본값' },
+        { label: '접근 범위', value: accessSummary },
       ]
     : [
         { label: '수신 연결', value: context.connectionSummary },
         { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
-        { label: 'Sandbox', value: agent.sandbox || '기본값' },
+        { label: '접근 범위', value: accessSummary },
       ];
   if (context.agentService?.lastError) {
     rows.push({ label: '최근 오류', value: localizeWorkerError(context.agentService.lastError) });
@@ -4108,7 +4121,7 @@ function getAgentWizardSteps(draft) {
 
 function renderAgentWizardRuntimeStep(draft) {
   const platform = optionalDraftText(draft.platform) || 'kakao';
-  const codexAccess = optionalDraftText(draft.codexAccess) || 'workspace-write';
+  const accessMode = resolveAgentAccessMode(draft);
   const tokenFieldName =
     platform === 'telegram'
       ? 'telegramBotToken'
@@ -4170,17 +4183,8 @@ function renderAgentWizardRuntimeStep(draft) {
       `,
   ];
 
-  if (draft.agent === 'codex') {
-    blocks.push(`
-      <div class="field">
-        <label for="wizard-agent-codex-access">접근 범위</label>
-        <select id="wizard-agent-codex-access" name="codexAccess">${renderOptions([
-          { value: 'read-only', label: '읽기 전용', description: '파일 수정 없이 읽기와 점검만 허용' },
-          { value: 'workspace-write', label: '작업 디렉터리만 수정', description: '워크스페이스 안에서만 수정 허용' },
-          { value: 'danger-full-access', label: '전체 허용', description: '명령 실행과 파일 접근을 전부 허용' },
-        ], codexAccess, false)}</select>
-      </div>
-    `);
+  if (supportsAgentAccessMode(draft.agent)) {
+    blocks.push(renderAgentAccessModeField(accessMode));
   }
 
   if (draft.agent === 'claude-code') {
@@ -4224,6 +4228,20 @@ function renderAgentWizardRuntimeStep(draft) {
   }
 
   return `<div class="form-grid">${blocks.join('')}</div>`;
+}
+
+function renderAgentAccessModeField(value) {
+  const choices = state.data?.choices?.agentAccessModes || state.data?.choices?.codexSandboxes || [
+    { value: 'workspace-write', label: 'Workspace Write', description: 'Allow edits inside the workspace' },
+    { value: 'read-only', label: 'Read Only', description: 'Do not allow model-generated writes' },
+    { value: 'danger-full-access', label: 'Danger Full Access', description: 'No sandboxing' },
+  ];
+  return `
+    <div class="field">
+      <label for="wizard-agent-access-mode">접근 범위</label>
+      <select id="wizard-agent-access-mode" name="accessMode">${renderOptions(choices, value, false)}</select>
+    </div>
+  `;
 }
 
 function renderResultLink(url, label) {
@@ -4639,6 +4657,7 @@ function createBlankAgent(agentType = null) {
     skillsText: '',
     contextFilesText: '',
     sandbox: state.data.choices.codexSandboxes[0]?.value || '',
+    accessMode: 'workspace-write',
     codexAccess: 'workspace-write',
     permissionMode: defaultClaudePermissionMode,
     dangerous: false,
@@ -4670,7 +4689,8 @@ function createAgentDraft(agent) {
     skillsText: Array.isArray(agent?.skills) ? agent.skills.join('\n') : '',
     contextFilesText: Array.isArray(agent?.contextFiles) ? agent.contextFiles.join('\n') : '',
     sandbox: optionalDraftText(agent?.sandbox) || state.data?.choices?.codexSandboxes?.[0]?.value || '',
-    codexAccess: resolveCodexAccessMode(agent),
+    accessMode: resolveAgentAccessMode(agent),
+    codexAccess: resolveAgentAccessMode(agent),
     permissionMode:
       optionalDraftText(agent?.permissionMode) ||
       state.data?.choices?.claudePermissionModes?.find((entry) => entry.value === 'bypassPermissions')?.value ||
@@ -4688,8 +4708,14 @@ function createAgentDraft(agent) {
   };
 }
 
-function resolveCodexAccessMode(source) {
-  const explicit = optionalDraftText(source?.codexAccess);
+function supportsAgentAccessMode(agentType) {
+  return ['codex', 'gemini-cli', 'local-llm', 'command'].includes(optionalDraftText(agentType));
+}
+
+function resolveAgentAccessMode(source) {
+  const explicit =
+    optionalDraftText(source?.accessMode) ||
+    optionalDraftText(source?.codexAccess);
   if (explicit) {
     return explicit;
   }
@@ -4900,8 +4926,12 @@ function buildAiManagerTestDefinition(agentType) {
     model: resolveConfiguredModel(agentType, config),
   };
 
-  if (agentType === 'codex') {
-    definition.sandbox = state.data?.choices?.codexSandboxes?.[0]?.value || 'read-only';
+  if (supportsAgentAccessMode(agentType)) {
+    definition.sandbox =
+      state.data?.choices?.agentAccessModes?.[0]?.value ||
+      state.data?.choices?.codexSandboxes?.[0]?.value ||
+      'workspace-write';
+    definition.dangerous = definition.sandbox === 'danger-full-access';
   }
 
   if (agentType === 'claude-code') {

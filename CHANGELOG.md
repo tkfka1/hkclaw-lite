@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.22 - 2026-04-30
+
+### Added
+- Added shared agent access modes for Gemini CLI, local LLM, and custom command agents so non-Codex agents can be configured with `danger-full-access`.
+- Mapped Gemini access modes to CLI approval modes and exposed access metadata in command-agent environments and prompt runtime context.
+
 ## 1.0.21 - 2026-04-30
 
 ### Removed

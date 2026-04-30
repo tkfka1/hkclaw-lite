@@ -312,6 +312,16 @@ test('agent wizard keeps reasoning effort with model selection', () => {
   );
 });
 
+test('agent wizard exposes access mode beyond Codex', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+
+  assert.match(appSource, /function\s+supportsAgentAccessMode\s*\(/u);
+  assert.match(appSource, /\['codex', 'gemini-cli', 'local-llm', 'command'\]/u);
+  assert.match(appSource, /id="wizard-agent-access-mode"/u);
+  assert.match(appSource, /name="accessMode"/u);
+  assert.doesNotMatch(appSource, /id="wizard-agent-codex-access"/u);
+});
+
 test('admin login keeps the first screen focused on hkclaw-lite password entry', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');

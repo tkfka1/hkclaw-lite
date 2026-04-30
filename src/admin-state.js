@@ -2,6 +2,7 @@ import fs from 'node:fs';
 
 import { getCiWatcherLogPath, listCiWatchers, loadCiWatcher } from './ci-watch-store.js';
 import {
+  AGENT_ACCESS_MODE_CHOICES,
   AGENT_TYPE_CHOICES,
   CHANNEL_TARGET_TYPE_CHOICES,
   CLAUDE_PERMISSION_MODE_CHOICES,
@@ -102,6 +103,7 @@ export async function buildAdminSnapshot(projectRoot) {
       channelTargetTypes: CHANNEL_TARGET_TYPE_CHOICES,
       messagingPlatforms: MESSAGING_PLATFORM_CHOICES,
       connectorPlatforms: CONNECTOR_PLATFORM_CHOICES,
+      agentAccessModes: AGENT_ACCESS_MODE_CHOICES,
       codexSandboxes: CODEX_SANDBOX_CHOICES,
       claudePermissionModes: CLAUDE_PERMISSION_MODE_CHOICES,
       dashboardAllAgents: DASHBOARD_ALL_AGENTS,

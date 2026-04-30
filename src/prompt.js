@@ -38,6 +38,7 @@ export function buildPromptEnvelope({
       'Runtime context:',
       `- agent name: ${agent.name}`,
       `- agent type: ${agent.agent}`,
+      resolveRuntimeAccessMode(agent),
       resolveRuntimeWorkdir(projectRoot, agent, channel, workdirOverride),
       channel ? `- channel: ${channel.name}` : null,
       channel?.platform === 'telegram'
@@ -64,6 +65,17 @@ export function buildPromptEnvelope({
   sections.push(`User request:\n${userPrompt.trim()}`);
 
   return sections.join('\n\n---\n\n');
+}
+
+function resolveRuntimeAccessMode(agent) {
+  const accessMode = agent?.sandbox || (agent?.dangerous ? 'danger-full-access' : '');
+  if (accessMode) {
+    return `- access mode: ${accessMode}`;
+  }
+  if (agent?.permissionMode) {
+    return `- permission mode: ${agent.permissionMode}`;
+  }
+  return null;
 }
 
 function resolveRuntimeWorkdir(projectRoot, agent, channel, workdirOverride) {

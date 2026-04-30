@@ -56,9 +56,11 @@ function buildCommandAgentAnswers({
   skills = '',
   contextFiles = '',
   fallbackAgent = '',
+  accessChoice = '',
+  accessConfirm = '',
   command = `node ${fixturePath}`,
 } = {}) {
-  return [
+  const answers = [
     name,
     '5',
     platformChoice,
@@ -71,9 +73,13 @@ function buildCommandAgentAnswers({
     contextFiles,
     fallbackAgent,
     platformToken,
-    command,
-    '',
-  ].join('\n');
+    accessChoice,
+  ];
+  if (['3', 'danger-full-access', 'Danger Full Access'].includes(accessChoice)) {
+    answers.push(accessConfirm);
+  }
+  answers.push(command, '');
+  return answers.join('\n');
 }
 
 function buildDashboardAnswers({
@@ -445,6 +451,42 @@ test('legacy Claude dangerous flag is normalized into bypassPermissions', () => 
   assert.equal('dangerous' in definition, false);
 });
 
+test('full access mode is preserved for non-Codex local agent types', () => {
+  const cwd = createProject();
+
+  const commandAgent = buildAgentDefinition(cwd, 'shell-agent', {
+    name: 'shell-agent',
+    agent: 'command',
+    command: 'cat',
+    sandbox: 'danger-full-access',
+  });
+  const geminiAgent = buildAgentDefinition(cwd, 'gemini-agent', {
+    name: 'gemini-agent',
+    agent: 'gemini-cli',
+    dangerous: true,
+  });
+  const localAgent = buildAgentDefinition(cwd, 'local-agent', {
+    name: 'local-agent',
+    agent: 'local-llm',
+    model: 'llama-test',
+    sandbox: 'danger-full-access',
+  });
+  const claudeAgent = buildAgentDefinition(cwd, 'claude-agent', {
+    name: 'claude-agent',
+    agent: 'claude-code',
+    sandbox: 'danger-full-access',
+  });
+
+  assert.equal(commandAgent.sandbox, 'danger-full-access');
+  assert.equal(commandAgent.dangerous, true);
+  assert.equal(geminiAgent.sandbox, 'danger-full-access');
+  assert.equal(geminiAgent.dangerous, true);
+  assert.equal(localAgent.sandbox, 'danger-full-access');
+  assert.equal(localAgent.dangerous, true);
+  assert.equal(claudeAgent.permissionMode, 'bypassPermissions');
+  assert.equal('sandbox' in claudeAgent, false);
+});
+
 test('add agent and channel use question flow and store mapping', () => {
   const cwd = createProject();
   assert.equal(runCli(cwd, ['init']).status, 0);
@@ -461,6 +503,7 @@ test('add agent and channel use question flow and store mapping', () => {
   assert.equal(showAgent.status, 0, showAgent.stderr);
   const agent = JSON.parse(showAgent.stdout);
   assert.equal(agent.agent, 'command');
+  assert.equal(agent.sandbox, 'workspace-write');
   assert.equal('workdir' in agent, false);
 
   const addChannel = runCli(cwd, ['add', 'channel'], {
@@ -663,6 +706,8 @@ test('run command injects prompt envelope, raw prompt, and channel workspace', (
   assert.match(result.stdout, /hasSession=false/u);
   assert.match(result.stdout, /hasChannel=true/u);
   assert.match(result.stdout, /raw=inspect me/u);
+  assert.match(result.stdout, /access=workspace-write/u);
+  assert.match(result.stdout, /dangerous=/u);
   assert.match(
     result.stdout,
     new RegExp(`workdir=${cwd.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),

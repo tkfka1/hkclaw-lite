@@ -400,6 +400,14 @@ async function runGeminiCli({
   if (service.model) {
     args.push('-m', service.model);
   }
+  const accessMode = resolveAgentAccessMode(service);
+  if (accessMode === 'danger-full-access') {
+    args.push('--approval-mode', 'yolo', '--skip-trust');
+  } else if (accessMode === 'workspace-write') {
+    args.push('--approval-mode', 'auto_edit', '--skip-trust');
+  } else if (accessMode === 'read-only') {
+    args.push('--approval-mode', 'plan', '--skip-trust');
+  }
 
   const geminiEnv = stripGeminiCliEnv(buildChildEnv({
     projectRoot,
@@ -595,6 +603,11 @@ function buildChildEnv({
   rawPrompt,
   fullPrompt,
 }) {
+  const accessMode = resolveAgentAccessMode(service);
+  const dangerous =
+    accessMode === 'danger-full-access' ||
+    service.permissionMode === 'bypassPermissions' ||
+    Boolean(service.dangerous);
   return {
     ...process.env,
     HKCLAW_LITE_PROJECT_ROOT: projectRoot,
@@ -604,9 +617,22 @@ function buildChildEnv({
     HKCLAW_LITE_WORKDIR: workdir,
     HKCLAW_LITE_RAW_PROMPT: rawPrompt,
     HKCLAW_LITE_FULL_PROMPT: fullPrompt,
+    HKCLAW_LITE_AGENT_ACCESS_MODE: accessMode,
+    HKCLAW_LITE_AGENT_PERMISSION_MODE: service.permissionMode || '',
+    HKCLAW_LITE_AGENT_DANGEROUS: dangerous ? '1' : '',
     HKCLAW_LITE_SKILLS: (service.skills || []).join(','),
     HKCLAW_LITE_CONTEXT_FILES: (service.contextFiles || []).join(','),
   };
+}
+
+function resolveAgentAccessMode(service) {
+  if (service.sandbox) {
+    return service.sandbox;
+  }
+  if (service.dangerous) {
+    return 'danger-full-access';
+  }
+  return '';
 }
 
 function stripClaudeAcpEnv(env) {

@@ -260,6 +260,8 @@ const payload = {
   googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
   googleCloudAccessToken: process.env.GOOGLE_CLOUD_ACCESS_TOKEN || '',
   googleGenAiUseGca: process.env.GOOGLE_GENAI_USE_GCA || '',
+  hkclawAgentAccessMode: process.env.HKCLAW_LITE_AGENT_ACCESS_MODE || '',
+  hkclawAgentDangerous: process.env.HKCLAW_LITE_AGENT_DANGEROUS || '',
   geminiCliSystemSettingsPath: settingsPath,
   geminiCliSystemSettings: settingsPath ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : null,
   _meta: {
@@ -486,6 +488,40 @@ test('runAgentTurn strips Gemini process-env auth overrides and forces managed G
         ),
         true,
       );
+    },
+  );
+});
+
+test('runAgentTurn maps Gemini full access to YOLO approval mode', async () => {
+  const projectRoot = createTempDir();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  const fakePackageJson = createFakeGeminiCliBundle();
+
+  await withEnv(
+    {
+      HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      const output = await runAgentTurn({
+        projectRoot,
+        agent: {
+          name: 'gemini-agent',
+          agent: 'gemini-cli',
+          sandbox: 'danger-full-access',
+          dangerous: true,
+        },
+        prompt: 'Return exactly OK.',
+        rawPrompt: 'Return exactly OK.',
+        workdir: 'workspace',
+      });
+
+      const parsed = JSON.parse(output);
+      assert.equal(parsed.args.includes('--approval-mode'), true);
+      assert.equal(parsed.args[parsed.args.indexOf('--approval-mode') + 1], 'yolo');
+      assert.equal(parsed.args.includes('--skip-trust'), true);
+      assert.equal(parsed.hkclawAgentAccessMode, 'danger-full-access');
+      assert.equal(parsed.hkclawAgentDangerous, '1');
     },
   );
 });

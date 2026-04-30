@@ -27,12 +27,13 @@ import {
 } from './ci-watch-store.js';
 import { executeChannelTurn } from './channel-runtime.js';
 import {
+  AGENT_ACCESS_MODE_AGENT_TYPES,
+  AGENT_ACCESS_MODE_CHOICES,
   AGENT_TYPE_CHOICES,
   CHANNEL_TARGET_TYPE_CHOICES,
   CLAUDE_PERMISSION_MODE_CHOICES,
   CHANNEL_MODE_CHOICES,
   CONNECTOR_PLATFORM_CHOICES,
-  CODEX_SANDBOX_CHOICES,
   DASHBOARD_ALL_AGENTS,
   DEFAULT_ADMIN_PORT,
   MESSAGING_PLATFORM_CHOICES,
@@ -1657,17 +1658,19 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
     });
   }
 
-  if (agent === 'codex') {
+  if (AGENT_ACCESS_MODE_AGENT_TYPES.includes(agent)) {
     definition.sandbox = await prompter.askChoice(
-      'Codex sandbox mode',
-      CODEX_SANDBOX_CHOICES,
+      agent === 'codex' ? 'Codex sandbox mode' : 'Agent access mode',
+      AGENT_ACCESS_MODE_CHOICES,
       {
         defaultValue: initial.sandbox,
       },
     );
     if (definition.sandbox === 'danger-full-access') {
       definition.dangerous = await prompter.askConfirm(
-        'Bypass Codex sandbox and approval checks?',
+        agent === 'codex'
+          ? 'Bypass Codex sandbox and approval checks?'
+          : 'Enable full host-account access for this agent?',
         {
           defaultValue: initial.dangerous ?? true,
         },

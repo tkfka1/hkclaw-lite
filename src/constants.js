@@ -107,6 +107,13 @@ export const CODEX_SANDBOX_CHOICES = [
     description: 'No sandboxing',
   },
 ];
+export const AGENT_ACCESS_MODE_CHOICES = CODEX_SANDBOX_CHOICES;
+export const AGENT_ACCESS_MODE_AGENT_TYPES = [
+  'codex',
+  'gemini-cli',
+  'local-llm',
+  'command',
+];
 export const CLAUDE_PERMISSION_MODE_CHOICES = [
   {
     value: 'default',

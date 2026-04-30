@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  AGENT_ACCESS_MODE_AGENT_TYPES,
+  AGENT_ACCESS_MODE_CHOICES,
   CHANNEL_MODE_CHOICES,
   CONNECTOR_PLATFORM_CHOICES,
   CONTAINER_CHANNEL_WORKSPACE,
@@ -404,22 +406,35 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
   if (merged.timeoutMs !== undefined) {
     merged.timeoutMs = parseOptionalInteger(merged.timeoutMs, 'timeoutMs');
   }
-  if (merged.agent !== 'codex') {
-    merged.sandbox = undefined;
-  }
-  if (merged.agent === 'codex' && merged.sandbox !== 'danger-full-access') {
-    merged.dangerous = undefined;
-  }
   if (merged.agent !== 'claude-code') {
     merged.permissionMode = undefined;
   }
   if (merged.agent === 'claude-code') {
-    if (!merged.permissionMode && merged.dangerous) {
+    if (
+      !merged.permissionMode &&
+      (merged.dangerous || merged.sandbox === 'danger-full-access')
+    ) {
       merged.permissionMode = 'bypassPermissions';
     }
+    merged.sandbox = undefined;
     merged.dangerous = undefined;
-  }
-  if (!['codex', 'claude-code'].includes(merged.agent)) {
+  } else if (AGENT_ACCESS_MODE_AGENT_TYPES.includes(merged.agent)) {
+    if (!merged.sandbox && merged.dangerous) {
+      merged.sandbox = 'danger-full-access';
+    }
+    if (merged.sandbox) {
+      assert(
+        AGENT_ACCESS_MODE_CHOICES.some((entry) => entry.value === merged.sandbox),
+        `Unsupported access mode "${merged.sandbox}".`,
+      );
+    }
+    if (merged.sandbox === 'danger-full-access') {
+      merged.dangerous = true;
+    } else {
+      merged.dangerous = undefined;
+    }
+  } else {
+    merged.sandbox = undefined;
     merged.dangerous = undefined;
   }
   if (merged.agent !== 'local-llm') {
