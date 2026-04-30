@@ -53,36 +53,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-workspace" (include "hkclaw-lite.fullname" .) -}}
 {{- end -}}
 
-{{- define "hkclaw-lite.stateResolvedPvcName" -}}
-{{- default (include "hkclaw-lite.statePvcName" .) .Values.state.persistence.existingClaim -}}
-{{- end -}}
-
-{{- define "hkclaw-lite.workspaceResolvedPvcName" -}}
-{{- default (include "hkclaw-lite.workspacePvcName" .) .Values.workspace.persistence.existingClaim -}}
-{{- end -}}
-
-{{- define "hkclaw-lite.storageSizeGi" -}}
-{{- $raw := lower (trim (toString .)) -}}
-{{- if not (regexMatch "^[0-9]+(gi|gib|g|gb|ti|tib|t|tb)?$" $raw) -}}
-{{- fail (printf "storage size %q must use Gi or Ti units" .) -}}
-{{- end -}}
-{{- $amount := int (regexFind "^[0-9]+" $raw) -}}
-{{- if regexMatch "t(i|ib|b)?$" $raw -}}
-{{- mul $amount 1024 -}}
-{{- else -}}
-{{- $amount -}}
-{{- end -}}
-{{- end -}}
-
-{{- define "hkclaw-lite.requireStorageAtLeast25Gi" -}}
-{{- $name := index . 0 -}}
-{{- $size := index . 1 -}}
-{{- $gi := int (include "hkclaw-lite.storageSizeGi" $size) -}}
-{{- if lt $gi 25 -}}
-{{- fail (printf "%s must be at least 25Gi" $name) -}}
-{{- end -}}
-{{- end -}}
-
 {{- define "hkclaw-lite.bootstrapSecretName" -}}
 {{- if .Values.bootstrapBackup.existingSecret -}}
 {{- .Values.bootstrapBackup.existingSecret -}}

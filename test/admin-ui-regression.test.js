@@ -312,28 +312,6 @@ test('agent wizard keeps reasoning effort with model selection', () => {
   );
 });
 
-test('admin UI exposes simple storage expansion controls with a 25GB floor', () => {
-  const appSource = readRepoFile('src/admin-ui/app.js');
-  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
-  const styles = readRepoFile('src/admin-ui/styles.css');
-  const adminSource = readRepoFile('src/admin.js');
-
-  assert.match(appSource, /STORAGE_MIN_GB\s*=\s*25/u);
-  assert.match(appSource, /STORAGE_DEFAULT_GB\s*=\s*25/u);
-  assert.match(appSource, /STORAGE_INCREMENTS_GB\s*=\s*\[25, 50, 100\]/u);
-  assert.match(appSource, /data-action="storage-size-delta"[\s\S]*\+\$\{amount\}GB/u);
-  assert.match(appSource, /data-action="storage-reset-default"[\s\S]*기본값 초기화/u);
-  assert.match(appSource, /Math\.max\(STORAGE_DEFAULT_GB, resolveSelectedStorageTarget\(\)\?\.currentGi/u);
-  assert.match(appSource, /min="\$\{STORAGE_MIN_GB\}"/u);
-  assert.match(appSource, /25GB 이상만 가능합니다/u);
-  assert.match(appSource, /현재 \$\{currentGi\}GB보다 작게 줄일 수 없습니다/u);
-  assert.match(appSource, /\/api\/storage\/resize/u);
-  assert.match(viewsSource, /data-action="open-storage-modal"/u);
-  assert.match(styles, /\.storage-size-actions/u);
-  assert.match(adminSource, /pathname === '\/api\/storage'/u);
-  assert.match(adminSource, /pathname === '\/api\/storage\/resize'/u);
-});
-
 test('admin login keeps the first screen focused on hkclaw-lite password entry', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');

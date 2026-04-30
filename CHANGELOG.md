@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.21 - 2026-04-30
+
+### Removed
+- Removed the unfinished Helm PVC storage expansion UI, admin APIs, chart RBAC, and related tests/docs.
+- Restored Helm state/workspace PVC defaults to the pre-1.0.20 sizes.
+
 ## 1.0.20 - 2026-04-30
 
 ### Added

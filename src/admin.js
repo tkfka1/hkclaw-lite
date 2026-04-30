@@ -79,7 +79,6 @@ import {
 } from './kakao-runtime-state.js';
 import { handleKakaoRelayRequest, isKakaoRelayRequest } from './kakao-relay.js';
 import { listAgentModels } from './model-catalog.js';
-import { inspectStorage, resizeStorage } from './storage-control.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import {
   applyTopology,
@@ -685,22 +684,6 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     return;
   }
 
-  if (request.method === 'GET' && pathname === '/api/storage') {
-    writeJson(response, 200, {
-      ok: true,
-      result: await inspectStorage(process.env),
-    });
-    return;
-  }
-
-  if (request.method === 'POST' && pathname === '/api/storage/resize') {
-    const payload = await readJsonBody(request);
-    writeJson(response, 200, {
-      ok: true,
-      result: await resizeStorage(payload, process.env),
-    });
-    return;
-  }
 
   writeJson(response, 404, { error: 'Not found.' });
 }

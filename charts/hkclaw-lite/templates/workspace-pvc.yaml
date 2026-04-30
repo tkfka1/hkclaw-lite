@@ -1,5 +1,4 @@
 {{- if and .Values.workspace.enabled .Values.workspace.persistence.enabled (not .Values.workspace.persistence.existingClaim) }}
-{{- include "hkclaw-lite.requireStorageAtLeast25Gi" (list "workspace.persistence.size" .Values.workspace.persistence.size) }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -1,5 +1,4 @@
 {{- if and .Values.state.persistence.enabled (not .Values.state.persistence.existingClaim) }}
-{{- include "hkclaw-lite.requireStorageAtLeast25Gi" (list "state.persistence.size" .Values.state.persistence.size) }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
