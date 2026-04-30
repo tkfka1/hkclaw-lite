@@ -945,6 +945,47 @@ test('admin server redirects Telegram getUpdates helper through the selected age
   });
 });
 
+test('telegram service snapshot exposes recently discovered chats', () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  writeTelegramAgentServiceStatus(projectRoot, 'telegram-worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'telegram-worker',
+    pid: process.pid,
+    running: true,
+    desiredRunning: true,
+    startedAt: '2026-04-30T00:00:00.000Z',
+    heartbeatAt: new Date().toISOString(),
+    agents: {
+      'telegram-worker': {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: true,
+        username: 'hkclaw_bot',
+        userId: '100',
+      },
+    },
+    recentChats: [
+      {
+        agentName: 'telegram-worker',
+        chatId: '-1001234567890',
+        threadId: '77',
+        type: 'supergroup',
+        title: 'Ops Room',
+        lastSeenAt: '2026-04-30T00:01:00.000Z',
+      },
+    ],
+  });
+
+  const snapshot = buildTelegramServiceSnapshot(projectRoot);
+  assert.equal(snapshot.recentChats[0].agentName, 'telegram-worker');
+  assert.equal(snapshot.recentChats[0].chatId, '-1001234567890');
+  assert.equal(snapshot.recentChats[0].threadId, '77');
+  assert.equal(snapshot.agentServices['telegram-worker'].recentChats[0].title, 'Ops Room');
+});
+
 test('admin server saves config changes and can run a mapped channel', async () => {
   const projectRoot = createProject();
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });

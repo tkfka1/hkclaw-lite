@@ -6,6 +6,11 @@ import {
   getClaudeRuntimeSourceHintLines,
 } from '../src/admin-ui/claude-runtime-ui.js';
 import {
+  applyTelegramRecentChatToDraft,
+  formatTelegramRecentChatTitle,
+  getTelegramRecentChatCandidates,
+} from '../src/admin-ui/telegram-discovery.js';
+import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   AI_MANAGER_STATUS_POLL_SCHEDULE_MS,
   getAiManagerStatusPollDelay,
@@ -76,4 +81,74 @@ test('desktop nav helper keeps the sidebar pinned on wide screens only', () => {
   assert.equal(shouldUseDesktopSidebar(1080), false);
   assert.equal(shouldUseDesktopSidebar(1081), true);
   assert.equal(shouldUseDesktopSidebar(1440), true);
+});
+
+test('telegram recent chat apply preserves group thread ids from a direct draft', () => {
+  const draft = {
+    platform: 'telegram',
+    targetType: 'direct',
+    telegramChatId: '',
+    telegramThreadId: '',
+    agent: '',
+  };
+
+  assert.equal(
+    applyTelegramRecentChatToDraft(draft, {
+      agentName: 'telegram-worker',
+      chatId: '-1001234567890',
+      threadId: '77',
+      chatType: 'supergroup',
+    }),
+    draft,
+  );
+
+  assert.deepEqual(draft, {
+    platform: 'telegram',
+    targetType: 'channel',
+    telegramChatId: '-1001234567890',
+    telegramThreadId: '77',
+    agent: 'telegram-worker',
+  });
+});
+
+test('telegram recent chat apply clears private threads without replacing selected agent', () => {
+  const draft = {
+    platform: 'telegram',
+    targetType: 'channel',
+    telegramChatId: '-1001234567890',
+    telegramThreadId: '77',
+    agent: 'owner',
+  };
+
+  applyTelegramRecentChatToDraft(draft, {
+    agentName: 'other-worker',
+    chatId: '12345',
+    threadId: '88',
+    chatType: 'private',
+  });
+
+  assert.deepEqual(draft, {
+    platform: 'telegram',
+    targetType: 'direct',
+    telegramChatId: '12345',
+    telegramThreadId: '',
+    agent: 'owner',
+  });
+});
+
+test('telegram recent chat picker filters by selected agent and formats fallback titles', () => {
+  assert.deepEqual(
+    getTelegramRecentChatCandidates(
+      { agent: 'owner' },
+      [
+        { agentName: 'owner', chatId: '1', title: 'Ops' },
+        { agentName: 'reviewer', chatId: '2', title: 'Review' },
+        { agentName: '', chatId: '3', fromUsername: 'alice' },
+        { agentName: 'owner', chatId: '', title: 'Missing id' },
+      ],
+    ).map((entry) => entry.chatId),
+    ['1', '3'],
+  );
+  assert.equal(formatTelegramRecentChatTitle({ fromUsername: 'alice' }), '@alice');
+  assert.equal(formatTelegramRecentChatTitle({ type: 'private' }), 'Telegram 개인 대화');
 });

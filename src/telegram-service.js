@@ -10,6 +10,7 @@ import {
 } from './runtime-db.js';
 import { listChannels, loadConfig, resolveProjectPath } from './store.js';
 import {
+  buildTelegramRecentChatSummary,
   createTelegramServiceStatus,
   deleteTelegramServiceCommand,
   listTelegramServiceCommands,
@@ -240,7 +241,7 @@ async function pollTelegramUpdates({
   const updates = await callTelegramApi(client.token, 'getUpdates', {
     offset: client.offset,
     timeout: TELEGRAM_UPDATES_TIMEOUT_SECONDS,
-    allowed_updates: ['message'],
+    allowed_updates: ['message', 'channel_post'],
   });
 
   serviceStatus.heartbeatAt = timestamp();
@@ -251,9 +252,12 @@ async function pollTelegramUpdates({
     if (typeof update?.update_id === 'number') {
       client.offset = update.update_id + 1;
     }
-    const message = update?.message;
+    const message = update?.message || update?.channel_post;
     if (!message || message?.from?.is_bot) {
       continue;
+    }
+    if (recordTelegramRecentChat(serviceStatus, botName, message)) {
+      persistServiceStatus(serviceStatus);
     }
     const key = buildTelegramQueueKey(message);
     await enqueueChannelTask(channelQueues, key, async () => {
@@ -297,6 +301,7 @@ async function handleInboundTelegramMessage({
     return;
   }
   const threadId = message?.message_thread_id ? String(message.message_thread_id) : '';
+  const identityCommand = parseTelegramChatIdentityCommand(prompt);
 
   const config = loadConfig(projectRoot);
   const matchingChannels = listChannels(config).filter((entry) => {
@@ -316,6 +321,12 @@ async function handleInboundTelegramMessage({
     matchingChannels.find(
       (entry) => !entry.connector && resolveChannelInboundAgentName(entry) === inboundAgentName,
     );
+  if (identityCommand === 'id' || (identityCommand === 'start' && !channel)) {
+    await sendTelegramText(client, chatId, formatTelegramChatIdentityMessage(message), {
+      threadId,
+    });
+    return;
+  }
   if (!channel) {
     return;
   }
@@ -362,6 +373,107 @@ async function handleInboundTelegramMessage({
       );
     }
   });
+}
+
+export function recordTelegramRecentChat(serviceStatus, agentName, message, seenAt = timestamp()) {
+  if (!serviceStatus || !message?.chat?.id) {
+    return false;
+  }
+
+  const entry = buildTelegramRecentChatEntry(agentName, message, seenAt);
+  if (!entry.chatId) {
+    return false;
+  }
+
+  const previousJson = JSON.stringify(buildTelegramRecentChatSummary(serviceStatus.recentChats));
+  const next = [
+    entry,
+    ...buildTelegramRecentChatSummary(serviceStatus.recentChats).filter(
+      (current) =>
+        !(
+          current.agentName === entry.agentName &&
+          current.chatId === entry.chatId &&
+          current.threadId === entry.threadId
+        ),
+    ),
+  ];
+  serviceStatus.recentChats = buildTelegramRecentChatSummary(next);
+  return previousJson !== JSON.stringify(serviceStatus.recentChats);
+}
+
+export function formatTelegramChatIdentityMessage(message) {
+  const chat = message?.chat || {};
+  const chatId = String(chat.id || '').trim();
+  const threadId = message?.message_thread_id ? String(message.message_thread_id) : '';
+  const lines = [
+    'Telegram 채팅 정보를 확인했습니다.',
+    '',
+    `chat_id: ${chatId || '(없음)'}`,
+  ];
+  if (threadId) {
+    lines.push(`thread_id: ${threadId}`);
+  }
+  const type = String(chat.type || '').trim();
+  if (type) {
+    lines.push(`type: ${type}`);
+  }
+  const title = formatTelegramChatTitle(chat, message?.from);
+  if (title) {
+    lines.push(`title: ${title}`);
+  }
+  lines.push('', '웹 어드민의 Telegram 채널 추가 화면에서 이 값을 선택하거나 붙여 넣으세요.');
+  return lines.join('\n');
+}
+
+function buildTelegramRecentChatEntry(agentName, message, seenAt) {
+  const chat = message?.chat || {};
+  const from = message?.from || {};
+  const threadId = message?.message_thread_id ? String(message.message_thread_id) : '';
+  return {
+    agentName: String(agentName || '').trim(),
+    chatId: String(chat.id || '').trim(),
+    threadId,
+    type: String(chat.type || '').trim(),
+    title: formatTelegramChatTitle(chat, from),
+    username: String(chat.username || '').trim(),
+    fromUsername: String(from.username || '').trim(),
+    fromName: formatTelegramUserName(from),
+    lastSeenAt: seenAt,
+  };
+}
+
+function parseTelegramChatIdentityCommand(prompt) {
+  const normalized = String(prompt || '').trim().toLowerCase();
+  const command = normalized.split(/\s+/u)[0]?.split('@')[0] || '';
+  if (['/id', '/chatid', '/chat_id'].includes(command)) {
+    return 'id';
+  }
+  if (command === '/start') {
+    return 'start';
+  }
+  return '';
+}
+
+function formatTelegramChatTitle(chat = {}, from = {}) {
+  const title = String(chat.title || '').trim();
+  if (title) {
+    return title;
+  }
+  const chatName = [chat.first_name, chat.last_name]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' ');
+  if (chatName) {
+    return chatName;
+  }
+  return formatTelegramUserName(from);
+}
+
+function formatTelegramUserName(user = {}) {
+  return [user.first_name, user.last_name]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' ');
 }
 
 export async function withTelegramTypingIndicator(client, chatId, options, task) {

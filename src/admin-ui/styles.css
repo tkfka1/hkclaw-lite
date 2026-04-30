@@ -491,7 +491,8 @@ strong,
 .usage-breakdown-table-body,
 .token-breakdown-list,
 .token-chart,
-.token-table-body {
+.token-table-body,
+.telegram-discovery {
   display: grid;
   gap: 12px;
 }
@@ -1527,11 +1528,41 @@ strong,
 }
 
 .env-entry,
-.llm-connection-entry {
+.llm-connection-entry,
+.telegram-discovery-item {
   padding: 12px;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(216, 225, 234, 0.92);
   background: rgba(255, 255, 255, 0.86);
+}
+
+.telegram-discovery-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.telegram-discovery-meta {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.telegram-discovery-meta strong,
+.telegram-discovery-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.telegram-discovery-meta strong {
+  color: var(--ink);
+}
+
+.telegram-discovery-meta span {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
 }
 
 input,

@@ -21,6 +21,11 @@ import {
   getClaudeRuntimeSourceHintLines,
 } from './claude-runtime-ui.js?v=20260427-02';
 import { renderIcon } from './icons.js?v=20260427-02';
+import {
+  applyTelegramRecentChatToDraft,
+  formatTelegramRecentChatTitle,
+  getTelegramRecentChatCandidates as selectTelegramRecentChatCandidates,
+} from './telegram-discovery.js?v=20260430-01';
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
@@ -570,6 +575,27 @@ function handleClick(event) {
     state.channelDraft = null;
     clearFormErrors('channel');
     render();
+    return;
+  }
+
+  if (action === 'apply-telegram-recent-chat') {
+    if (!state.channelDraft) {
+      return;
+    }
+    applyTelegramRecentChatToDraft(state.channelDraft, {
+      agentName: button.dataset.agentName,
+      chatId: button.dataset.chatId,
+      threadId: button.dataset.threadId,
+      chatType: button.dataset.chatType,
+    });
+    refreshVisibleFormErrors('channel', collectChannelDraftErrors());
+    setNotice('info', 'Telegram 채팅 ID를 채널 폼에 적용했습니다.');
+    render();
+    return;
+  }
+
+  if (action === 'refresh-telegram-recent-chats') {
+    void refreshState({ silent: true });
     return;
   }
 
@@ -3614,6 +3640,59 @@ function renderTelegramChannelGetUpdatesLink(channel) {
   });
 }
 
+function renderTelegramRecentChatsPicker(channel) {
+  const candidates = selectTelegramRecentChatCandidates(
+    channel,
+    state.data?.telegram?.service?.recentChats,
+  );
+  const hint =
+    '봇 연결을 시작한 뒤 Telegram에서 봇에게 /id 또는 아무 메시지를 보내면 chat_id가 여기에 기록됩니다.';
+  const items = candidates
+    .slice(0, 8)
+    .map((entry) => {
+      const title = formatTelegramRecentChatTitle(entry);
+      const threadSuffix = entry.threadId ? ` / thread ${entry.threadId}` : '';
+      const meta = [
+        entry.agentName ? `봇 ${entry.agentName}` : '',
+        entry.type || '',
+        entry.lastSeenAt ? formatRelativeDateTime(entry.lastSeenAt) : '',
+      ].filter(Boolean);
+      return `
+        <div class="telegram-discovery-item">
+          <div class="telegram-discovery-meta">
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml(`${entry.chatId}${threadSuffix}`)}</span>
+            ${meta.length ? `<span>${escapeHtml(meta.join(' · '))}</span>` : ''}
+          </div>
+          <button
+            type="button"
+            class="btn-secondary btn-inline"
+            data-action="apply-telegram-recent-chat"
+            data-agent-name="${escapeAttr(entry.agentName || '')}"
+            data-chat-id="${escapeAttr(entry.chatId)}"
+            data-thread-id="${escapeAttr(entry.threadId || '')}"
+            data-chat-type="${escapeAttr(entry.type || '')}"
+            ${state.busy ? 'disabled' : ''}
+          >적용</button>
+        </div>
+      `;
+    })
+    .join('');
+  return `
+    <div class="field field-full telegram-discovery">
+      <label>최근 발견된 Telegram 채팅</label>
+      <div class="field-hint">${escapeHtml(hint)}</div>
+      <div class="inline-actions">
+        <button type="button" class="btn-secondary btn-inline" data-action="refresh-telegram-recent-chats" ${state.busy ? 'disabled' : ''}>목록 새로고침</button>
+      </div>
+      ${
+        items ||
+        '<div class="empty-inline">아직 발견된 채팅이 없습니다. 봇에게 /id를 보내고 잠시 후 다시 확인하세요.</div>'
+      }
+    </div>
+  `;
+}
+
 function renderChannelModal() {
   const current = state.channelDraft || createBlankChannel();
   const isTribunal = current.mode === 'tribunal';
@@ -3671,6 +3750,7 @@ function renderChannelModal() {
                           </div>
                         `
                     }
+                    ${renderTelegramRecentChatsPicker(current)}
                   `
                 : isKakao
                   ? `

@@ -8,8 +8,10 @@ import path from 'node:path';
 import {
   flushPendingTelegramOutbox,
   flushTelegramOutboxForRun,
+  formatTelegramChatIdentityMessage,
   formatTelegramRoleMessage,
   lookupTelegramApiHost,
+  recordTelegramRecentChat,
   withTelegramTypingIndicator,
 } from '../src/telegram-service.js';
 import {
@@ -111,6 +113,64 @@ test('telegram formatter keeps single channels concise', () => {
   );
 
   assert.equal(text, 'done');
+});
+
+test('telegram service records recent chat targets for setup discovery', () => {
+  const serviceStatus = {
+    recentChats: [],
+  };
+  const message = {
+    message_thread_id: 77,
+    chat: {
+      id: -1001234567890,
+      type: 'supergroup',
+      title: 'Ops Room',
+    },
+    from: {
+      username: 'alice',
+      first_name: 'Alice',
+    },
+  };
+
+  assert.equal(
+    recordTelegramRecentChat(serviceStatus, 'telegram-worker', message, '2026-04-30T00:00:00.000Z'),
+    true,
+  );
+  assert.deepEqual(serviceStatus.recentChats, [
+    {
+      agentName: 'telegram-worker',
+      chatId: '-1001234567890',
+      threadId: '77',
+      type: 'supergroup',
+      title: 'Ops Room',
+      username: '',
+      fromUsername: 'alice',
+      fromName: 'Alice',
+      lastSeenAt: '2026-04-30T00:00:00.000Z',
+    },
+  ]);
+
+  assert.equal(
+    recordTelegramRecentChat(serviceStatus, 'telegram-worker', message, '2026-04-30T00:01:00.000Z'),
+    true,
+  );
+  assert.equal(serviceStatus.recentChats.length, 1);
+  assert.equal(serviceStatus.recentChats[0].lastSeenAt, '2026-04-30T00:01:00.000Z');
+});
+
+test('telegram /id response includes chat and thread ids', () => {
+  const text = formatTelegramChatIdentityMessage({
+    message_thread_id: 77,
+    chat: {
+      id: -1001234567890,
+      type: 'supergroup',
+      title: 'Ops Room',
+    },
+  });
+
+  assert.match(text, /chat_id: -1001234567890/u);
+  assert.match(text, /thread_id: 77/u);
+  assert.match(text, /title: Ops Room/u);
 });
 
 test('telegram service flushes queued runtime outbox events', async () => {

@@ -10,6 +10,7 @@ const TELEGRAM_AGENT_STATUSES_DIRNAME = 'telegram-agent-statuses';
 const TELEGRAM_COMMANDS_DIRNAME = 'telegram-commands';
 const TELEGRAM_AGENT_COMMANDS_DIRNAME = 'telegram-agent-commands';
 const TELEGRAM_HEARTBEAT_STALE_MS = 45_000;
+const TELEGRAM_RECENT_CHAT_LIMIT = 20;
 
 export function getTelegramStatusPath(projectRoot) {
   return path.join(getProjectLayout(projectRoot).toolRoot, TELEGRAM_STATUS_FILENAME);
@@ -165,6 +166,7 @@ export function buildTelegramServiceSnapshot(projectRoot, rawStatus = undefined)
       lastError: null,
       agents,
       agentServices,
+      recentChats: buildRecentChatSummaryFromStatuses(agentStatuses),
       runningAgentCount: runningAgentNames.length,
       totalAgentCount: agentNames.length,
     };
@@ -203,6 +205,7 @@ function buildSingleTelegramServiceSnapshot(rawStatus) {
       heartbeatAt: null,
       lastError: null,
       agents: emptyAgents,
+      recentChats: [],
     };
   }
 
@@ -239,6 +242,7 @@ function buildSingleTelegramServiceSnapshot(rawStatus) {
     heartbeatAt: rawStatus.heartbeatAt || null,
     lastError: rawStatus.lastError || null,
     agents: buildServiceAgentSummary(rawStatus.agents || rawStatus.bots),
+    recentChats: buildTelegramRecentChatSummary(rawStatus.recentChats),
   };
 }
 
@@ -257,6 +261,7 @@ export function createTelegramServiceStatus(projectRoot, options = {}) {
     heartbeatAt: options.heartbeatAt || timestamp(),
     lastError: options.lastError || null,
     agents: buildServiceAgentSummary(options.agents || options.bots),
+    recentChats: buildTelegramRecentChatSummary(options.recentChats),
   };
 }
 
@@ -335,6 +340,44 @@ function buildServiceAgentSummary(input = {}) {
       },
     ]),
   );
+}
+
+export function buildTelegramRecentChatSummary(input = {}) {
+  const entries = Array.isArray(input) ? input : Object.values(input || {});
+  return entries
+    .map(normalizeRecentChatEntry)
+    .filter((entry) => entry.chatId)
+    .sort((left, right) => {
+      const rightTime = Date.parse(right.lastSeenAt || '') || 0;
+      const leftTime = Date.parse(left.lastSeenAt || '') || 0;
+      return rightTime - leftTime;
+    })
+    .slice(0, TELEGRAM_RECENT_CHAT_LIMIT);
+}
+
+function buildRecentChatSummaryFromStatuses(statuses = {}) {
+  return buildTelegramRecentChatSummary(
+    Object.entries(statuses || {}).flatMap(([agentName, status]) =>
+      buildTelegramRecentChatSummary(status?.recentChats).map((entry) => ({
+        ...entry,
+        agentName: entry.agentName || agentName,
+      })),
+    ),
+  );
+}
+
+function normalizeRecentChatEntry(entry = {}) {
+  return {
+    agentName: String(entry.agentName || entry.botName || '').trim(),
+    chatId: String(entry.chatId || entry.chat_id || '').trim(),
+    threadId: String(entry.threadId || entry.message_thread_id || '').trim(),
+    type: String(entry.type || '').trim(),
+    title: String(entry.title || '').trim(),
+    username: String(entry.username || '').trim(),
+    fromUsername: String(entry.fromUsername || entry.from_username || '').trim(),
+    fromName: String(entry.fromName || entry.from_name || '').trim(),
+    lastSeenAt: String(entry.lastSeenAt || entry.last_seen_at || '').trim(),
+  };
 }
 
 function isPidAlive(pid) {
