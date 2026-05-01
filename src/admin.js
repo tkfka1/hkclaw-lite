@@ -3790,7 +3790,7 @@ async function runAgentAuthTest(projectRoot, payload) {
 }
 
 function buildAiUsageSummary(agentType, summary) {
-  const usageSupported = ['claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
+  const usageSupported = ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
   return {
     supported: usageSupported,
     recordedEvents: summary?.recordedEvents || 0,

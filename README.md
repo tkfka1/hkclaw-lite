@@ -364,6 +364,7 @@ ops:owner
 - `runtime_runs`: 채널 turn 1회의 상태, active role, round, 최종 disposition.
 - `runtime_role_messages`: owner/reviewer/arbiter가 낸 메시지.
 - `runtime_role_sessions`: `channel.name + role` 기준의 세션 매핑.
+- `runtime_usage_events`: Codex/Claude/Gemini/local LLM이 노출한 토큰 사용량. command runner처럼 표준 사용량을 내보내지 않는 실행 주체는 기록되지 않는다.
 - `runtime_outbox_events`: 메시징 플랫폼으로 내보낼 role 메시지 이벤트.
 
 KakaoTalk 릴레이 reply는 원본 `messageId`가 있어야 하므로, inbound SSE 이벤트를 처리하는 동안 즉시 전송한다. 프로세스가 중간에 죽어 원본 `messageId`를 잃은 orphan outbox는 안전하게 재전송할 수 없다.

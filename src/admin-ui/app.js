@@ -3334,7 +3334,7 @@ function getAiRuntimeSummaryBody(agentType, details = {}) {
 
 function renderAiUsageSummary(agentType, usageSummary) {
   const summary = usageSummary || {
-    supported: ['claude-code', 'gemini-cli', 'local-llm'].includes(agentType),
+    supported: ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType),
     recordedEvents: 0,
     inputTokens: 0,
     outputTokens: 0,

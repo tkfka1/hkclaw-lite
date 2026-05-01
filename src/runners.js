@@ -255,6 +255,7 @@ async function runCodex({
     '--skip-git-repo-check',
     '--color',
     'never',
+    '--json',
     '-C',
     executionWorkdir,
     '-o',
@@ -299,7 +300,12 @@ async function runCodex({
     const finalText = fs.existsSync(lastMessageFile)
       ? fs.readFileSync(lastMessageFile, 'utf8')
       : result.stdout;
-    return trimTrailingWhitespace(finalText).trim();
+    const metadata = parseCodexExecJsonOutput(result.stdout);
+    return {
+      text: trimTrailingWhitespace(finalText || metadata.text).trim(),
+      usage: metadata.usage,
+      runtimeMeta: metadata.runtimeMeta,
+    };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -817,6 +823,56 @@ function normalizeAgentTurnResult(result, { captureRuntimeMetadata = false } = {
     : String(result || '');
 }
 
+function parseCodexExecJsonOutput(stdout) {
+  const events = String(stdout || '')
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
+
+  let text = '';
+  let usage = null;
+  let threadId = null;
+  for (const event of events) {
+    if (!event || typeof event !== 'object') {
+      continue;
+    }
+    if (!threadId && typeof event.thread_id === 'string' && event.thread_id.trim()) {
+      threadId = event.thread_id.trim();
+    }
+
+    const item = event.item && typeof event.item === 'object' ? event.item : null;
+    if (item?.type === 'agent_message' && typeof item.text === 'string') {
+      text = item.text;
+    }
+
+    const eventUsage =
+      normalizeUsageSnapshot(event.usage) ||
+      normalizeUsageSnapshot(item?.usage) ||
+      normalizeUsageSnapshot(event.message?.usage);
+    if (eventUsage) {
+      usage = eventUsage;
+    }
+  }
+
+  return {
+    text,
+    usage,
+    runtimeMeta: threadId
+      ? {
+          runtimeBackend: 'codex-cli',
+          runtimeSessionId: threadId,
+        }
+      : null,
+  };
+}
+
 function buildClaudeCliSessionSpec({ channel, role, runtimeSession }) {
   const stickyRole = Boolean(channel?.name) && ['owner', 'reviewer'].includes(role || '');
   const storedSessionId =
@@ -1096,6 +1152,7 @@ function normalizeUsageSnapshot(input) {
   const cacheReadInputTokens = normalizeUsageNumber(
     input?.cacheReadInputTokens ??
       input?.cache_read_input_tokens ??
+      input?.cached_input_tokens ??
       input?.cacheReadInputTokenCount,
   );
 

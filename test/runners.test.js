@@ -230,6 +230,79 @@ function createFakeCodexNativeBundle() {
   return path.join(packageDir, 'package.json');
 }
 
+function createFakeCodexCliBundle() {
+  const rootDir = createTempDir();
+  const packageDir = path.join(rootDir, '@openai', 'codex');
+  const scriptPath = path.join(packageDir, 'bin', 'codex.js');
+  fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+  fs.writeFileSync(
+    path.join(packageDir, 'package.json'),
+    JSON.stringify({
+      name: '@openai/codex',
+      version: '0.0.0-test',
+      type: 'module',
+      bin: {
+        codex: './bin/codex.js',
+      },
+    }),
+  );
+  fs.writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import fs from 'node:fs';
+
+const args = process.argv.slice(2);
+
+if (args[0] !== 'exec') {
+  process.stderr.write(\`unexpected args: \${args.join(' ')}\\n\`);
+  process.exit(1);
+}
+
+let outputFile = '';
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === '-o') {
+    outputFile = args[index + 1] || '';
+    index += 1;
+  }
+}
+
+process.stdin.resume();
+process.stdin.on('end', () => {
+  if (outputFile) {
+    fs.writeFileSync(outputFile, 'OK\\n');
+  }
+  if (!args.includes('--json')) {
+    process.stdout.write('OK\\n');
+    return;
+  }
+  process.stdout.write(JSON.stringify({
+    type: 'thread.started',
+    thread_id: 'codex-thread-test',
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'item.completed',
+    item: {
+      type: 'agent_message',
+      text: 'OK',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'turn.completed',
+    usage: {
+      input_tokens: 12,
+      cached_input_tokens: 5,
+      output_tokens: 3,
+    },
+  }) + '\\n');
+});
+process.stdin.on('error', () => process.exit(1));
+`,
+    { mode: 0o755 },
+  );
+
+  return path.join(packageDir, 'package.json');
+}
+
 function createFakeGeminiCliBundle() {
   const rootDir = createTempDir();
   const packageDir = path.join(rootDir, '@google', 'gemini-cli');
@@ -373,6 +446,46 @@ test('resolveManagedAgentCli ignores PATH when the bundled cli is missing', () =
   });
 
   assert.equal(resolved, null);
+});
+
+test('runAgentTurn returns Codex CLI usage metadata when captureRuntimeMetadata is enabled', async () => {
+  const projectRoot = createTempDir();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  const fakePackageJson = createFakeCodexCliBundle();
+
+  await withEnv(
+    {
+      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakePackageJson,
+    },
+    async () => {
+      const output = await runAgentTurn({
+        projectRoot,
+        agent: {
+          name: 'codex-agent',
+          agent: 'codex',
+          sandbox: 'read-only',
+        },
+        prompt: 'Return exactly OK.',
+        rawPrompt: 'Return exactly OK.',
+        workdir: 'workspace',
+        captureRuntimeMetadata: true,
+      });
+
+      assert.equal(output.text, 'OK');
+      assert.deepEqual(output.usage, {
+        inputTokens: 12,
+        outputTokens: 3,
+        totalTokens: 15,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 5,
+      });
+      assert.deepEqual(output.runtimeMeta, {
+        runtimeBackend: 'codex-cli',
+        runtimeSessionId: 'codex-thread-test',
+      });
+    },
+  );
 });
 
 test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () => {

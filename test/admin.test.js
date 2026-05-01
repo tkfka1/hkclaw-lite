@@ -176,7 +176,29 @@ if (args[0] === 'exec') {
     if (outputFile) {
       fs.writeFileSync(outputFile, 'OK\\n');
     }
-    process.stdout.write('OK\\n');
+    if (args.includes('--json')) {
+      process.stdout.write(JSON.stringify({
+        type: 'thread.started',
+        thread_id: 'codex-thread-test',
+      }) + '\\n');
+      process.stdout.write(JSON.stringify({
+        type: 'item.completed',
+        item: {
+          type: 'agent_message',
+          text: 'OK',
+        },
+      }) + '\\n');
+      process.stdout.write(JSON.stringify({
+        type: 'turn.completed',
+        usage: {
+          input_tokens: 12,
+          cached_input_tokens: 5,
+          output_tokens: 3,
+        },
+      }) + '\\n');
+    } else {
+      process.stdout.write('OK\\n');
+    }
   });
   process.stdin.on('error', () => process.exit(1));
   return;
@@ -3059,6 +3081,16 @@ test('admin server supports agent auth status, login, and test call', async () =
         assert.equal(testCall.response.status, 200, JSON.stringify(testCall.payload));
         assert.equal(testCall.payload.result.details.success, true);
         assert.match(testCall.payload.result.output, /OK/u);
+        assert.deepEqual(testCall.payload.result.details.usage, {
+          inputTokens: 12,
+          outputTokens: 3,
+          totalTokens: 15,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 5,
+        });
+        assert.equal(testCall.payload.result.details.usageSummary.supported, true);
+        assert.equal(testCall.payload.result.details.usageSummary.recordedEvents, 1);
+        assert.equal(testCall.payload.result.details.usageSummary.totalTokens, 15);
       });
     },
   );
@@ -3860,7 +3892,7 @@ test('admin server uses the selected local LLM connection for test calls', async
       assert.equal(snapshot.payload.statuses['local-llm'].usageSummary.recordedEvents, 1);
       assert.equal(snapshot.payload.statuses['local-llm'].usageSummary.totalTokens, 25);
       assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.connections.length, 2);
-      assert.equal(snapshot.payload.statuses.codex.usageSummary.supported, false);
+      assert.equal(snapshot.payload.statuses.codex.usageSummary.supported, true);
     });
   });
 });
