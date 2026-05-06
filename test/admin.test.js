@@ -2911,6 +2911,67 @@ test('admin server exposes embedded Kakao relay session, webhook, SSE, and reply
   });
 });
 
+test('embedded Kakao relay accepts code-only pairing messages and pair aliases', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const codeOnlySession = await requestJson(`${url}/v1/sessions/create`, {
+      method: 'POST',
+      body: {},
+    });
+    assert.equal(codeOnlySession.response.status, 200, JSON.stringify(codeOnlySession.payload));
+
+    const codeOnlyPair = await requestJson(`${url}/kakao-talkchannel/webhook`, {
+      method: 'POST',
+      body: {
+        bot: { id: 'talk-channel' },
+        userRequest: {
+          utterance: codeOnlySession.payload.pairingCode,
+          user: {
+            id: 'kakao-code-only-user',
+            properties: {
+              plusfriendUserKey: 'plusfriend-code-only-user',
+            },
+          },
+        },
+      },
+    });
+    assert.equal(codeOnlyPair.response.status, 200, JSON.stringify(codeOnlyPair.payload));
+    assert.match(codeOnlyPair.payload.template.outputs[0].simpleText.text, /연결되었습니다/u);
+
+    const codeOnlyStatus = await requestJson(
+      `${url}/v1/sessions/${encodeURIComponent(codeOnlySession.payload.sessionToken)}/status`,
+    );
+    assert.equal(codeOnlyStatus.payload.status, 'paired');
+    assert.equal(codeOnlyStatus.payload.kakaoUserId, 'plusfriend-code-only-user');
+
+    const aliasSession = await requestJson(`${url}/v1/sessions/create`, {
+      method: 'POST',
+      body: {},
+    });
+    assert.equal(aliasSession.response.status, 200, JSON.stringify(aliasSession.payload));
+
+    const aliasPair = await requestJson(`${url}/kakao-talkchannel/webhook`, {
+      method: 'POST',
+      body: {
+        bot: { id: 'talk-channel' },
+        userRequest: {
+          utterance: `pair ${aliasSession.payload.pairingCode.toLowerCase()}`,
+          user: {
+            id: 'kakao-pair-alias-user',
+            properties: {
+              plusfriendUserKey: 'plusfriend-pair-alias-user',
+            },
+          },
+        },
+      },
+    });
+    assert.equal(aliasPair.response.status, 200, JSON.stringify(aliasPair.payload));
+    assert.match(aliasPair.payload.template.outputs[0].simpleText.text, /연결되었습니다/u);
+  });
+});
+
 test('embedded Kakao relay keeps only one SSE consumer per session token', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
