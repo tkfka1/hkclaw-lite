@@ -301,6 +301,8 @@ KakaoTalk 연동의 운영 모델은 **Admin 내장 릴레이 서버 1개 + Kaka
 
 7. 이후 카카오톡 메시지는 Channel 규칙에 따라 Agent로 전달되고, 응답은 Kakao SkillResponse로 돌아간다.
 
+   KakaoTalk에는 Discord/Telegram처럼 입력 중 표시가 없으므로, hkclaw-lite는 콜백 대기 응답에 `data.text`를 같이 보낸다. OpenBuilder 콜백 블록의 응답 설정에서 Skill data의 `text` 값을 사용하면 사용자는 최종 답변 전까지 “서버에 도착했고 답변 준비 중” 상태를 볼 수 있다. 이 문구가 보이면 Skill URL/릴레이는 정상이고, 그 뒤 지연은 에이전트 처리 시간으로 보면 된다.
+
 ### CLI와 운영 명령
 
 ```bash

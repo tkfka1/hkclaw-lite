@@ -132,6 +132,8 @@ test('channels page exposes relay server and routing channels without a Kakao se
   assert.match(appSource, /KakaoBiz\/OpenBuilder의 Skill URL에는 반드시/u);
   assert.match(appSource, /KakaoTalk 채널 카드에서 <code>\/pair XXXX-XXXX<\/code> 전체 명령어/u);
   assert.match(appSource, /코드만 보내면 연결되지 않습니다/u);
+  assert.match(appSource, /Callback 대기 문구로 처리 중 상태를 보여줍니다/u);
+  assert.match(appSource, /Skill data의 <code>text<\/code> 값을 사용하세요/u);
   assert.match(appSource, /getDefaultKakaoSkillUrl/u);
   assert.match(appSource, /renderKakaoChannelStatusTags/u);
   assert.match(appSource, /KakaoTalk 채널/u);

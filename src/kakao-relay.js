@@ -14,6 +14,8 @@ import { toErrorMessage } from './utils.js';
 
 const KAKAO_CALLBACK_TTL_MS = 55_000;
 const KAKAO_RELAY_MAX_BODY_BYTES = 1024 * 1024;
+const KAKAO_CALLBACK_WAITING_TEXT =
+  '요청은 hkclaw-lite 서버에 도착했습니다. 에이전트가 답변을 준비 중이니 잠시만 기다려주세요.';
 const KAKAO_RELAY_ROUTES = [
   '/kakao-talkchannel/',
   '/openclaw/',
@@ -484,6 +486,9 @@ function callbackResponse() {
   return {
     version: '2.0',
     useCallback: true,
+    data: {
+      text: KAKAO_CALLBACK_WAITING_TEXT,
+    },
   };
 }
 

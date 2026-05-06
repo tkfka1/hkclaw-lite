@@ -2879,6 +2879,8 @@ test('admin server exposes embedded Kakao relay session, webhook, SSE, and reply
         });
         assert.equal(webhook.response.status, 200, JSON.stringify(webhook.payload));
         assert.equal(webhook.payload.useCallback, true);
+        assert.match(webhook.payload.data.text, /서버에 도착했습니다/u);
+        assert.match(webhook.payload.data.text, /답변을 준비 중/u);
 
         const message = await sse.waitForEvent('message');
         assert.equal(message.data.normalized.text, '안녕');
