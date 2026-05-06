@@ -125,8 +125,13 @@ test('channels page exposes relay server and routing channels without a Kakao se
   assert.doesNotMatch(appSource, /receiver\/restart/u);
   assert.doesNotMatch(appSource, /buildChannelWorkerContext/u);
   assert.match(appSource, /릴레이 수신 워커 시작/u);
-  assert.match(appSource, /릴레이 서버는 hkclaw-lite Admin에 내장되어 하나만 배포됩니다/u);
+  assert.match(appSource, /릴레이 서버\(base\)/u);
+  assert.match(appSource, /Kakao OpenBuilder Skill URL/u);
+  assert.match(appSource, /kakao-talkchannel\/webhook/u);
+  assert.match(appSource, /릴레이 서버 값은 hkclaw-lite 워커가 붙는 base URL입니다/u);
+  assert.match(appSource, /KakaoBiz\/OpenBuilder의 Skill URL에는 반드시/u);
   assert.match(appSource, /KakaoTalk 채널 카드에서 pairing code와 연결 상태를 확인하세요/u);
+  assert.match(appSource, /getDefaultKakaoSkillUrl/u);
   assert.match(appSource, /renderKakaoChannelStatusTags/u);
   assert.match(appSource, /KakaoTalk 채널/u);
   assert.match(appSource, /pairingCode/u);

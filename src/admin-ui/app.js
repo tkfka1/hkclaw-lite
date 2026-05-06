@@ -2752,13 +2752,17 @@ function renderKakaoRelayServerPanel(data = state.data || {}) {
   const stopAction = worker.running || worker.stale || worker.starting
     ? `<button type="button" class="btn-secondary" data-action="stop-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '릴레이 수신 워커 중지')}</button>`
     : '';
+  const relayUrl = getDefaultKakaoRelayUrl();
+  const skillUrl = getDefaultKakaoSkillUrl();
 
   return `
     <div class="worker-control-strip">
       <div class="worker-control-main">
-        <span class="mini-chip">${renderIcon('link', 'ui-icon')}릴레이 서버: ${escapeHtml(getDefaultKakaoRelayUrl())}</span>
+        <span class="mini-chip">${renderIcon('link', 'ui-icon')}릴레이 서버(base): ${escapeHtml(relayUrl)}</span>
+        <span class="mini-chip">${renderIcon('link', 'ui-icon')}Kakao OpenBuilder Skill URL: ${escapeHtml(skillUrl)}</span>
         <span class="mini-chip ${escapeAttr(worker.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(worker.label)}</span>
-        <p class="field-hint">릴레이 서버는 hkclaw-lite Admin에 내장되어 하나만 배포됩니다. KakaoTalk 채널 카드에서 pairing code와 연결 상태를 확인하세요.</p>
+        <p class="field-hint">릴레이 서버 값은 hkclaw-lite 워커가 붙는 base URL입니다. KakaoBiz/OpenBuilder의 Skill URL에는 반드시 ${escapeHtml(skillUrl)} 처럼 /kakao-talkchannel/webhook 전체 경로를 넣으세요.</p>
+        <p class="field-hint">KakaoTalk 채널 카드에서 pairing code와 연결 상태를 확인하세요.</p>
         ${worker.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(localizeWorkerError(worker.lastError))}</p>` : ''}
       </div>
       <div class="inline-actions">
@@ -5988,6 +5992,15 @@ function optionalDraftText(value) {
 
 function getDefaultKakaoRelayUrl() {
   return optionalDraftText(state.data?.defaults?.kakaoRelayUrl) || FALLBACK_KAKAO_RELAY_URL;
+}
+
+function getDefaultKakaoSkillUrl() {
+  const relayUrl = getDefaultKakaoRelayUrl();
+  try {
+    return new URL('/kakao-talkchannel/webhook', relayUrl).href;
+  } catch {
+    return `${relayUrl.replace(/\/+$/u, '')}/kakao-talkchannel/webhook`;
+  }
 }
 
 function optionalText(formData, key) {
