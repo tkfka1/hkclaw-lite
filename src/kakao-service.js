@@ -10,6 +10,7 @@ import { listChannels, loadConfig, resolveProjectPath } from './store.js';
 import {
   createKakaoServiceStatus,
   deleteKakaoServiceCommand,
+  enqueueKakaoServiceCommand,
   listKakaoServiceCommands,
   writeKakaoAgentServiceStatus,
   writeKakaoServiceStatus,
@@ -29,6 +30,7 @@ const KAKAO_RECONNECT_DELAY_MS = 1_000;
 const KAKAO_MAX_RECONNECT_DELAY_MS = 30_000;
 const KAKAO_SSE_TIMEOUT_MS = 300_000;
 const KAKAO_MESSAGE_LIMIT = 900;
+const KAKAO_PAIRING_RENEWAL_GRACE_MS = 1_000;
 
 export async function serveKakao(projectRoot, { agentName = null } = {}) {
   const config = loadConfig(projectRoot);
@@ -58,6 +60,7 @@ export async function serveKakao(projectRoot, { agentName = null } = {}) {
   try {
     clients = await createKakaoClients(agentConfigs, {
       projectRoot,
+      serviceAgentName: agentName,
       serviceStatus,
       persistServiceStatus,
     });
@@ -123,7 +126,7 @@ export async function serveKakao(projectRoot, { agentName = null } = {}) {
       if (outboxTimer) clearInterval(outboxTimer);
       if (commandTimer) clearInterval(commandTimer);
       for (const client of Object.values(clients)) {
-        client.controller.abort();
+        stopKakaoClient(client);
       }
       await Promise.allSettled(Object.values(clients).map((client) => client.streamTask));
       serviceStatus.running = false;
@@ -137,7 +140,7 @@ export async function serveKakao(projectRoot, { agentName = null } = {}) {
     if (outboxTimer) clearInterval(outboxTimer);
     if (commandTimer) clearInterval(commandTimer);
     for (const client of Object.values(clients)) {
-      client.controller?.abort?.();
+      stopKakaoClient(client);
     }
     serviceStatus.running = false;
     serviceStatus.lastError = toErrorMessage(error);
@@ -159,7 +162,10 @@ async function createKakaoClients(agentConfigs, context) {
   return clients;
 }
 
-async function createKakaoClient(agentConfig, { projectRoot, serviceStatus, persistServiceStatus }) {
+async function createKakaoClient(
+  agentConfig,
+  { projectRoot, serviceAgentName = null, serviceStatus, persistServiceStatus },
+) {
   const tokenInfo = await resolveKakaoRelayToken(agentConfig, {
     onSessionCreateError: (error, { attempt, delayMs }) => {
       serviceStatus.lastError = toErrorMessage(error);
@@ -185,6 +191,7 @@ async function createKakaoClient(agentConfig, { projectRoot, serviceStatus, pers
     connected: false,
     controller,
     streamTask: null,
+    pairingRenewalTimer: null,
   };
 
   const updateStatus = () => {
@@ -194,6 +201,15 @@ async function createKakaoClient(agentConfig, { projectRoot, serviceStatus, pers
     persistServiceStatus(serviceStatus);
   };
   updateStatus();
+
+  const renewalContext = {
+    projectRoot,
+    serviceAgentName,
+    serviceStatus,
+    persistServiceStatus,
+    updateStatus,
+  };
+  scheduleKakaoPairingRenewal(client, agentConfig, renewalContext);
 
   client.streamTask = connectKakaoSse(
     client,
@@ -220,12 +236,11 @@ async function createKakaoClient(agentConfig, { projectRoot, serviceStatus, pers
         client.pairedUserId = data?.kakaoUserId || client.pairedUserId;
         client.pairingCode = '';
         client.pairingExpiresIn = null;
+        clearKakaoPairingRenewal(client);
         updateStatus();
       },
       onPairingExpired: () => {
-        client.pairingCode = '';
-        client.pairingExpiresIn = null;
-        updateStatus();
+        void queueKakaoPairingSessionRefresh(client, agentConfig, renewalContext, 'expired');
       },
       onError: (error) => {
         serviceStatus.lastError = toErrorMessage(error);
@@ -244,6 +259,73 @@ async function createKakaoClient(agentConfig, { projectRoot, serviceStatus, pers
   });
 
   return client;
+}
+
+function stopKakaoClient(client) {
+  clearKakaoPairingRenewal(client);
+  client?.controller?.abort?.();
+}
+
+function clearKakaoPairingRenewal(client) {
+  if (client?.pairingRenewalTimer) {
+    clearTimeout(client.pairingRenewalTimer);
+    client.pairingRenewalTimer = null;
+  }
+}
+
+function scheduleKakaoPairingRenewal(client, agentConfig, context) {
+  clearKakaoPairingRenewal(client);
+  if (
+    client.tokenSource !== 'created-session' ||
+    !client.pairingCode ||
+    client.pairedUserId ||
+    client.controller.signal.aborted
+  ) {
+    return;
+  }
+  const expiresInMs = Number(client.pairingExpiresIn) * 1000;
+  if (!Number.isFinite(expiresInMs) || expiresInMs <= 0) {
+    return;
+  }
+  const delayMs = Math.max(1, Math.ceil(expiresInMs + KAKAO_PAIRING_RENEWAL_GRACE_MS));
+  client.pairingRenewalTimer = setTimeout(() => {
+    void queueKakaoPairingSessionRefresh(client, agentConfig, context, 'expired');
+  }, delayMs);
+  client.pairingRenewalTimer.unref?.();
+}
+
+async function queueKakaoPairingSessionRefresh(client, agentConfig, context, reason) {
+  clearKakaoPairingRenewal(client);
+  if (
+    client.controller.signal.aborted ||
+    client.tokenSource !== 'created-session' ||
+    !client.pairingCode ||
+    client.pairedUserId
+  ) {
+    return;
+  }
+
+  client.pairingCode = '';
+  client.pairingExpiresIn = null;
+  client.connected = false;
+  context.updateStatus();
+
+  try {
+    enqueueKakaoServiceCommand(
+      context.projectRoot,
+      context.serviceAgentName
+        ? { action: 'reload-config', agentName: context.serviceAgentName }
+        : { action: 'reload-config' },
+    );
+    console.error(
+      `Kakao pairing session ${reason || 'expired'} for ${agentConfig.name}; queued a fresh relay session.`,
+    );
+  } catch (error) {
+    context.serviceStatus.lastError = toErrorMessage(error);
+    context.serviceStatus.heartbeatAt = timestamp();
+    context.persistServiceStatus(context.serviceStatus);
+    console.error(`Kakao pairing renewal failed for ${agentConfig.name}: ${toErrorMessage(error)}`);
+  }
 }
 
 async function resolveKakaoRelayToken(agentConfig, { onSessionCreateError = null } = {}) {
@@ -584,7 +666,7 @@ async function reloadKakaoServiceConfig({
   for (const name of targets) {
     const currentClient = clients[name];
     if (currentClient) {
-      currentClient.controller.abort();
+      stopKakaoClient(currentClient);
       await currentClient.streamTask.catch(() => {});
       delete clients[name];
     }
@@ -592,6 +674,7 @@ async function reloadKakaoServiceConfig({
     if (nextAgentConfig) {
       clients[name] = await createKakaoClient(nextAgentConfig, {
         projectRoot,
+        serviceAgentName: agentName,
         serviceStatus,
         persistServiceStatus,
       });

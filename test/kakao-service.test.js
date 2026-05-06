@@ -76,6 +76,29 @@ function waitForProcessExit(child, timeoutMs = 3000) {
   });
 }
 
+function waitForCondition(predicate, describe, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const check = () => {
+      try {
+        const value = predicate();
+        if (value) {
+          resolve(value);
+          return;
+        }
+      } catch {
+        // Keep polling until timeout; files may not exist yet.
+      }
+      if (Date.now() - started > timeoutMs) {
+        reject(new Error(`Timed out waiting for ${describe}.`));
+        return;
+      }
+      setTimeout(check, 50);
+    };
+    check();
+  });
+}
+
 test('kakao default relay URL can be overridden by deployment environment', () => {
   const previous = process.env.OPENCLAW_TALKCHANNEL_RELAY_URL;
   process.env.OPENCLAW_TALKCHANNEL_RELAY_URL = 'https://kakao-relay.example';
@@ -186,6 +209,98 @@ test('kakao serve keeps retrying when pairing session creation is temporarily un
     if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGTERM');
       await waitForProcessExit(child).catch(() => {});
+    }
+    await new Promise((resolve) => relay.close(resolve));
+  }
+});
+
+test('kakao serve refreshes expired pairing sessions with a new code', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  let sessionCreateCount = 0;
+  const eventResponses = new Set();
+
+  const relay = http.createServer((request, response) => {
+    if (request.method === 'POST' && request.url === '/v1/sessions/create') {
+      sessionCreateCount += 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          sessionToken: `session-${sessionCreateCount}`,
+          pairingCode: `PAIR-000${sessionCreateCount}`,
+          expiresIn: 0.05,
+          status: 'pending_pairing',
+        }),
+      );
+      return;
+    }
+    if (request.method === 'GET' && request.url === '/v1/events') {
+      eventResponses.add(response);
+      response.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      });
+      response.write('event: connected\n');
+      response.write('data: {"status":"pending_pairing"}\n\n');
+      request.on('close', () => {
+        eventResponses.delete(response);
+      });
+      return;
+    }
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'not found' }));
+  });
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve));
+  const relayUrl = `http://127.0.0.1:${relay.address().port}/`;
+
+  const config = loadConfig(projectRoot);
+  config.agents.kao = buildAgentDefinition(projectRoot, 'kao', {
+    name: 'kao',
+    agent: 'codex',
+    platform: 'kakao',
+    kakaoRelayUrl: relayUrl,
+  });
+  saveConfig(projectRoot, config);
+
+  const child = spawn(process.execPath, [cliPath, 'kakao', 'serve'], {
+    cwd: projectRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+
+  try {
+    await waitForProcessOutput(
+      child,
+      /pairing=\/pair PAIR-0001/u,
+      () => `${stdout}\n${stderr}`,
+    );
+
+    const statusPath = path.join(projectRoot, '.hkclaw-lite', 'kakao-status.json');
+    const status = await waitForCondition(() => {
+      const data = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+      return data.agents?.kao?.pairingCode === 'PAIR-0002' ? data : null;
+    }, 'renewed Kakao pairing code', 6000);
+
+    assert.equal(status.agents.kao.pairingCode, 'PAIR-0002');
+    assert.equal(sessionCreateCount >= 2, true);
+    assert.match(stderr, /queued a fresh relay session/u);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      await waitForProcessExit(child).catch(() => {});
+    }
+    for (const response of eventResponses) {
+      response.end();
     }
     await new Promise((resolve) => relay.close(resolve));
   }
