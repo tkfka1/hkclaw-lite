@@ -558,6 +558,52 @@ process.exit(1);
   };
 }
 
+function createFakeNpmForBundledCliUpdate() {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-fake-npm-'));
+  const scriptPath = path.join(rootDir, 'fake-npm.mjs');
+  fs.writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const args = process.argv.slice(2);
+const prefixIndex = args.indexOf('--prefix');
+const prefix = prefixIndex >= 0 ? args[prefixIndex + 1] : '';
+if (!prefix) {
+  process.stderr.write('missing --prefix\\n');
+  process.exit(2);
+}
+
+for (const spec of args.filter((arg) => arg.startsWith('@openai/codex@') || arg.startsWith('@google/gemini-cli@') || arg.startsWith('@anthropic-ai/claude-agent-sdk@'))) {
+  const separator = spec.lastIndexOf('@');
+  const packageName = spec.slice(0, separator);
+  const version = spec.slice(separator + 1) === 'latest' ? '9.9.9-admin-test' : spec.slice(separator + 1);
+  const binaryName = packageName.includes('gemini') ? 'gemini' : packageName.includes('claude') ? 'claude' : 'codex';
+  const packageDir = path.join(prefix, 'node_modules', ...packageName.split('/'));
+  fs.mkdirSync(path.join(packageDir, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+    name: packageName,
+    version,
+    type: 'module',
+    bin: {
+      [binaryName]: './bin/cli.js',
+    },
+    exports: {
+      '.': './index.mjs',
+    },
+  }));
+  fs.writeFileSync(path.join(packageDir, 'bin', 'cli.js'), '#!/usr/bin/env node\\n');
+  fs.writeFileSync(path.join(packageDir, 'index.mjs'), 'export function query() {}\\n');
+}
+
+process.stdout.write('admin fake npm complete\\n');
+`,
+    { mode: 0o755 },
+  );
+  return scriptPath;
+}
+
 async function withEnv(entries, callback) {
   const keys = Object.keys(entries);
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
@@ -1645,6 +1691,62 @@ test('admin server reloads the Kakao platform worker when a Kakao connector chan
 
       assert.equal(response.response.status, 200, JSON.stringify(response.payload));
       assert.equal(loadConfig(projectRoot).connectors['kakao-main'].kakaoRelayUrl, 'https://relay.example/new');
+
+      const commands = listKakaoServiceCommands(projectRoot);
+      assert.deepEqual(
+        commands.map((entry) => ({
+          action: entry.action,
+          agentName: entry.agentName || null,
+        })),
+        [
+          {
+            action: 'reload-config',
+            agentName: null,
+          },
+        ],
+      );
+    });
+  });
+});
+
+test('admin server reloads the Kakao platform worker when a Kakao agent creates a derived connection without a channel', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  writeKakaoServiceStatus(projectRoot, {
+    version: 1,
+    projectRoot,
+    agentName: null,
+    pid: process.pid,
+    running: true,
+    desiredRunning: true,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: new Date().toISOString(),
+    agents: {},
+  });
+
+  await withEnv({ HKCLAW_LITE_CHANNEL_AUTOSTART: '1' }, async () => {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      assert.equal(listKakaoServiceCommands(projectRoot).length, 0);
+
+      const response = await requestJson(`${url}/api/agents`, {
+        method: 'POST',
+        body: {
+          definition: {
+            name: 'kao',
+            agent: 'codex',
+            platform: 'kakao',
+            kakaoRelayUrl: 'https://relay.example/',
+          },
+        },
+      });
+
+      assert.equal(response.response.status, 200, JSON.stringify(response.payload));
+      const config = loadConfig(projectRoot);
+      assert.equal(config.agents.kao.platform, 'kakao');
+      assert.equal(config.connectors.kao.type, 'kakao');
+      assert.equal(config.channels.kao, undefined);
 
       const commands = listKakaoServiceCommands(projectRoot);
       assert.deepEqual(
@@ -3220,6 +3322,32 @@ test('admin server reports codex, Claude ACP, Gemini, and local LLM status detai
       });
     },
   );
+});
+
+test('admin server updates project-local bundled CLI overlays', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const fakeNpm = createFakeNpmForBundledCliUpdate();
+
+  await withEnv({ HKCLAW_LITE_NPM_COMMAND: fakeNpm }, async () => {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const update = await requestJson(`${url}/api/bundled-cli-update`, {
+        method: 'POST',
+        body: {
+          agentType: 'codex',
+        },
+      });
+
+      assert.equal(update.response.status, 200, JSON.stringify(update.payload));
+      assert.equal(update.payload.result.packages[0].packageName, '@openai/codex');
+      assert.equal(update.payload.result.packages[0].installedVersion, '9.9.9-admin-test');
+      assert.match(update.payload.result.overlayRoot, /\.hkclaw-lite\/bundled-clis/u);
+      assert.equal(
+        update.payload.statuses.codex.authResult.details.runtimePackageVersion,
+        '9.9.9-admin-test',
+      );
+    });
+  });
 });
 
 test('admin server keeps the Codex device login helper alive until browser auth completes', async () => {

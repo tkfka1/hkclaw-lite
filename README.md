@@ -23,6 +23,14 @@
 - `@anthropic-ai/claude-agent-sdk@0.2.119`
 - `@google/gemini-cli@0.39.1`
 
+웹 어드민의 **AI 관리 → 번들 업데이트** 또는 CLI 명령으로 프로젝트별 최신 번들을 받을 수 있다. 이 업데이트는 설치된 hkclaw-lite 패키지를 직접 고치지 않고 `.hkclaw-lite/bundled-clis` 아래에 overlay로 설치하므로, 컨테이너/Kubernetes의 읽기 전용 앱 이미지에서도 state PVC가 쓰기 가능하면 동작한다.
+
+```bash
+hkclaw-lite bundles status
+hkclaw-lite bundles update all
+hkclaw-lite bundles update codex --version latest
+```
+
 에이전트별 접근 범위는 `read-only`, `workspace-write`, `danger-full-access` 중에서 고를 수 있다.
 Codex는 기존 sandbox/approval 우회 플래그로, Gemini CLI는 approval mode(`plan`/`auto_edit`/`yolo`)로 매핑되고, local LLM에는 런타임 컨텍스트로, command 에이전트에는 `HKCLAW_LITE_AGENT_ACCESS_MODE` 환경 변수로 전달된다. Claude Code는 `bypassPermissions` 권한 모드가 전체 권한에 해당한다.
 
@@ -84,7 +92,7 @@ Homebrew formula는 npm release tarball을 받아 `std_npm_args`로 설치하므
 
 - 웹 어드민은 `5687` 포트에서 뜬다.
 - 에이전트/채널/AI 로그인은 웹에서 관리한다.
-- 채널이 있으면 필요한 Discord/Telegram/KakaoTalk 수신 워커는 자동으로 켜진다.
+- Discord/Telegram은 채널이 있으면 필요한 수신 워커가 자동으로 켜지고, KakaoTalk은 Kakao 연결/플랫폼 에이전트가 있으면 연결 워커가 켜진다.
 - KakaoTalk 연결은 **KakaoTalk 전용 커넥터**로 재사용하고, Discord/Telegram 토큰은 각 에이전트 설정에서 관리한다.
 
 ## 2. Docker
@@ -127,7 +135,7 @@ docker build -t hkclaw-lite:ai-latest \
   .
 ```
 
-컨테이너 시작/배포 시점마다 CLI를 새로 다운로드하는 방식도 기술적으로는 가능하지만, 네트워크 장애와 비재현 배포 위험이 커서 기본값으로 두지 않는다. 운영에서는 CI나 로컬에서 이미지를 다시 빌드해 태그/다이제스트로 배포하는 방식을 권장한다.
+컨테이너 시작/배포 시점마다 CLI를 새로 다운로드하는 방식은 네트워크 장애와 비재현 배포 위험이 커서 기본값으로 두지 않는다. 운영 기준 기본 권장은 CI나 로컬에서 이미지를 다시 빌드해 태그/다이제스트로 배포하는 방식이다. 긴급히 런타임만 올려야 할 때는 웹 어드민의 **AI 관리 → 번들 업데이트** 또는 `hkclaw-lite bundles update all`을 실행하면 state PVC의 `.hkclaw-lite/bundled-clis` overlay가 우선 사용된다.
 
 ## 3. Helm
 
@@ -267,16 +275,18 @@ KakaoTalk 연동은 **Admin 내장 릴레이 + Kakao 커넥터 + 채널 + 에이
    ```
 
 3. 웹 어드민에서 AI 로그인 후 Agent를 만든다.
-4. **채널** 화면에서 KakaoTalk Connector를 만든다.
+   - Agent 플랫폼을 Kakao로 만들면 같은 이름의 KakaoTalk Connector가 자동 생성된다.
+   - 이 경우 채널에서 별도 KakaoTalk 연결을 다시 만들 필요 없이 자동 생성된 연결을 선택하면 된다.
+4. 별도 계정/세션을 분리하고 싶을 때만 **채널** 화면에서 KakaoTalk Connector를 추가로 만든다.
    - 이름: 예 `kakao-main`
    - 릴레이 URL: 예 `https://your-domain.example/`
    - 연결 토큰/세션 토큰: 선택값. 비우면 pairing code를 발급한다.
 5. KakaoTalk Channel을 만든다.
-   - connector: 위에서 만든 `kakao-main`
+   - connector: 위에서 만든 `kakao-main` 또는 Kakao 플랫폼 Agent에서 자동 생성된 연결
    - `Kakao 수신 channelId 필터`: 보통 `*`
    - `Kakao 사용자 ID 필터`: 특정 사용자만 받을 때만 입력
    - owner/reviewer/arbiter agent, workspace, single/tribunal mode 설정
-6. KakaoTalk 연결 영역에서 Kakao 워커를 시작/재시작한다.
+6. KakaoTalk 연결 영역에서 pairing code를 확인한다. 자동 시작이 꺼져 있으면 Kakao 워커를 시작/재시작한다.
 7. pairing code가 보이면 카카오톡에서 입력한다.
 
    ```txt
@@ -322,6 +332,7 @@ KAKAO_TALKCHANNEL_RELAY_URL=https://your-domain.example/
 ### 알아둘 점
 
 - Connector는 KakaoTalk 접속/세션 정보이고, Channel은 라우팅/워크스페이스/역할 설정이다.
+- Kakao 플랫폼 Agent에서 자동 생성된 Connector는 Agent 연결 설정이 원본이다. 채널에서는 이 연결을 재사용만 하면 된다.
 - `kakaoChannelId`의 `*`는 모든 channelId를 받는다는 뜻이다.
 - 같은 Connector 안에서 라우팅 필터가 겹치는 Channel은 저장되지 않는다.
 - 커넥터 하나로 여러 Channel을 처리할 수 있지만, `kakaoChannelId`나 `kakaoUserId`로 메시지가 정확히 하나의 Channel에만 매칭되게 나눠야 한다.

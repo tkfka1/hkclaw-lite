@@ -27,6 +27,12 @@ import {
 } from './ci-watch-store.js';
 import { executeChannelTurn } from './channel-runtime.js';
 import {
+  BUNDLED_CLI_AGENT_TYPES,
+  MANAGED_AGENT_RUNTIMES,
+  normalizeBundledCliAgentTypes,
+  updateBundledClis,
+} from './bundled-cli.js';
+import {
   AGENT_ACCESS_MODE_AGENT_TYPES,
   AGENT_ACCESS_MODE_CHOICES,
   AGENT_TYPE_CHOICES,
@@ -168,6 +174,9 @@ export async function main(argv) {
         return;
       case 'status':
         await handleStatusCommand(projectRoot, tail);
+        return;
+      case 'bundles':
+        await handleBundlesCommand(projectRoot, tail);
         return;
       case 'topology':
         await handleTopologyCommand(projectRoot, tail);
@@ -924,6 +933,34 @@ async function handleStatusCommand(projectRoot, argv) {
   throw new Error(
     'Usage: hkclaw-lite status [agent <name>|channel <name>|dashboard <name>|<name>]',
   );
+}
+
+async function handleBundlesCommand(projectRoot, argv) {
+  const [subcommand = 'status', ...tail] = argv;
+
+  if (subcommand === 'status') {
+    console.log(renderBundledCliStatus(projectRoot));
+    return;
+  }
+
+  if (subcommand === 'update') {
+    const { flags, positionals } = parseArgs(tail);
+    const agentTypes = [
+      ...positionals,
+      ...getFlagValues(flags, 'agent'),
+      ...getFlagValues(flags, 'type'),
+    ];
+    const selectedAgentTypes = normalizeBundledCliAgentTypes(agentTypes.length ? agentTypes : ['all']);
+    const version = getFlagValue(flags, 'version', 'latest');
+    const result = await updateBundledClis(projectRoot, {
+      agentTypes: selectedAgentTypes,
+      version,
+    });
+    console.log(formatBundledCliUpdateResult(result));
+    return;
+  }
+
+  throw new Error('Usage: hkclaw-lite bundles <status|update> [codex|claude-code|gemini-cli|all] [--version latest]');
 }
 
 async function handleAdminCommand({ cwd, rootOverride, argv }) {
@@ -2137,6 +2174,42 @@ function renderAgentStatusReport(projectRoot, config, agents) {
   return lines.join('\n');
 }
 
+function renderBundledCliStatus(projectRoot) {
+  const lines = [
+    `project=${projectRoot}`,
+    `bundles=${BUNDLED_CLI_AGENT_TYPES.length}`,
+  ];
+
+  for (const agentType of BUNDLED_CLI_AGENT_TYPES) {
+    const runtime = inspectAgentRuntime(projectRoot, { agent: agentType });
+    const spec = MANAGED_AGENT_RUNTIMES[agentType];
+    lines.push('');
+    lines.push(agentType);
+    lines.push(`  package=${spec.packageName}`);
+    lines.push(`  ready=${runtime.ready ? 'yes' : 'no'}`);
+    lines.push(`  source=${runtime.source || 'missing'}`);
+    lines.push(`  version=${runtime.packageVersion || '-'}`);
+    lines.push(`  detail=${runtime.detail}`);
+  }
+
+  return lines.join('\n');
+}
+
+function formatBundledCliUpdateResult(result) {
+  const lines = [
+    `updated=${result.packages.length}`,
+    `overlay=${result.overlayRoot}`,
+  ];
+  for (const entry of result.packages) {
+    lines.push(`${entry.agentType}: ${entry.packageName}@${entry.installedVersion}`);
+  }
+  if (result.output) {
+    lines.push('');
+    lines.push(result.output);
+  }
+  return lines.join('\n');
+}
+
 function renderDashboard(projectRoot, config, dashboard) {
   const agentNames = resolveDashboardAgentNames(config, dashboard);
   const agents = agentNames.map((agentName) => getAgent(config, agentName));
@@ -2448,6 +2521,7 @@ Execution model:
   hkclaw-lite / --help      Show help only
   hkclaw-lite admin         Start the web admin server
   hkclaw-lite run ...       Execute one one-shot turn
+  hkclaw-lite bundles update Update project-local bundled AI CLIs
   hkclaw-lite discord serve Start the long-running Discord worker
   hkclaw-lite telegram serve Start the long-running Telegram worker
   hkclaw-lite kakao serve   Start the long-running Kakao TalkChannel worker
@@ -2481,6 +2555,8 @@ Usage:
   hkclaw-lite show dashboard <name>
   hkclaw-lite run <agent> [--workdir DIR] [--message TEXT]
   hkclaw-lite run --channel <name> [--message TEXT]
+  hkclaw-lite bundles status
+  hkclaw-lite bundles update [codex|claude-code|gemini-cli|all] [--version latest]
   hkclaw-lite topology plan --file <file> [--actor <agent>]
   hkclaw-lite topology apply --file <file> [--actor <agent>] [--yes]
   hkclaw-lite topology export
@@ -2513,6 +2589,7 @@ Examples:
   hkclaw-lite add dashboard
   hkclaw-lite run --channel discord-main --message "summarize the repo"
   hkclaw-lite run dev-codex --workdir ./workspaces/dev --message "review the latest diff"
+  hkclaw-lite bundles update all
   hkclaw-lite topology plan --file ./topology.json
   hkclaw-lite topology apply --file ./topology.json --yes
   hkclaw-lite show agent dev-codex

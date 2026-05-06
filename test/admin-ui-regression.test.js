@@ -123,6 +123,11 @@ test('channels page exposes reusable connector management', () => {
   assert.doesNotMatch(appSource, /receiver\/restart/u);
   assert.doesNotMatch(appSource, /buildChannelWorkerContext/u);
   assert.match(appSource, /Kakao 연결 시작/u);
+  assert.match(appSource, /Kakao 플랫폼 에이전트를 만들면 같은 이름의 연결이 자동 생성됩니다/u);
+  assert.match(appSource, /새 KakaoTalk 연결을 중복 생성할 필요는 없습니다/u);
+  assert.match(appSource, /채널은 새 연결을 만드는 곳이 아니라 수신 라우팅을 정하는 곳입니다/u);
+  assert.match(appSource, /getAgentDerivedKakaoConnectorOwner/u);
+  assert.match(appSource, /getDefaultChannelAgentName\('kakao'\)/u);
   assert.doesNotMatch(appSource, /Kakao 워커/u);
   assert.doesNotMatch(appSource, /KakaoTalk 수신 워커는 연결 단위로 관리합니다/u);
   assert.doesNotMatch(appSource, /채널은 라우팅 규칙만 저장합니다/u);
@@ -299,6 +304,14 @@ test('AI auth manager keeps Claude and browser login controls compact', () => {
   assert.match(styles, /\.model-default-card/u);
   assert.match(styles, /\.auth-step\.is-active/u);
   assert.doesNotMatch(styles, /auth-overview-card/u);
+});
+
+test('AI auth manager exposes bundled CLI update controls', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+
+  assert.match(appSource, /api\/bundled-cli-update/u);
+  assert.match(appSource, /번들 업데이트/u);
+  assert.match(appSource, /supportsBundledCliUpdate/u);
 });
 
 test('agent wizard keeps reasoning effort with model selection', () => {

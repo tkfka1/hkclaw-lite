@@ -505,6 +505,11 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'ai-bundle-update') {
+    void updateAiManagerBundle(button.dataset.agentType || '');
+    return;
+  }
+
   if (action === 'ai-save-credentials') {
     void saveAiCredentials();
     return;
@@ -2702,6 +2707,7 @@ function renderConnectorList(connectors = [], kakaoService = state.data?.kakao |
     return `
       <div class="empty-inline empty-inline--action">
         <strong>KakaoTalk 연결이 아직 없습니다.</strong>
+        <p>Kakao 플랫폼 에이전트를 만들면 같은 이름의 연결이 자동 생성됩니다.</p>
       </div>
     `;
   }
@@ -2750,6 +2756,10 @@ function renderKakaoConnectorWorkerPanel(connectors = [], kakaoService = {}) {
 function renderConnectorCard(connector, kakaoService = {}) {
   const tokenMode = connector.kakaoSessionToken || connector.kakaoRelayToken ? '토큰 설정됨' : '페어링 모드';
   const runtime = kakaoService?.agents?.[connector.name] || {};
+  const derivedAgent = getAgentDerivedKakaoConnectorOwner(connector);
+  const sourceLabel = derivedAgent
+    ? `에이전트 "${derivedAgent.name}"에서 자동 생성`
+    : connector.description || '';
   return `
     <article class="card card--stack connector-card">
       <div class="card-main">
@@ -2763,10 +2773,11 @@ function renderConnectorCard(connector, kakaoService = {}) {
               ? `<span class="mini-chip mini-chip--ok">${renderIcon('server', 'ui-icon')}${escapeHtml(`연결됨${runtime.pairedUserId ? ` · ${runtime.pairedUserId}` : ''}`)}</span>`
               : runtime.pairingCode
                 ? `<span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`/pair ${runtime.pairingCode}`)}</span>`
-                : ''
+              : ''
           }
-          ${connector.description ? `<span class="mini-chip">${escapeHtml(connector.description)}</span>` : ''}
+          ${sourceLabel ? `<span class="mini-chip">${escapeHtml(sourceLabel)}</span>` : ''}
         </div>
+        <p class="field-hint">채널에서는 이 연결을 선택만 하면 됩니다. 새 KakaoTalk 연결을 중복 생성할 필요는 없습니다.</p>
         <div class="connector-detail-grid">
           <div>
             <span>릴레이</span>
@@ -2775,8 +2786,12 @@ function renderConnectorCard(connector, kakaoService = {}) {
         </div>
       </div>
       <div class="inline-actions">
-        <button type="button" class="btn-secondary" data-action="edit-connector" data-name="${escapeAttr(connector.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
-        <button type="button" class="btn-danger" data-action="delete-connector" data-name="${escapeAttr(connector.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>
+        ${
+          derivedAgent
+            ? `<button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(derivedAgent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '에이전트 설정')}</button>`
+            : `<button type="button" class="btn-secondary" data-action="edit-connector" data-name="${escapeAttr(connector.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>`
+        }
+        <button type="button" class="btn-danger" data-action="delete-connector" data-name="${escapeAttr(connector.name)}" ${state.busy || derivedAgent ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>
       </div>
     </article>
   `;
@@ -3029,6 +3044,7 @@ function renderAiModal() {
   const statusSupported = isAiStatusSupported(entry.value);
   const credentialEditingSupported = supportsAiCredentialEditing(entry.value);
   const testSupported = isAiTestSupported(entry.value);
+  const bundledCliUpdateSupported = supportsBundledCliUpdate(entry.value);
   const authResult = state.aiManager?.authResult;
   const testResult = state.aiManager?.testResult;
   const usageSummary =
@@ -3103,6 +3119,19 @@ function renderAiModal() {
                     </button>
                   </div>
                   <div class="wizard-auth-actions wizard-auth-actions--secondary">
+                    ${
+                      bundledCliUpdateSupported
+                        ? `<button
+                            type="button"
+                            class="btn-secondary"
+                            data-action="ai-bundle-update"
+                            data-agent-type="${escapeAttr(entry.value)}"
+                            ${state.busy ? 'disabled' : ''}
+                          >
+                            ${renderButtonLabel('refresh', '번들 업데이트')}
+                          </button>`
+                        : ''
+                    }
                     <button type="button" class="btn-secondary" data-action="ai-auth-logout" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '로그아웃')}</button>
                     ${
                       credentialEditingSupported && entry.value !== 'local-llm'
@@ -3160,6 +3189,7 @@ function renderAiModal() {
           }
           ${renderAgentWizardResult(authResult)}
           ${renderAgentWizardResult(testResult)}
+          ${renderBundledCliUpdateResult(state.aiManager?.bundleUpdateResult)}
         </div>
       </div>
     </section>
@@ -3542,6 +3572,7 @@ function renderChannelConnectorField(platform, selectedConnector) {
       <div class="field">
         <label for="channel-connector">KakaoTalk 연결</label>
         <select id="channel-connector" name="connector">${renderConnectorOptions(platform, selectedConnector, true)}</select>
+        <p class="field-hint">에이전트 Kakao 설정에서 자동 생성된 연결도 그대로 재사용합니다. 채널은 새 연결을 만드는 곳이 아니라 수신 라우팅을 정하는 곳입니다.</p>
       </div>
     `;
   }
@@ -4375,6 +4406,29 @@ function renderAgentWizardResult(result) {
   `;
 }
 
+function renderBundledCliUpdateResult(result) {
+  if (!result) {
+    return '';
+  }
+  const packages = Array.isArray(result.packages) ? result.packages : [];
+  const summary = packages.length
+    ? packages
+        .map((entry) => `${entry.packageName}@${entry.installedVersion || entry.requestedVersion || ''}`)
+        .join(', ')
+    : '번들 CLI 업데이트 완료';
+  return `
+    <div class="wizard-result">
+      <strong>${escapeHtml(summary)}</strong>
+      ${result.overlayRoot ? `<div class="field-hint">설치 위치: ${escapeHtml(result.overlayRoot)}</div>` : ''}
+      ${
+        result.output
+          ? `<pre class="result-output">${escapeHtml(String(result.output).trim())}</pre>`
+          : ''
+      }
+    </div>
+  `;
+}
+
 function validateAgentWizardStep() {
   if (!state.agentWizard) {
     return true;
@@ -4881,6 +4935,7 @@ function createAiManager(agentType, options = {}) {
     localLlmConnection: agentType === 'local-llm' ? defaultLocalLlmConnection : '',
     authResult: cached.authResult || null,
     testResult: cached.testResult || null,
+    bundleUpdateResult: cached.bundleUpdateResult || null,
     usageSummary: cached.usageSummary || null,
     modelCatalog: null,
     authConfig: buildAiAuthDraft(agentType),
@@ -4966,6 +5021,41 @@ async function runAiManagerAction(action, options = {}) {
     if (!(action === 'login' && response.result?.details?.url)) {
       state.notice = null;
     }
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function updateAiManagerBundle(agentTypeInput = '') {
+  if (!state.aiManager) {
+    return;
+  }
+  const agentType = optionalDraftText(agentTypeInput) || optionalDraftText(state.aiManager.type);
+  if (!supportsBundledCliUpdate(agentType)) {
+    throw new Error('이 AI 유형은 번들 업데이트를 지원하지 않습니다.');
+  }
+
+  try {
+    const response = await mutateJson('/api/bundled-cli-update', {
+      method: 'POST',
+      body: {
+        agentType,
+        version: 'latest',
+      },
+    });
+
+    if (!state.aiManager || state.aiManager.type !== agentType) {
+      return;
+    }
+    state.aiManager.bundleUpdateResult = response.result || null;
+    state.aiStatuses = mergeAiStatuses(state.aiStatuses, response.statuses || {});
+    const nextStatus = state.aiStatuses[agentType];
+    if (nextStatus?.authResult) {
+      state.aiManager.authResult = nextStatus.authResult;
+    }
+    setNotice('info', `${localizeAgentTypeValue(agentType)} 번들을 업데이트했습니다.`);
     render();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
@@ -5683,7 +5773,7 @@ function createBlankChannel() {
     ownerWorkspace: '',
     reviewerWorkspace: '',
     arbiterWorkspace: '',
-    agent: state.data.agents?.[0]?.name || '',
+    agent: getDefaultChannelAgentName('kakao'),
     reviewer: '',
     arbiter: '',
     reviewRounds: '',
@@ -5830,7 +5920,34 @@ function getConnectorEntries(platform = '') {
 }
 
 function getDefaultConnectorNameForPlatform(platform = '') {
-  return optionalDraftText(platform) === 'kakao' ? getConnectorEntries(platform)[0]?.name || '' : '';
+  if (optionalDraftText(platform) !== 'kakao') {
+    return '';
+  }
+  const entries = getConnectorEntries(platform);
+  const defaultAgentName = getDefaultChannelAgentName(platform);
+  return entries.find((entry) => entry.name === defaultAgentName)?.name || entries[0]?.name || '';
+}
+
+function getDefaultChannelAgentName(platform = '') {
+  const agents = state.data?.agents || [];
+  if (optionalDraftText(platform) === 'kakao') {
+    return agents.find((entry) => (entry.platform || 'discord') === 'kakao')?.name || agents[0]?.name || '';
+  }
+  return agents[0]?.name || '';
+}
+
+function getAgentDerivedKakaoConnectorOwner(connector) {
+  if (!connector || connector.type !== 'kakao') {
+    return null;
+  }
+  if (connector.description !== 'Migrated from agent platform settings') {
+    return null;
+  }
+  return (
+    (state.data?.agents || []).find(
+      (agent) => agent.name === connector.name && (agent.platform || 'discord') === 'kakao',
+    ) || null
+  );
 }
 
 function getChannelTargetType(channel = {}) {
@@ -6069,6 +6186,10 @@ function isAiAuthSupported(agentType) {
 
 function isAiTestSupported(agentType) {
   return ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
+}
+
+function supportsBundledCliUpdate(agentType) {
+  return ['codex', 'claude-code', 'gemini-cli'].includes(agentType);
 }
 
 function defaultModelModeForAgent(agentType) {
@@ -6525,6 +6646,18 @@ function localizeErrorMessage(message) {
   }
   if (text === '이 AI 유형은 상태 확인을 지원하지 않습니다.') {
     return text;
+  }
+  if (text === '이 AI 유형은 번들 업데이트를 지원하지 않습니다.') {
+    return text;
+  }
+  if (text === 'Bundled CLI update is already running.') {
+    return '번들 CLI 업데이트가 이미 진행 중입니다.';
+  }
+  if (/^Unsupported bundled CLI agent type /u.test(text)) {
+    return '지원하지 않는 번들 CLI입니다.';
+  }
+  if (text === 'Bundled CLI version must be an npm dist-tag or exact version.') {
+    return '번들 CLI 버전은 npm dist-tag 또는 정확한 버전이어야 합니다.';
   }
   if (/^codex is unavailable\. Bundled dependency @openai\/codex is required/u.test(text)) {
     return 'codex 번들이 설치되어 있지 않습니다.';

@@ -79,6 +79,11 @@ import {
 } from './kakao-runtime-state.js';
 import { handleKakaoRelayRequest, isKakaoRelayRequest } from './kakao-relay.js';
 import { listAgentModels } from './model-catalog.js';
+import {
+  buildBundledCliOverlayEnv,
+  readBundledCliOverlayStatus,
+  updateBundledClis,
+} from './bundled-cli.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import {
   applyTopology,
@@ -291,6 +296,27 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     writeJson(response, 200, {
       ok: true,
       statuses: await readAiStatuses(projectRoot),
+      bundledCli: readBundledCliOverlayStatus(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/bundled-cli-update') {
+    const payload = await readJsonBody(request);
+    const result = await updateBundledClis(projectRoot, {
+      agentTypes:
+        payload.agentTypes ||
+        payload.agents ||
+        payload.agentType ||
+        payload.agent ||
+        ['all'],
+      version: payload.version || 'latest',
+    });
+    writeJson(response, 200, {
+      ok: true,
+      result,
+      statuses: await readAiStatuses(projectRoot),
+      bundledCli: readBundledCliOverlayStatus(projectRoot),
     });
     return;
   }
@@ -974,7 +1000,7 @@ async function syncRequiredMessagingWorkers(projectRoot, { previousConfig = null
 
   if (shouldStopKakaoPlatformWorker(projectRoot, previousConfig, config)) {
     tasks.push(autoStopManagedServiceProcess(projectRoot, null, 'kakao-platform'));
-  } else if (shouldAutoStartKakaoPlatformService(projectRoot, channels)) {
+  } else if (shouldAutoStartKakaoPlatformService(projectRoot)) {
     tasks.push(autoStartManagedServiceProcess(projectRoot, null, 'kakao-platform'));
   } else if (shouldReloadKakaoPlatformWorker(projectRoot, previousConfig, config)) {
     tasks.push(queueKakaoPlatformWorkerReload(projectRoot));
@@ -1038,10 +1064,7 @@ function shouldReloadKakaoPlatformWorker(projectRoot, previousConfig, config) {
     return false;
   }
 
-  const hasKakaoChannels = Object.values(config.channels || {}).some(
-    (channel) => (channel?.platform || 'discord') === 'kakao',
-  );
-  if (!hasKakaoChannels || listConfiguredKakaoRuntimeTargets(projectRoot).length === 0) {
+  if (listConfiguredKakaoRuntimeTargetsFromConfig(config).length === 0) {
     return false;
   }
 
@@ -1058,17 +1081,12 @@ function shouldStopKakaoPlatformWorker(projectRoot, previousConfig, config) {
     return false;
   }
 
-  const previousHadKakaoChannels = Object.values(previousConfig.channels || {}).some(
-    (channel) => (channel?.platform || 'discord') === 'kakao',
-  );
-  if (!previousHadKakaoChannels) {
+  const previousHadKakaoTargets = listConfiguredKakaoRuntimeTargetsFromConfig(previousConfig).length > 0;
+  if (!previousHadKakaoTargets) {
     return false;
   }
 
-  const hasKakaoChannels = Object.values(config.channels || {}).some(
-    (channel) => (channel?.platform || 'discord') === 'kakao',
-  );
-  return !hasKakaoChannels || listConfiguredKakaoRuntimeTargets(projectRoot).length === 0;
+  return listConfiguredKakaoRuntimeTargetsFromConfig(config).length === 0;
 }
 
 function buildKakaoPlatformWorkerSignature(config) {
@@ -1256,10 +1274,7 @@ function isTelegramAgentServiceActive(projectRoot, agentName) {
   );
 }
 
-function shouldAutoStartKakaoPlatformService(projectRoot, channels) {
-  if (!channels.some((channel) => (channel?.platform || 'discord') === 'kakao')) {
-    return false;
-  }
+function shouldAutoStartKakaoPlatformService(projectRoot) {
   if (listConfiguredKakaoRuntimeTargets(projectRoot).length === 0) {
     return false;
   }
@@ -2472,16 +2487,17 @@ function listConfiguredTelegramAgents(projectRoot) {
     .map(([agentName]) => agentName);
 }
 
-function listConfiguredKakaoAgents(projectRoot) {
-  const config = loadConfig(projectRoot);
-  return Object.entries(config.agents || {})
-    .filter(([, agent]) => (agent?.platform || 'discord') === 'kakao')
-    .map(([agentName]) => agentName);
-}
-
 function listConfiguredKakaoRuntimeTargets(projectRoot) {
   const config = loadConfig(projectRoot);
-  const names = new Set(listConfiguredKakaoAgents(projectRoot));
+  return listConfiguredKakaoRuntimeTargetsFromConfig(config);
+}
+
+function listConfiguredKakaoRuntimeTargetsFromConfig(config) {
+  const names = new Set(
+    Object.entries(config.agents || {})
+      .filter(([, agent]) => (agent?.platform || 'discord') === 'kakao')
+      .map(([agentName]) => agentName),
+  );
   for (const [connectorName, connector] of Object.entries(config.connectors || {})) {
     if (connector?.type === 'kakao') {
       names.add(connectorName);
@@ -3929,8 +3945,7 @@ function parseCodexLoggedInStatus(output) {
 }
 
 function buildManagedAgentEnv(projectRoot, agentType = '') {
-  void projectRoot;
-  const env = { ...process.env };
+  const env = buildBundledCliOverlayEnv(projectRoot);
   if (agentType === 'claude-code') {
     return stripClaudeAcpEnv(env);
   }

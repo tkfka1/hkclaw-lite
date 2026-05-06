@@ -7,6 +7,10 @@ import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 import {
+  buildBundledCliOverlayEnv,
+  MANAGED_AGENT_RUNTIMES,
+} from './bundled-cli.js';
+import {
   DEFAULT_CLAUDE_PERMISSION_MODE,
   DEFAULT_CODEX_SANDBOX,
   DEFAULT_LOCAL_LLM_BASE_URL,
@@ -25,27 +29,6 @@ import {
 } from './utils.js';
 
 const moduleRequire = createRequire(import.meta.url);
-
-const MANAGED_AGENT_RUNTIMES = {
-  codex: {
-    kind: 'cli',
-    binaryName: 'codex',
-    packageName: '@openai/codex',
-    packageJsonEnv: 'HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON',
-  },
-  'claude-code': {
-    kind: 'sdk',
-    binaryName: 'claude',
-    packageName: '@anthropic-ai/claude-agent-sdk',
-    packageJsonEnv: 'HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON',
-  },
-  'gemini-cli': {
-    kind: 'cli',
-    binaryName: 'gemini',
-    packageName: '@google/gemini-cli',
-    packageJsonEnv: 'HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON',
-  },
-};
 
 const CODEX_PLATFORM_BUNDLES = {
   'linux:x64': {
@@ -181,11 +164,11 @@ export function inspectAgentRuntime(projectRoot, agent, workdirOverride = null) 
   const workdir = resolveExecutionWorkdir(projectRoot, agent, workdirOverride);
   switch (agent.agent) {
     case 'codex':
-      return buildManagedAgentRuntimeStatus('codex', workdir);
+      return buildManagedAgentRuntimeStatus('codex', workdir, projectRoot);
     case 'claude-code':
-      return buildManagedAgentRuntimeStatus('claude-code', workdir);
+      return buildManagedAgentRuntimeStatus('claude-code', workdir, projectRoot);
     case 'gemini-cli':
-      return buildManagedAgentRuntimeStatus('gemini-cli', workdir);
+      return buildManagedAgentRuntimeStatus('gemini-cli', workdir, projectRoot);
     case 'local-llm':
       {
         const config = loadConfig(projectRoot);
@@ -244,7 +227,8 @@ async function runCodex({
   rawPrompt,
   workdir,
 }) {
-  const cli = requireManagedAgentCli('codex');
+  const runtimeEnv = buildBundledCliOverlayEnv(projectRoot);
+  const cli = requireManagedAgentCli('codex', runtimeEnv);
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-codex-'));
   const lastMessageFile = path.join(tempDir, 'last-message.txt');
@@ -399,7 +383,8 @@ async function runGeminiCli({
   rawPrompt,
   workdir,
 }) {
-  const cli = requireManagedAgentCli('gemini-cli');
+  const runtimeEnv = buildBundledCliOverlayEnv(projectRoot);
+  const cli = requireManagedAgentCli('gemini-cli', runtimeEnv);
   ensureGeminiCliRuntimeFiles(cli);
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const args = [...cli.argsPrefix, '-p', prompt, '--output-format', 'json'];
@@ -615,7 +600,7 @@ function buildChildEnv({
     service.permissionMode === 'bypassPermissions' ||
     Boolean(service.dangerous);
   return {
-    ...process.env,
+    ...buildBundledCliOverlayEnv(projectRoot),
     HKCLAW_LITE_PROJECT_ROOT: projectRoot,
     HKCLAW_LITE_AGENT_NAME: service.name,
     HKCLAW_LITE_SERVICE_NAME: service.name,
@@ -1336,8 +1321,9 @@ function resolveExplicitClaudeCli(env = process.env) {
   };
 }
 
-function buildManagedAgentRuntimeStatus(agentType, workdir) {
-  const runtime = resolveManagedAgentRuntime(agentType);
+function buildManagedAgentRuntimeStatus(agentType, workdir, projectRoot) {
+  const env = projectRoot ? buildBundledCliOverlayEnv(projectRoot) : process.env;
+  const runtime = resolveManagedAgentRuntime(agentType, env);
   const spec = MANAGED_AGENT_RUNTIMES[agentType];
   return {
     ready: Boolean(runtime),
