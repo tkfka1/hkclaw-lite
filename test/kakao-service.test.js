@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -14,7 +15,7 @@ import {
   resolveKakaoChannelForMessage,
   stripMarkdown,
 } from '../src/kakao-service.js';
-import { initProject } from '../src/store.js';
+import { buildAgentDefinition, initProject, loadConfig, saveConfig } from '../src/store.js';
 
 const repoRoot = process.cwd();
 const cliPath = path.join(repoRoot, 'bin', 'hkclaw-lite.js');
@@ -128,6 +129,65 @@ test('kakao serve stays alive when no Kakao agents are configured yet', async ()
       child.kill('SIGKILL');
       await waitForProcessExit(child).catch(() => {});
     }
+  }
+});
+
+test('kakao serve keeps retrying when pairing session creation is temporarily unavailable', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+
+  const relay = http.createServer((request, response) => {
+    if (request.method === 'POST' && request.url === '/v1/sessions/create') {
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'relay warming up' }));
+      return;
+    }
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'not found' }));
+  });
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve));
+  const relayUrl = `http://127.0.0.1:${relay.address().port}/`;
+
+  const config = loadConfig(projectRoot);
+  config.agents.kao = buildAgentDefinition(projectRoot, 'kao', {
+    name: 'kao',
+    agent: 'codex',
+    platform: 'kakao',
+    kakaoRelayUrl: relayUrl,
+  });
+  saveConfig(projectRoot, config);
+
+  const child = spawn(process.execPath, [cliPath, 'kakao', 'serve'], {
+    cwd: projectRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+
+  try {
+    await waitForProcessOutput(
+      child,
+      /Kakao relay session create failed.*retrying/u,
+      () => `${stdout}\n${stderr}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    assert.equal(child.exitCode, null, `stdout:\n${stdout}\nstderr:\n${stderr}`);
+    assert.equal(child.signalCode, null, `stdout:\n${stdout}\nstderr:\n${stderr}`);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      await waitForProcessExit(child).catch(() => {});
+    }
+    await new Promise((resolve) => relay.close(resolve));
   }
 });
 

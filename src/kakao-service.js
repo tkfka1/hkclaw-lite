@@ -160,7 +160,16 @@ async function createKakaoClients(agentConfigs, context) {
 }
 
 async function createKakaoClient(agentConfig, { projectRoot, serviceStatus, persistServiceStatus }) {
-  const tokenInfo = await resolveKakaoRelayToken(agentConfig);
+  const tokenInfo = await resolveKakaoRelayToken(agentConfig, {
+    onSessionCreateError: (error, { attempt, delayMs }) => {
+      serviceStatus.lastError = toErrorMessage(error);
+      serviceStatus.heartbeatAt = timestamp();
+      persistServiceStatus(serviceStatus);
+      console.error(
+        `Kakao relay session create failed for ${agentConfig.name}; retrying in ${delayMs}ms (attempt ${attempt}): ${toErrorMessage(error)}`,
+      );
+    },
+  });
   const controller = new AbortController();
   const client = {
     name: agentConfig.name,
@@ -237,7 +246,7 @@ async function createKakaoClient(agentConfig, { projectRoot, serviceStatus, pers
   return client;
 }
 
-async function resolveKakaoRelayToken(agentConfig) {
+async function resolveKakaoRelayToken(agentConfig, { onSessionCreateError = null } = {}) {
   const relayUrl = normalizeRelayUrl(agentConfig.relayUrl || getDefaultKakaoRelayUrl());
   if (agentConfig.sessionToken) {
     return { relayUrl, token: agentConfig.sessionToken, source: 'session' };
@@ -250,7 +259,7 @@ async function resolveKakaoRelayToken(agentConfig) {
     return { relayUrl, token: envToken, source: 'env' };
   }
 
-  const session = await createKakaoRelaySession(relayUrl);
+  const session = await createKakaoRelaySessionWithRetry(relayUrl, { onError: onSessionCreateError });
   return {
     relayUrl,
     token: session.sessionToken,
@@ -258,6 +267,23 @@ async function resolveKakaoRelayToken(agentConfig) {
     pairingCode: session.pairingCode,
     pairingExpiresIn: session.expiresIn,
   };
+}
+
+async function createKakaoRelaySessionWithRetry(relayUrl, { onError = null } = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await createKakaoRelaySession(relayUrl);
+    } catch (error) {
+      attempt += 1;
+      const delayMs = calculateKakaoReconnectDelay(attempt);
+      onError?.(error instanceof Error ? error : new Error(String(error)), {
+        attempt,
+        delayMs,
+      });
+      await sleep(delayMs);
+    }
+  }
 }
 
 export async function createKakaoRelaySession(relayUrl = getDefaultKakaoRelayUrl()) {
