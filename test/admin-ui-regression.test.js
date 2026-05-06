@@ -130,6 +130,8 @@ test('channels page exposes relay server and routing channels without a Kakao se
   assert.match(appSource, /renderKakaoChannelStatusTags/u);
   assert.match(appSource, /KakaoTalk 채널/u);
   assert.match(appSource, /pairingCode/u);
+  assert.match(appSource, /릴레이 연결됨/u);
+  assert.match(appSource, /!runtime\.pairingCode && \(service\.running \|\| service\.starting\)/u);
   assert.match(appSource, /릴레이 서버는 하나만 배포됩니다/u);
   assert.match(appSource, /renderKakaoRelayServerPanel/u);
   assert.doesNotMatch(appSource, /renderKakaoSessionCard/u);

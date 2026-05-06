@@ -2817,15 +2817,18 @@ function renderKakaoChannelStatusTags(channel) {
   const tags = [
     `<span class="mini-chip mini-chip--ok">${renderIcon('channels', 'ui-icon')}KakaoTalk 채널</span>`,
   ];
-  if (runtime.connected) {
-    tags.push(
-      `<span class="mini-chip mini-chip--ok">${renderIcon('server', 'ui-icon')}${escapeHtml(`연결됨${runtime.pairedUserId ? ` · ${runtime.pairedUserId}` : ''}`)}</span>`,
-    );
-  } else if (runtime.pairingCode) {
+  if (runtime.pairingCode) {
     tags.push(
       `<span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`/pair ${runtime.pairingCode}`)}</span>`,
     );
-  } else if (service.running || service.starting) {
+  }
+  if (runtime.pairedUserId) {
+    tags.push(
+      `<span class="mini-chip mini-chip--ok">${renderIcon('server', 'ui-icon')}${escapeHtml(`연결됨 · ${runtime.pairedUserId}`)}</span>`,
+    );
+  } else if (runtime.connected) {
+    tags.push(`<span class="mini-chip mini-chip--ok">${renderIcon('server', 'ui-icon')}릴레이 연결됨</span>`);
+  } else if (!runtime.pairingCode && (service.running || service.starting)) {
     tags.push(`<span class="mini-chip">${renderIcon('server', 'ui-icon')}페어링 대기</span>`);
   } else {
     tags.push(`<span class="mini-chip">${renderIcon('server', 'ui-icon')}릴레이 대기</span>`);
