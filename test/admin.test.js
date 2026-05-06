@@ -2911,7 +2911,7 @@ test('admin server exposes embedded Kakao relay session, webhook, SSE, and reply
   });
 });
 
-test('embedded Kakao relay accepts code-only pairing messages and pair aliases', async () => {
+test('embedded Kakao relay requires the explicit /pair pairing command', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
 
@@ -2938,13 +2938,13 @@ test('embedded Kakao relay accepts code-only pairing messages and pair aliases',
       },
     });
     assert.equal(codeOnlyPair.response.status, 200, JSON.stringify(codeOnlyPair.payload));
-    assert.match(codeOnlyPair.payload.template.outputs[0].simpleText.text, /연결되었습니다/u);
+    assert.match(codeOnlyPair.payload.template.outputs[0].simpleText.text, /\/pair <코드>/u);
 
     const codeOnlyStatus = await requestJson(
       `${url}/v1/sessions/${encodeURIComponent(codeOnlySession.payload.sessionToken)}/status`,
     );
-    assert.equal(codeOnlyStatus.payload.status, 'paired');
-    assert.equal(codeOnlyStatus.payload.kakaoUserId, 'plusfriend-code-only-user');
+    assert.equal(codeOnlyStatus.payload.status, 'pending_pairing');
+    assert.equal(codeOnlyStatus.payload.kakaoUserId, null);
 
     const aliasSession = await requestJson(`${url}/v1/sessions/create`, {
       method: 'POST',
@@ -2968,7 +2968,31 @@ test('embedded Kakao relay accepts code-only pairing messages and pair aliases',
       },
     });
     assert.equal(aliasPair.response.status, 200, JSON.stringify(aliasPair.payload));
-    assert.match(aliasPair.payload.template.outputs[0].simpleText.text, /연결되었습니다/u);
+    assert.match(aliasPair.payload.template.outputs[0].simpleText.text, /\/pair <코드>/u);
+
+    const aliasStatus = await requestJson(
+      `${url}/v1/sessions/${encodeURIComponent(aliasSession.payload.sessionToken)}/status`,
+    );
+    assert.equal(aliasStatus.payload.status, 'pending_pairing');
+    assert.equal(aliasStatus.payload.kakaoUserId, null);
+
+    const explicitPair = await requestJson(`${url}/kakao-talkchannel/webhook`, {
+      method: 'POST',
+      body: {
+        bot: { id: 'talk-channel' },
+        userRequest: {
+          utterance: `/pair ${aliasSession.payload.pairingCode.toLowerCase()}`,
+          user: {
+            id: 'kakao-pair-alias-user',
+            properties: {
+              plusfriendUserKey: 'plusfriend-pair-alias-user',
+            },
+          },
+        },
+      },
+    });
+    assert.equal(explicitPair.response.status, 200, JSON.stringify(explicitPair.payload));
+    assert.match(explicitPair.payload.template.outputs[0].simpleText.text, /연결되었습니다/u);
   });
 });
 

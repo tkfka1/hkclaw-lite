@@ -402,12 +402,11 @@ function sendSse(response, event, data) {
 
 function parseKakaoCommand(text) {
   const value = String(text || '').trim();
-  const pairingCodeMatch = /(?:^|\b)([A-Z0-9]{4}-[A-Z0-9]{4})(?:\b|$)/iu.exec(value);
-  const pairingPrefix = /^(?:\/?pair|페어|연결|코드)\b/iu.test(value);
-  if (pairingCodeMatch && (pairingPrefix || value.toUpperCase() === pairingCodeMatch[1].toUpperCase())) {
+  const pairingCommandMatch = /^\/pair\s+([A-Z0-9]{4}-[A-Z0-9]{4})$/iu.exec(value);
+  if (pairingCommandMatch) {
     return {
       type: 'pair',
-      code: pairingCodeMatch[1].toUpperCase(),
+      code: pairingCommandMatch[1].toUpperCase(),
     };
   }
   if (value === '/unpair') {

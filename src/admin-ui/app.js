@@ -2762,7 +2762,7 @@ function renderKakaoRelayServerPanel(data = state.data || {}) {
         <span class="mini-chip">${renderIcon('link', 'ui-icon')}Kakao OpenBuilder Skill URL: ${escapeHtml(skillUrl)}</span>
         <span class="mini-chip ${escapeAttr(worker.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(worker.label)}</span>
         <p class="field-hint">릴레이 서버 값은 hkclaw-lite 워커가 붙는 base URL입니다. KakaoBiz/OpenBuilder의 Skill URL에는 반드시 ${escapeHtml(skillUrl)} 처럼 /kakao-talkchannel/webhook 전체 경로를 넣으세요.</p>
-        <p class="field-hint">KakaoTalk 채널 카드에서 pairing code와 연결 상태를 확인하세요.</p>
+        <p class="field-hint">KakaoTalk 채널 카드에서 <code>/pair XXXX-XXXX</code> 전체 명령어와 연결 상태를 확인하세요. 코드만 보내면 연결되지 않습니다.</p>
         ${worker.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(localizeWorkerError(worker.lastError))}</p>` : ''}
       </div>
       <div class="inline-actions">

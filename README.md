@@ -296,6 +296,7 @@ KakaoTalk 연동의 운영 모델은 **Admin 내장 릴레이 서버 1개 + Kaka
    /pair <code>
    ```
 
+   `/pair`를 포함한 전체 명령어를 보내야 한다. 코드만 보내거나 `pair <code>`처럼 슬래시를 빼면 연결되지 않는다.
    pairing code가 만료되면 워커가 새 code를 다시 만들고 채널 카드가 갱신된다.
 
 7. 이후 카카오톡 메시지는 Channel 규칙에 따라 Agent로 전달되고, 응답은 Kakao SkillResponse로 돌아간다.
