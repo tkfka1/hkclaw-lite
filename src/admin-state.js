@@ -60,6 +60,7 @@ import {
 import { assert } from './utils.js';
 
 const RUNTIME_SESSION_RESET_ROLES = new Set(['owner', 'reviewer', 'arbiter']);
+const CHANNEL_MANAGED_KAKAO_CONNECTOR_DESCRIPTION = 'Managed by channel routing';
 
 export async function buildAdminSnapshot(projectRoot) {
   const config = loadConfig(projectRoot);
@@ -378,6 +379,13 @@ export async function upsertChannel(projectRoot, currentName, input) {
   const nextName = String(input?.name || '').trim();
 
   assert(nextName, 'Channel name is required.');
+  const nextInput = prepareChannelInputWithManagedKakaoConnector(
+    config,
+    currentName,
+    nextName,
+    input,
+    existing,
+  );
 
   if (currentName) {
     if (nextName !== currentName) {
@@ -392,7 +400,7 @@ export async function upsertChannel(projectRoot, currentName, input) {
     projectRoot,
     config,
     nextName,
-    input,
+    nextInput,
     config.channels[nextName] || existing || {},
   );
   saveConfig(projectRoot, config);
@@ -401,8 +409,9 @@ export async function upsertChannel(projectRoot, currentName, input) {
 
 export async function deleteChannelByName(projectRoot, name) {
   const config = loadConfig(projectRoot);
-  getChannel(config, name);
+  const channel = getChannel(config, name);
   removeChannel(config, name);
+  removeChannelManagedKakaoConnectorIfUnused(config, channel);
   saveConfig(projectRoot, config);
   await clearRuntimeRoleSessions(projectRoot, { channelName: name });
   return await buildAdminSnapshot(projectRoot);
@@ -674,6 +683,116 @@ function renameConnectorReferences(config, currentName, nextName) {
       channel.connector = nextName;
     }
   }
+}
+
+function prepareChannelInputWithManagedKakaoConnector(config, currentName, nextName, input, existing) {
+  const nextInput = { ...(input || {}) };
+  const platform = String(nextInput.platform ?? existing?.platform ?? '').trim() || 'discord';
+  if (platform !== 'kakao') {
+    removeChannelManagedKakaoConnectorIfUnused(config, existing);
+    return nextInput;
+  }
+
+  const explicitConnector = String(
+    nextInput.connector ?? nextInput.connectorName ?? nextInput['connector-name'] ?? '',
+  ).trim();
+  const existingConnectorName = String(existing?.connector || '').trim();
+  const existingConnector = existingConnectorName ? config.connectors?.[existingConnectorName] : null;
+  const existingConnectorIsManaged = isChannelManagedKakaoConnector(
+    existingConnectorName,
+    existingConnector,
+    currentName,
+  );
+  if (
+    explicitConnector &&
+    !(existingConnectorIsManaged && explicitConnector === existingConnectorName)
+  ) {
+    if (explicitConnector !== existingConnectorName) {
+      removeChannelManagedKakaoConnectorIfUnused(config, existing);
+    }
+    return nextInput;
+  }
+
+  let connectorName =
+    existingConnectorName && !existingConnectorIsManaged
+      ? existingConnectorName
+      : nextName;
+
+  if (
+    existingConnectorName &&
+    existingConnectorName !== connectorName &&
+    existingConnectorIsManaged
+  ) {
+    if (config.connectors?.[connectorName] && connectorName !== existingConnectorName) {
+      connectorName = createAvailableManagedConnectorName(config, nextName);
+    }
+    config.connectors = config.connectors || {};
+    config.connectors[connectorName] = buildConnectorDefinition(
+      connectorName,
+      {
+        type: 'kakao',
+        description: CHANNEL_MANAGED_KAKAO_CONNECTOR_DESCRIPTION,
+      },
+      existingConnector || {},
+    );
+    removeChannelManagedKakaoConnectorIfUnused(config, existing);
+  } else {
+    const conflictingConnector = config.connectors?.[connectorName];
+    if (
+      conflictingConnector &&
+      !isChannelManagedKakaoConnector(connectorName, conflictingConnector, nextName)
+    ) {
+      connectorName = createAvailableManagedConnectorName(config, nextName);
+    }
+    config.connectors = config.connectors || {};
+    config.connectors[connectorName] = buildConnectorDefinition(
+      connectorName,
+      {
+        type: 'kakao',
+        description: CHANNEL_MANAGED_KAKAO_CONNECTOR_DESCRIPTION,
+      },
+      config.connectors[connectorName] || {},
+    );
+  }
+
+  nextInput.connector = connectorName;
+  return nextInput;
+}
+
+function createAvailableManagedConnectorName(config, baseName) {
+  const base = `${baseName}-kakao`;
+  let candidate = base;
+  let index = 2;
+  while (config.connectors?.[candidate]) {
+    candidate = `${base}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function removeChannelManagedKakaoConnectorIfUnused(config, channel) {
+  const connectorName = String(channel?.connector || '').trim();
+  if (!connectorName) {
+    return;
+  }
+  const connector = config.connectors?.[connectorName];
+  if (!isChannelManagedKakaoConnector(connectorName, connector, channel?.name)) {
+    return;
+  }
+  const channelName = String(channel?.name || '').trim();
+  const stillUsed = Object.entries(config.channels || {}).some(
+    ([entryName, entry]) => entryName !== channelName && entry.connector === connectorName,
+  );
+  if (!stillUsed) {
+    removeConnector(config, connectorName);
+  }
+}
+
+function isChannelManagedKakaoConnector(_name, connector, _channelName = '') {
+  return Boolean(
+    connector?.type === 'kakao' &&
+      connector.description === CHANNEL_MANAGED_KAKAO_CONNECTOR_DESCRIPTION,
+  );
 }
 
 function isDerivedLegacyConnector(config, name, connector) {

@@ -110,14 +110,15 @@ test('agent more drawers stay open across unavoidable re-renders', () => {
   assert.match(appSource, /drawerId:\s*`agent:\$\{agent\.name\}`/u);
 });
 
-test('channels page distinguishes relay server, Kakao sessions, and routing channels', () => {
+test('channels page exposes relay server and routing channels without a Kakao session surface', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
 
-  assert.match(viewsSource, /renderKakaoSessionList/u);
+  assert.match(viewsSource, /renderKakaoRelayServerPanel/u);
   assert.match(viewsSource, /<h2>채널<\/h2>/u);
   assert.match(viewsSource, /<h2>KakaoTalk 릴레이 서버<\/h2>/u);
-  assert.match(viewsSource, /Kakao 세션 추가/u);
+  assert.doesNotMatch(viewsSource, /Kakao 세션 추가/u);
+  assert.doesNotMatch(viewsSource, /open-connector-modal/u);
   assert.doesNotMatch(appSource, /start-channel-receiver/u);
   assert.doesNotMatch(appSource, /restart-channel-receiver/u);
   assert.doesNotMatch(appSource, /receiver\/start/u);
@@ -125,12 +126,14 @@ test('channels page distinguishes relay server, Kakao sessions, and routing chan
   assert.doesNotMatch(appSource, /buildChannelWorkerContext/u);
   assert.match(appSource, /릴레이 수신 워커 시작/u);
   assert.match(appSource, /릴레이 서버는 hkclaw-lite Admin에 내장되어 하나만 배포됩니다/u);
-  assert.match(appSource, /Kakao 플랫폼 에이전트를 만들면 같은 이름의 세션이 자동 생성됩니다/u);
-  assert.match(appSource, /릴레이 서버를 새로 만들 필요 없습니다/u);
-  assert.match(appSource, /채널은 릴레이 서버나 세션을 만드는 곳이 아니라 수신 라우팅을 정하는 곳입니다/u);
+  assert.match(appSource, /KakaoTalk 채널 카드에서 pairing code와 연결 상태를 확인하세요/u);
+  assert.match(appSource, /renderKakaoChannelStatusTags/u);
+  assert.match(appSource, /KakaoTalk 채널/u);
+  assert.match(appSource, /pairingCode/u);
+  assert.match(appSource, /릴레이 서버는 하나만 배포됩니다/u);
   assert.match(appSource, /renderKakaoRelayServerPanel/u);
-  assert.match(appSource, /renderKakaoSessionCard/u);
-  assert.match(appSource, /getAgentDerivedKakaoConnectorOwner/u);
+  assert.doesNotMatch(appSource, /renderKakaoSessionCard/u);
+  assert.doesNotMatch(appSource, /renderKakaoSessionList/u);
   assert.match(appSource, /getDefaultChannelAgentName\('kakao'\)/u);
   assert.doesNotMatch(appSource, /Kakao 워커/u);
   assert.doesNotMatch(appSource, /KakaoTalk 수신 워커는 연결 단위로 관리합니다/u);
@@ -141,7 +144,6 @@ test('channels page distinguishes relay server, Kakao sessions, and routing chan
   assert.doesNotMatch(viewsSource, /<h2>메시지 수신<\/h2>/u);
   assert.doesNotMatch(viewsSource, />채널 워커</u);
   assert.doesNotMatch(viewsSource, /가동 중/u);
-  assert.match(appSource, /data-form="connector"/u);
   assert.doesNotMatch(appSource, /connector-brief/u);
   assert.doesNotMatch(appSource, /커넥터는 KakaoTalk 전용입니다/u);
   assert.doesNotMatch(appSource, /locked-platform-card/u);
@@ -157,7 +159,6 @@ test('channels page distinguishes relay server, Kakao sessions, and routing chan
   assert.match(appSource, /refresh-telegram-recent-chats/u);
   assert.doesNotMatch(appSource, /connector-agent-note/u);
   assert.doesNotMatch(appSource, /사용자가 봇에게 한 번 말을 걸면/u);
-  assert.match(appSource, /open-connector-modal/u);
   assert.match(appSource, /\/api\/connectors/u);
   assert.match(appSource, /findKakaoChannelRouteConflict/u);
   assert.doesNotMatch(appSource, /KakaoTalk 연결이 아직 없습니다/u);
@@ -196,9 +197,9 @@ test('agent cards distinguish connector-managed channels from legacy agent token
   assert.match(appSource, /connectorOnly/u);
   assert.match(appSource, /agentCredentialConfiguredByPlatform/u);
   assert.match(appSource, /ownsConnectorOnlyRoute && agentPlatform === 'kakao'/u);
-  assert.match(appSource, /Kakao 세션 사용/u);
-  assert.match(appSource, /Kakao 세션에서 수신/u);
-  assert.match(appSource, /Kakao 세션에서 관리/u);
+  assert.match(appSource, /Kakao 채널 사용/u);
+  assert.match(appSource, /Kakao 채널에서 수신/u);
+  assert.match(appSource, /Kakao 채널에서 관리/u);
   assert.match(appSource, /kakaoPlatformManaged/u);
   assert.match(appSource, /renderKakaoPlatformAgentPrimaryAction/u);
   assert.match(appSource, /릴레이 수신 워커 실행 중/u);

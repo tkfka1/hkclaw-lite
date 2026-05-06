@@ -1231,6 +1231,117 @@ test('admin server saves config changes and can run a mapped channel', async () 
   assert.equal(config.dashboards.ops, undefined);
 });
 
+test('admin server hides Kakao pairing state as a channel-managed connector', async () => {
+  const projectRoot = createProject();
+  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
+  initProject(projectRoot);
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const agentResponse = await requestJson(`${url}/api/agents`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'worker',
+          agent: 'command',
+          command: `node ${fixturePath}`,
+        },
+      },
+    });
+    assert.equal(agentResponse.response.status, 200, JSON.stringify(agentResponse.payload));
+
+    const channelResponse = await requestJson(`${url}/api/channels`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'kakao-owned',
+          platform: 'kakao',
+          kakaoChannelId: 'managed',
+          workspace: 'workspace',
+          agent: 'worker',
+        },
+      },
+    });
+    assert.equal(channelResponse.response.status, 200, JSON.stringify(channelResponse.payload));
+
+    let config = loadConfig(projectRoot);
+    assert.equal(config.channels['kakao-owned'].connector, 'kakao-owned');
+    assert.equal(config.connectors['kakao-owned'].type, 'kakao');
+    assert.equal(config.connectors['kakao-owned'].description, 'Managed by channel routing');
+
+    const renameKakaoChannel = await requestJson(`${url}/api/channels`, {
+      method: 'POST',
+      body: {
+        currentName: 'kakao-owned',
+        definition: {
+          name: 'kakao-renamed',
+          platform: 'kakao',
+          connector: 'kakao-owned',
+          kakaoChannelId: 'managed',
+          workspace: 'workspace',
+          agent: 'worker',
+        },
+      },
+    });
+    assert.equal(renameKakaoChannel.response.status, 200, JSON.stringify(renameKakaoChannel.payload));
+
+    config = loadConfig(projectRoot);
+    assert.equal(config.channels['kakao-renamed'].connector, 'kakao-renamed');
+    assert.equal(config.connectors['kakao-owned'], undefined);
+    assert.equal(config.connectors['kakao-renamed'].description, 'Managed by channel routing');
+
+    const convertToDiscord = await requestJson(`${url}/api/channels`, {
+      method: 'POST',
+      body: {
+        currentName: 'kakao-renamed',
+        definition: {
+          name: 'kakao-renamed',
+          platform: 'discord',
+          discordChannelId: '123456789012345678',
+          workspace: 'workspace',
+          agent: 'worker',
+        },
+      },
+    });
+    assert.equal(convertToDiscord.response.status, 200, JSON.stringify(convertToDiscord.payload));
+
+    config = loadConfig(projectRoot);
+    assert.equal(config.channels['kakao-renamed'].platform, 'discord');
+    assert.equal(config.channels['kakao-renamed'].connector, undefined);
+    assert.equal(config.connectors['kakao-renamed'], undefined);
+
+    const convertToKakao = await requestJson(`${url}/api/channels`, {
+      method: 'POST',
+      body: {
+        currentName: 'kakao-renamed',
+        definition: {
+          name: 'kakao-owned-renamed',
+          platform: 'kakao',
+          kakaoChannelId: 'managed',
+          workspace: 'workspace',
+          agent: 'worker',
+        },
+      },
+    });
+    assert.equal(convertToKakao.response.status, 200, JSON.stringify(convertToKakao.payload));
+
+    config = loadConfig(projectRoot);
+    assert.equal(config.channels['kakao-owned-renamed'].connector, 'kakao-owned-renamed');
+    assert.equal(config.connectors['kakao-owned-renamed'].description, 'Managed by channel routing');
+
+    const deleteKakaoChannel = await requestJson(
+      `${url}/api/channels/${encodeURIComponent('kakao-owned-renamed')}`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(deleteKakaoChannel.response.status, 200, JSON.stringify(deleteKakaoChannel.payload));
+  });
+
+  const config = loadConfig(projectRoot);
+  assert.equal(config.channels['kakao-owned-renamed'], undefined);
+  assert.equal(config.connectors['kakao-owned-renamed'], undefined);
+});
+
 test('admin server plans and applies topology changes with redacted results', async () => {
   const projectRoot = createProject();
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });

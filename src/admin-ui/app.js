@@ -534,7 +534,7 @@ function handleClick(event) {
   if (action === 'edit-connector') {
     const connector = state.data?.connectors?.find((entry) => entry.name === button.dataset.name);
     if (!connector) {
-      setNotice('error', 'KakaoTalk 세션을 찾지 못했습니다.');
+      setNotice('error', 'KakaoTalk 내부 연결을 찾지 못했습니다.');
       render();
       return;
     }
@@ -779,10 +779,7 @@ function handleInput(event) {
       state.channelDraft[target.name] =
         target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
       if (target.name === 'platform') {
-        state.channelDraft.connector =
-          state.channelDraft.platform === 'kakao'
-            ? getDefaultConnectorNameForPlatform(state.channelDraft.platform)
-            : '';
+        state.channelDraft.connector = '';
         state.channelDraft.targetType =
           state.channelDraft.platform === 'kakao'
             ? 'channel'
@@ -1156,7 +1153,7 @@ async function saveConnector(form) {
   state.connectorModalOpen = false;
   state.connectorDraft = null;
   clearFormErrors('connector');
-  setNotice('info', `KakaoTalk 세션 "${definition.name}"을(를) ${currentName ? '수정' : '추가'}했습니다.`);
+  setNotice('info', `KakaoTalk 내부 연결 "${definition.name}"을(를) ${currentName ? '수정' : '추가'}했습니다.`);
   render();
 }
 
@@ -1321,7 +1318,7 @@ async function reloadKakaoServiceConfig() {
     await mutateJson('/api/kakao-service/reload', {
       method: 'POST',
     });
-    setNotice('info', 'KakaoTalk 릴레이 수신 워커가 최신 세션 설정을 다시 읽고 있습니다.');
+    setNotice('info', 'KakaoTalk 릴레이 수신 워커가 최신 채널 연결 설정을 다시 읽고 있습니다.');
     render();
     void refreshStateAfterServiceCommand();
   } catch (error) {
@@ -2035,7 +2032,7 @@ function renderAgentsView() {
 function renderChannelsView() {
   return buildChannelsView({
     state,
-    renderKakaoSessionList,
+    renderKakaoRelayServerPanel,
     renderChannelList,
   });
 }
@@ -2498,7 +2495,7 @@ function renderAgentCard(agent, context) {
 
 function renderKakaoPlatformAgentPrimaryAction({ service = {}, tokenConfigured = false } = {}) {
   if (!tokenConfigured) {
-    return `<button type="button" class="btn-secondary" disabled>${renderButtonLabel('play', '세션 설정 필요')}</button>`;
+    return `<button type="button" class="btn-secondary" disabled>${renderButtonLabel('play', 'Kakao 설정 필요')}</button>`;
   }
   if (service.running || service.starting) {
     return `<button type="button" class="btn-secondary" disabled>${renderButtonLabel('server', service.starting ? '릴레이 수신 워커 연결 중' : '릴레이 수신 워커 실행 중')}</button>`;
@@ -2576,7 +2573,7 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
       ? legacyCredentialPlatforms.every((value) => tokenConfiguredByPlatform[value])
       : Boolean(tokenConfiguredByPlatform[platform]);
   const credentialLabel = connectorOnly
-    ? 'Kakao 세션 사용'
+    ? 'Kakao 채널 사용'
     : tokenConfigured
       ? '연결 설정됨'
       : '연결 미설정';
@@ -2588,7 +2585,7 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
         ? Boolean(kakaoRuntime.connected)
         : Boolean(telegramRuntime.connected);
   const connectionSummary = connectorOnly
-    ? 'Kakao 세션에서 수신'
+    ? 'Kakao 채널에서 수신'
     : isDiscordPlatform
       ? runtimeAgent.connected
       ? `연결됨${runtimeAgent.tag ? ` · ${runtimeAgent.tag}` : ''}`
@@ -2669,7 +2666,7 @@ function renderAgentDetailPanel(agent, context) {
   const accessSummary = formatAgentAccessSummary(agent);
   const rows = context.connectorOnly
     ? [
-        { label: '수신 세션', value: 'Kakao 세션에서 관리' },
+        { label: '수신 채널', value: 'Kakao 채널에서 관리' },
         { label: '런타임', value: runtimeStatus, title: agent.runtime?.detail || '' },
         { label: '접근 범위', value: accessSummary },
       ]
@@ -2733,32 +2730,17 @@ function localizeAgentRole(role) {
   return role || '';
 }
 
-function renderKakaoSessionList(connectors = [], kakaoService = state.data?.kakao || {}) {
+function renderKakaoRelayServerPanel(data = state.data || {}) {
+  const channels = data.channels || [];
+  const agents = data.agents || [];
+  const connectors = data.connectors || [];
+  const kakaoService = data.kakao || {};
+  const kakaoChannels = channels.filter((channel) => (channel.platform || 'discord') === 'kakao');
   const kakaoConnectors = connectors.filter((connector) => connector.type === 'kakao');
-  if (!kakaoConnectors.length) {
-    return `
-      <div class="empty-inline empty-inline--action">
-        <strong>KakaoTalk 세션이 아직 없습니다.</strong>
-        <p>릴레이 서버는 hkclaw-lite Admin에 내장되어 하나만 배포됩니다. Kakao 플랫폼 에이전트를 만들면 같은 이름의 세션이 자동 생성됩니다.</p>
-      </div>
-    `;
-  }
-  return `
-    <div class="connector-overview">
-      ${renderKakaoRelayServerPanel(kakaoConnectors, kakaoService)}
-      <div class="card-list card-list--compact connector-card-list">
-        ${kakaoConnectors
-          .map((connector) => renderKakaoSessionCard(connector, kakaoService))
-          .join('')}
-      </div>
-    </div>
-  `;
-}
-
-function renderKakaoRelayServerPanel(connectors = [], kakaoService = {}) {
+  const kakaoAgents = agents.filter((agent) => (agent.platform || 'discord') === 'kakao');
   const service = kakaoService?.service || {};
   const worker = buildWorkerStatus({
-    configured: connectors.length > 0,
+    configured: kakaoChannels.length > 0 || kakaoConnectors.length > 0 || kakaoAgents.length > 0,
     running: Boolean(service.running),
     starting: Boolean(service.starting),
     stale: Boolean(service.stale),
@@ -2776,7 +2758,7 @@ function renderKakaoRelayServerPanel(connectors = [], kakaoService = {}) {
       <div class="worker-control-main">
         <span class="mini-chip">${renderIcon('link', 'ui-icon')}릴레이 서버: ${escapeHtml(getDefaultKakaoRelayUrl())}</span>
         <span class="mini-chip ${escapeAttr(worker.statusClass)}">${renderIcon('server', 'ui-icon')}${escapeHtml(worker.label)}</span>
-        <p class="field-hint">릴레이 서버는 hkclaw-lite Admin에 내장되어 하나만 배포됩니다. 아래 Kakao 세션들이 이 릴레이 서버에 페어링됩니다.</p>
+        <p class="field-hint">릴레이 서버는 hkclaw-lite Admin에 내장되어 하나만 배포됩니다. KakaoTalk 채널 카드에서 pairing code와 연결 상태를 확인하세요.</p>
         ${worker.lastError ? `<p class="field-hint field-hint--danger">${escapeHtml(localizeWorkerError(worker.lastError))}</p>` : ''}
       </div>
       <div class="inline-actions">
@@ -2784,50 +2766,6 @@ function renderKakaoRelayServerPanel(connectors = [], kakaoService = {}) {
         ${stopAction}
       </div>
     </div>
-  `;
-}
-
-function renderKakaoSessionCard(connector, kakaoService = {}) {
-  const tokenMode = connector.kakaoSessionToken || connector.kakaoRelayToken ? '토큰 설정됨' : '페어링 모드';
-  const runtime = kakaoService?.agents?.[connector.name] || {};
-  const derivedAgent = getAgentDerivedKakaoConnectorOwner(connector);
-  const sourceLabel = derivedAgent
-    ? `에이전트 "${derivedAgent.name}"에서 자동 생성`
-    : connector.description || '';
-  return `
-    <article class="card card--stack connector-card">
-      <div class="card-main">
-        ${renderCardTitle('link', connector.name, 'calm')}
-        ${renderMetaText('KakaoTalk 세션')}
-        <div class="card-tags">
-          <span class="mini-chip mini-chip--ok">${renderIcon('link', 'ui-icon')}세션</span>
-          <span class="mini-chip">${escapeHtml(tokenMode)}</span>
-          ${
-            runtime.connected
-              ? `<span class="mini-chip mini-chip--ok">${renderIcon('server', 'ui-icon')}${escapeHtml(`연결됨${runtime.pairedUserId ? ` · ${runtime.pairedUserId}` : ''}`)}</span>`
-              : runtime.pairingCode
-                ? `<span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`/pair ${runtime.pairingCode}`)}</span>`
-              : ''
-          }
-          ${sourceLabel ? `<span class="mini-chip">${escapeHtml(sourceLabel)}</span>` : ''}
-        </div>
-        <p class="field-hint">라우팅 채널에서는 이 세션을 선택만 하면 됩니다. 릴레이 서버를 새로 만들 필요 없습니다.</p>
-        <div class="connector-detail-grid">
-          <div>
-            <span>릴레이 서버</span>
-            <strong>${escapeHtml(connector.kakaoRelayUrl || getDefaultKakaoRelayUrl())}</strong>
-          </div>
-        </div>
-      </div>
-      <div class="inline-actions">
-        ${
-          derivedAgent
-            ? `<button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(derivedAgent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '에이전트 설정')}</button>`
-            : `<button type="button" class="btn-secondary" data-action="edit-connector" data-name="${escapeAttr(connector.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>`
-        }
-        <button type="button" class="btn-danger" data-action="delete-connector" data-name="${escapeAttr(connector.name)}" ${state.busy || derivedAgent ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>
-      </div>
-    </article>
   `;
 }
 
@@ -2855,6 +2793,7 @@ function renderChannelList(channels) {
               <div class="card-main">
                 ${renderCardTitle('channels', channel.name, 'calm')}
                 ${renderMetaText(channelMetaParts.join(' · '))}
+                ${renderKakaoChannelStatusTags(channel)}
               </div>
               <div class="inline-actions">
                 <button type="button" class="btn-secondary" data-action="edit-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
@@ -2866,6 +2805,32 @@ function renderChannelList(channels) {
         .join('')}
     </div>
   `;
+}
+
+function renderKakaoChannelStatusTags(channel) {
+  if ((channel?.platform || 'discord') !== 'kakao') {
+    return '';
+  }
+  const runtimeKey = optionalDraftText(channel.connector) || optionalDraftText(channel.agent);
+  const runtime = runtimeKey ? state.data?.kakao?.agents?.[runtimeKey] || {} : {};
+  const service = state.data?.kakao?.service || {};
+  const tags = [
+    `<span class="mini-chip mini-chip--ok">${renderIcon('channels', 'ui-icon')}KakaoTalk 채널</span>`,
+  ];
+  if (runtime.connected) {
+    tags.push(
+      `<span class="mini-chip mini-chip--ok">${renderIcon('server', 'ui-icon')}${escapeHtml(`연결됨${runtime.pairedUserId ? ` · ${runtime.pairedUserId}` : ''}`)}</span>`,
+    );
+  } else if (runtime.pairingCode) {
+    tags.push(
+      `<span class="mini-chip">${renderIcon('server', 'ui-icon')}${escapeHtml(`/pair ${runtime.pairingCode}`)}</span>`,
+    );
+  } else if (service.running || service.starting) {
+    tags.push(`<span class="mini-chip">${renderIcon('server', 'ui-icon')}페어링 대기</span>`);
+  } else {
+    tags.push(`<span class="mini-chip">${renderIcon('server', 'ui-icon')}릴레이 대기</span>`);
+  }
+  return `<div class="card-tags">${tags.join('')}</div>`;
 }
 
 function buildWorkerStatus({ configured, running, starting, stale, lastError }) {
@@ -3545,13 +3510,13 @@ function renderConnectorModal() {
   const current = state.connectorDraft || createBlankConnector();
   const isEditing = Boolean(optionalDraftText(current.currentName));
   return `
-    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="KakaoTalk 세션 ${isEditing ? '수정' : '추가'}">
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="KakaoTalk 내부 연결 ${isEditing ? '수정' : '추가'}">
       <div class="modal-backdrop" data-action="close-connector-modal"></div>
       <div class="panel modal-card modal-card--connector">
         <div class="section-head">
           <div class="section-title-group">
             <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
-            <h2>KakaoTalk 세션 ${isEditing ? '수정' : '추가'}</h2>
+            <h2>KakaoTalk 내부 연결 ${isEditing ? '수정' : '추가'}</h2>
           </div>
           <button type="button" class="btn-secondary" data-action="close-connector-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
         </div>
@@ -3561,7 +3526,7 @@ function renderConnectorModal() {
           <input type="hidden" name="type" value="kakao" />
           <div class="form-grid connector-form-grid">
             <div class="field ${fieldErrorClass('connector', 'name')}">
-              <label for="connector-name">${renderRequiredLabel('세션 이름')}</label>
+              <label for="connector-name">${renderRequiredLabel('연결 이름')}</label>
               <input id="connector-name" name="name" value="${escapeAttr(current.name)}" placeholder="예: kakao-main" />
               ${renderFormError('connector', 'name')}
             </div>
@@ -3572,7 +3537,7 @@ function renderConnectorModal() {
             ${renderConnectorCredentialFields(current)}
           </div>
           <div class="actions">
-            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('save', 'Kakao 세션 저장')}</button>
+            <button type="submit" class="btn-primary" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('save', 'Kakao 연결 저장')}</button>
             <button type="button" class="btn-secondary" data-action="close-connector-modal" ${state.busy ? 'disabled' : ''}>취소</button>
           </div>
         </form>
@@ -3593,7 +3558,7 @@ function renderConnectorCredentialFields(current) {
       <input id="connector-kakao-token" name="kakaoRelayToken" value="${escapeAttr(current.kakaoRelayToken)}" placeholder="비우면 페어링 코드 생성" />
     </div>
     <div class="field">
-      <label for="connector-kakao-session">세션 토큰</label>
+      <label for="connector-kakao-session">고급 연결 토큰</label>
       <input id="connector-kakao-session" name="kakaoSessionToken" value="${escapeAttr(current.kakaoSessionToken)}" placeholder="선택" />
     </div>
   `;
@@ -3602,11 +3567,12 @@ function renderConnectorCredentialFields(current) {
 
 function renderChannelConnectorField(platform, selectedConnector) {
   if (platform === 'kakao') {
+    const connector = optionalDraftText(selectedConnector);
     return `
-      <div class="field">
-        <label for="channel-connector">KakaoTalk 세션</label>
-        <select id="channel-connector" name="connector">${renderConnectorOptions(platform, selectedConnector, true)}</select>
-        <p class="field-hint">에이전트 Kakao 설정에서 자동 생성된 세션도 그대로 재사용합니다. 채널은 릴레이 서버나 세션을 만드는 곳이 아니라 수신 라우팅을 정하는 곳입니다.</p>
+      <input type="hidden" name="connector" value="${escapeAttr(connector)}" />
+      <div class="field field-full">
+        <label>KakaoTalk 연결</label>
+        <p class="field-hint">릴레이 서버는 하나만 배포됩니다. 이 채널 카드에서 pairing code와 연결 상태를 확인하고, 메시지는 아래 라우팅 조건과 에이전트로 전달됩니다.</p>
       </div>
     `;
   }
@@ -4304,12 +4270,12 @@ function renderAgentWizardRuntimeStep(draft) {
           ${renderFormError('agentWizard', tokenFieldName)}
         </div>
         <div class="field field-full">
-          <label for="wizard-agent-kakao-session">Kakao 세션 토큰</label>
+          <label for="wizard-agent-kakao-session">고급 연결 토큰</label>
           <input
             id="wizard-agent-kakao-session"
             name="kakaoSessionToken"
             value="${escapeAttr(draft.kakaoSessionToken || '')}"
-            placeholder="선택: 기존 세션 재사용"
+            placeholder="선택: 기존 릴레이 연결 재사용"
           />
         </div>
       `
@@ -5793,7 +5759,7 @@ function createBlankChannel() {
   return {
     platform: 'kakao',
     targetType: 'channel',
-    connector: getDefaultConnectorNameForPlatform('kakao'),
+    connector: '',
     name: '',
     mode: 'single',
     discordChannelId: '',
@@ -5945,23 +5911,6 @@ function getDefaultLocalLlmConnectionName() {
   return getLocalLlmConnectionEntries()[0]?.name || '';
 }
 
-function getConnectorEntries(platform = '') {
-  const selectedPlatform = optionalDraftText(platform);
-  return (state.data?.connectors || [])
-    .filter((entry) => entry.type === 'kakao')
-    .filter((entry) => !selectedPlatform || entry.type === selectedPlatform)
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function getDefaultConnectorNameForPlatform(platform = '') {
-  if (optionalDraftText(platform) !== 'kakao') {
-    return '';
-  }
-  const entries = getConnectorEntries(platform);
-  const defaultAgentName = getDefaultChannelAgentName(platform);
-  return entries.find((entry) => entry.name === defaultAgentName)?.name || entries[0]?.name || '';
-}
-
 function getDefaultChannelAgentName(platform = '') {
   const agents = state.data?.agents || [];
   if (optionalDraftText(platform) === 'kakao') {
@@ -5970,41 +5919,12 @@ function getDefaultChannelAgentName(platform = '') {
   return agents[0]?.name || '';
 }
 
-function getAgentDerivedKakaoConnectorOwner(connector) {
-  if (!connector || connector.type !== 'kakao') {
-    return null;
-  }
-  if (connector.description !== 'Migrated from agent platform settings') {
-    return null;
-  }
-  return (
-    (state.data?.agents || []).find(
-      (agent) => agent.name === connector.name && (agent.platform || 'discord') === 'kakao',
-    ) || null
-  );
-}
-
 function getChannelTargetType(channel = {}) {
   const explicit = optionalDraftText(channel?.targetType);
   if (explicit) {
     return explicit;
   }
   return optionalDraftText(channel?.discordUserId) ? 'direct' : 'channel';
-}
-
-function renderConnectorOptions(platform, selectedValue, allowEmpty = false) {
-  const selected = optionalDraftText(selectedValue);
-  const entries = getConnectorEntries(platform);
-  const options = [];
-  if (allowEmpty) {
-    options.push(`<option value="" ${!selected ? 'selected' : ''}>에이전트 Kakao 세션 사용</option>`);
-  }
-  for (const entry of entries) {
-    options.push(
-      `<option value="${escapeAttr(entry.name)}" ${selected === entry.name ? 'selected' : ''}>${escapeHtml(entry.name)} · ${escapeHtml(localizeMessagingPlatform(entry.type))}</option>`,
-    );
-  }
-  return options.join('');
 }
 
 function resolveLocalLlmConnectionEntry(name) {
@@ -6106,7 +6026,7 @@ function localizeKind(kind) {
     return '에이전트';
   }
   if (kind === 'connector') {
-    return 'KakaoTalk 세션';
+    return 'KakaoTalk 내부 연결';
   }
   if (kind === 'channel') {
     return '채널';
@@ -6491,7 +6411,7 @@ function localizeFieldName(key) {
     type: '플랫폼',
     description: '메모',
     platform: '플랫폼',
-    connector: 'KakaoTalk 세션',
+    connector: 'KakaoTalk 연결',
     targetType: '사용 방식',
     mode: '채널 모드',
     agent: '에이전트',
@@ -6500,7 +6420,7 @@ function localizeFieldName(key) {
     discordUserId: 'Discord 사용자 ID',
     kakaoRelayUrl: '릴레이 서버 URL',
     kakaoRelayToken: '페어링 토큰',
-    kakaoSessionToken: 'Kakao 세션 토큰',
+    kakaoSessionToken: '고급 연결 토큰',
     model: '모델',
     command: '명령어',
     discordChannelId: '디스코드 채널 ID',
@@ -6535,12 +6455,12 @@ function localizeErrorMessage(message) {
 
   const referencedConnectorMatch = text.match(/^Connector "(.+)" is referenced by channels: (.+)\.$/u);
   if (referencedConnectorMatch) {
-    return `KakaoTalk 세션 "${referencedConnectorMatch[1]}"은(는) 채널에서 사용 중입니다: ${referencedConnectorMatch[2]}.`;
+    return `KakaoTalk 내부 연결 "${referencedConnectorMatch[1]}"은(는) 채널에서 사용 중입니다: ${referencedConnectorMatch[2]}.`;
   }
 
   const legacyConnectorMatch = text.match(/^Connector "(.+)" is derived from legacy agent platform settings;/u);
   if (legacyConnectorMatch) {
-    return `KakaoTalk 세션 "${legacyConnectorMatch[1]}"은(는) 기존 에이전트 Kakao 설정에서 자동 생성된 항목입니다. 에이전트 Kakao 세션 설정을 먼저 수정하세요.`;
+    return `KakaoTalk 내부 연결 "${legacyConnectorMatch[1]}"은(는) 기존 에이전트 Kakao 설정에서 자동 생성된 항목입니다. 에이전트 Kakao 설정을 먼저 수정하세요.`;
   }
 
   const unknownAgentMatch = text.match(/^Channel references unknown agent "(.+)"\.$/u);
@@ -6550,7 +6470,7 @@ function localizeErrorMessage(message) {
 
   const unknownConnectorMatch = text.match(/^Channel references unknown connector "(.+)"\.$/u);
   if (unknownConnectorMatch) {
-    return `없는 KakaoTalk 세션입니다: "${unknownConnectorMatch[1]}".`;
+    return `없는 KakaoTalk 내부 연결입니다: "${unknownConnectorMatch[1]}".`;
   }
 
   const kakaoOverlapMatch = text.match(/^Kakao channel "(.+)" overlaps with "(.+)" for (.+)\./u);
