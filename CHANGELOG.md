@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.23 - 2026-05-06
+
+### Added
+- Added Codex CLI token usage totals to runtime history so operators can review model spend from completed turns.
+
+### Fixed
+- Made Telegram setup reuse recently discovered chats and group thread IDs reliably when applying receiver targets from the admin UI.
+
 ## 1.0.22 - 2026-04-30
 
 ### Added
