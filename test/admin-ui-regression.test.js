@@ -110,22 +110,26 @@ test('agent more drawers stay open across unavoidable re-renders', () => {
   assert.match(appSource, /drawerId:\s*`agent:\$\{agent\.name\}`/u);
 });
 
-test('channels page exposes reusable connector management', () => {
+test('channels page distinguishes relay server, Kakao sessions, and routing channels', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
 
-  assert.match(viewsSource, /renderConnectorList/u);
+  assert.match(viewsSource, /renderKakaoSessionList/u);
   assert.match(viewsSource, /<h2>채널<\/h2>/u);
-  assert.match(viewsSource, /<h2>KakaoTalk 연결<\/h2>/u);
+  assert.match(viewsSource, /<h2>KakaoTalk 릴레이 서버<\/h2>/u);
+  assert.match(viewsSource, /Kakao 세션 추가/u);
   assert.doesNotMatch(appSource, /start-channel-receiver/u);
   assert.doesNotMatch(appSource, /restart-channel-receiver/u);
   assert.doesNotMatch(appSource, /receiver\/start/u);
   assert.doesNotMatch(appSource, /receiver\/restart/u);
   assert.doesNotMatch(appSource, /buildChannelWorkerContext/u);
-  assert.match(appSource, /Kakao 연결 시작/u);
-  assert.match(appSource, /Kakao 플랫폼 에이전트를 만들면 같은 이름의 연결이 자동 생성됩니다/u);
-  assert.match(appSource, /새 KakaoTalk 연결을 중복 생성할 필요는 없습니다/u);
-  assert.match(appSource, /채널은 새 연결을 만드는 곳이 아니라 수신 라우팅을 정하는 곳입니다/u);
+  assert.match(appSource, /릴레이 수신 워커 시작/u);
+  assert.match(appSource, /릴레이 서버는 hkclaw-lite Admin에 내장되어 하나만 배포됩니다/u);
+  assert.match(appSource, /Kakao 플랫폼 에이전트를 만들면 같은 이름의 세션이 자동 생성됩니다/u);
+  assert.match(appSource, /릴레이 서버를 새로 만들 필요 없습니다/u);
+  assert.match(appSource, /채널은 릴레이 서버나 세션을 만드는 곳이 아니라 수신 라우팅을 정하는 곳입니다/u);
+  assert.match(appSource, /renderKakaoRelayServerPanel/u);
+  assert.match(appSource, /renderKakaoSessionCard/u);
   assert.match(appSource, /getAgentDerivedKakaoConnectorOwner/u);
   assert.match(appSource, /getDefaultChannelAgentName\('kakao'\)/u);
   assert.doesNotMatch(appSource, /Kakao 워커/u);
@@ -156,6 +160,8 @@ test('channels page exposes reusable connector management', () => {
   assert.match(appSource, /open-connector-modal/u);
   assert.match(appSource, /\/api\/connectors/u);
   assert.match(appSource, /findKakaoChannelRouteConflict/u);
+  assert.doesNotMatch(appSource, /KakaoTalk 연결이 아직 없습니다/u);
+  assert.doesNotMatch(appSource, /Kakao 릴레이 URL/u);
 });
 
 test('web admin exposes topology automation screen', () => {
@@ -190,12 +196,12 @@ test('agent cards distinguish connector-managed channels from legacy agent token
   assert.match(appSource, /connectorOnly/u);
   assert.match(appSource, /agentCredentialConfiguredByPlatform/u);
   assert.match(appSource, /ownsConnectorOnlyRoute && agentPlatform === 'kakao'/u);
-  assert.match(appSource, /Kakao 연결 사용/u);
-  assert.match(appSource, /Kakao 연결에서 수신/u);
-  assert.match(appSource, /Kakao 연결에서 관리/u);
+  assert.match(appSource, /Kakao 세션 사용/u);
+  assert.match(appSource, /Kakao 세션에서 수신/u);
+  assert.match(appSource, /Kakao 세션에서 관리/u);
   assert.match(appSource, /kakaoPlatformManaged/u);
   assert.match(appSource, /renderKakaoPlatformAgentPrimaryAction/u);
-  assert.match(appSource, /Kakao 연결 실행 중/u);
+  assert.match(appSource, /릴레이 수신 워커 실행 중/u);
   assert.doesNotMatch(appSource, /Kakao platform worker is already running/u);
   assert.match(appSource, /function\s+unique\s*\(/u);
 });

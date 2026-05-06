@@ -288,10 +288,10 @@ async function handleAddCommand(projectRoot, argv) {
       }),
     );
     config.connectors = config.connectors || {};
-    assert(!config.connectors[definition.name], `Connector "${definition.name}" already exists.`);
+    assert(!config.connectors[definition.name], `Kakao session "${definition.name}" already exists.`);
     config.connectors[definition.name] = buildConnectorDefinition(definition.name, definition);
     saveConfig(projectRoot, config);
-    console.log(`Added connector "${definition.name}".`);
+    console.log(`Added Kakao session "${definition.name}" (connector).`);
     console.log(`Next step: hkclaw-lite add channel --connector ${definition.name}`);
     return;
   }
@@ -421,7 +421,7 @@ async function handleEditCommand(projectRoot, argv) {
       }),
     );
     if (definition.name !== name) {
-      assert(!config.connectors?.[definition.name], `Connector "${definition.name}" already exists.`);
+      assert(!config.connectors?.[definition.name], `Kakao session "${definition.name}" already exists.`);
       for (const channel of Object.values(config.channels)) {
         if (channel.connector === name) {
           channel.connector = definition.name;
@@ -436,7 +436,7 @@ async function handleEditCommand(projectRoot, argv) {
       config.connectors[definition.name] || existing,
     );
     saveConfig(projectRoot, config);
-    console.log(`Updated connector "${definition.name}".`);
+    console.log(`Updated Kakao session "${definition.name}" (connector).`);
     return;
   }
 
@@ -563,7 +563,7 @@ async function handleRemoveCommand(projectRoot, argv) {
     const connector = getConnector(config, name);
     assert(
       !isDerivedLegacyConnector(config, name, connector),
-      `Connector "${name}" is derived from legacy agent platform settings; edit the agent connection settings first.`,
+      `Connector "${name}" is derived from legacy agent platform settings; edit the agent Kakao session settings first.`,
     );
     const blockingChannels = listChannels(config)
       .filter((channel) => channel.connector === name)
@@ -575,7 +575,7 @@ async function handleRemoveCommand(projectRoot, argv) {
     const confirmed = force
       ? true
       : await withPrompter((prompter) =>
-          prompter.askConfirm(`Remove connector "${name}"?`, {
+          prompter.askConfirm(`Remove Kakao session "${name}"?`, {
             defaultValue: false,
           }),
         );
@@ -585,7 +585,7 @@ async function handleRemoveCommand(projectRoot, argv) {
     }
     removeConnector(config, name);
     saveConfig(projectRoot, config);
-    console.log(`Removed connector "${name}".`);
+    console.log(`Removed Kakao session "${name}" (connector).`);
     return;
   }
 
@@ -1671,12 +1671,12 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
       defaultValue: initial.telegramBotToken,
     });
   } else if (platform === 'kakao') {
-    definition.kakaoRelayUrl = await prompter.askText('Kakao connection relay URL', {
+    definition.kakaoRelayUrl = await prompter.askText('Kakao relay server URL', {
       defaultValue: initial.kakaoRelayUrl || getDefaultKakaoRelayUrl(),
       allowEmpty: true,
     });
     definition.kakaoRelayToken = await prompter.askText(
-      'Kakao connection token (optional; empty creates a pairing session)',
+      'Kakao pairing token (optional; empty creates a pairing session)',
       {
         defaultValue: initial.kakaoRelayToken,
         allowEmpty: true,
@@ -1743,7 +1743,7 @@ async function promptForAgentDefinition(prompter, projectRoot, config, options) 
 async function promptForConnectorDefinition(prompter, config, options) {
   const initial = options.initial || {};
   const existingConnectorNames = new Set(Object.keys(config.connectors || {}));
-  const name = await prompter.askText('Connector name', {
+  const name = await prompter.askText('Kakao session name (connector)', {
     defaultValue: initial.name,
     validate: (value) => {
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
@@ -1754,21 +1754,21 @@ async function promptForConnectorDefinition(prompter, config, options) {
         existingConnectorNames.has(value) &&
         value !== initial.name
       ) {
-        return `Connector "${value}" already exists.`;
+        return `Kakao session "${value}" already exists.`;
       }
       if (
         options.mode === 'edit' &&
         value !== initial.name &&
         existingConnectorNames.has(value)
       ) {
-        return `Connector "${value}" already exists.`;
+        return `Kakao session "${value}" already exists.`;
       }
       return true;
     },
   });
   const connectorPlatform = CONNECTOR_PLATFORM_CHOICES[0];
-  console.log(`Connector type: ${connectorPlatform.label} (${connectorPlatform.description})`);
-  const description = await prompter.askText('Connector memo (optional)', {
+  console.log(`Kakao session type: ${connectorPlatform.label} (${connectorPlatform.description})`);
+  const description = await prompter.askText('Kakao session memo (optional)', {
     defaultValue: initial.description,
     allowEmpty: true,
   });
@@ -1777,12 +1777,12 @@ async function promptForConnectorDefinition(prompter, config, options) {
     type: 'kakao',
     description,
   };
-  definition.kakaoRelayUrl = await prompter.askText('Kakao TalkChannel relay URL', {
+  definition.kakaoRelayUrl = await prompter.askText('Kakao relay server URL', {
     defaultValue: initial.kakaoRelayUrl || getDefaultKakaoRelayUrl(),
     allowEmpty: true,
   });
   definition.kakaoRelayToken = await prompter.askText(
-    'Kakao connection token (optional; empty creates a pairing session)',
+    'Kakao pairing token (optional; empty creates a pairing session)',
     {
       defaultValue: initial.kakaoRelayToken,
       allowEmpty: true,
@@ -1925,17 +1925,17 @@ async function promptForChannelDefinition(prompter, config, options) {
     .map((connector) => ({
       value: connector.name,
       label: connector.name,
-      description: connector.description || `${platform} connector`,
+      description: connector.description || (platform === 'kakao' ? 'Kakao session' : `${platform} connector`),
     }));
   let connector = initial.connector || '';
   if (connectorChoices.length > 0) {
     connector = await prompter.askChoice(
-      'Connector for this channel',
+      'Kakao session for this routing channel',
       [
         {
           value: '',
-          label: 'Legacy agent settings',
-          description: 'Use platform credentials stored on the selected agent for compatibility',
+          label: 'Agent Kakao session settings',
+          description: 'Use the Kakao session derived from the selected agent for compatibility',
         },
         ...connectorChoices,
       ],
@@ -2330,7 +2330,7 @@ function printAgents(agents) {
 }
 
 function printConnectors(connectors) {
-  console.log('Connectors');
+  console.log('Kakao sessions (connectors)');
   if (connectors.length === 0) {
     console.log('  (none)');
     return;
@@ -2537,7 +2537,7 @@ Usage:
   hkclaw-lite backup import <file> [--root DIR] [--force]
   hkclaw-lite migrate --from <project-root> [--root DIR] [--force]
   hkclaw-lite add agent
-  hkclaw-lite add connector   # KakaoTalk reusable connection only
+  hkclaw-lite add connector   # KakaoTalk reusable session only
   hkclaw-lite add channel
   hkclaw-lite add dashboard
   hkclaw-lite edit agent <name>
@@ -2584,7 +2584,7 @@ Examples:
   hkclaw-lite backup import ./backups/project.json --root ./restored
   hkclaw-lite migrate --from ../old-project --root ./new-project
   hkclaw-lite add agent
-  hkclaw-lite add connector   # KakaoTalk reusable connection only
+  hkclaw-lite add connector   # KakaoTalk reusable session only
   hkclaw-lite add channel
   hkclaw-lite add dashboard
   hkclaw-lite run --channel discord-main --message "summarize the repo"

@@ -44,7 +44,7 @@ export function renderAgentsView(ctx) {
 }
 
 export function renderChannelsView(ctx) {
-  const { state, renderConnectorList, renderChannelList } = ctx;
+  const { state, renderKakaoSessionList, renderChannelList } = ctx;
   return `
     <section class="panel section-panel">
       <div class="section-head">
@@ -60,11 +60,11 @@ export function renderChannelsView(ctx) {
       <div class="section-head">
         <div class="section-title-group">
           <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
-          <h2>KakaoTalk 연결</h2>
+          <h2>KakaoTalk 릴레이 서버</h2>
         </div>
-        <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}Kakao 연결 추가</button>
+        <button type="button" class="btn-secondary" data-action="open-connector-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}Kakao 세션 추가</button>
       </div>
-      ${renderConnectorList(state.data.connectors || [], state.data.kakao || {})}
+      ${renderKakaoSessionList(state.data.connectors || [], state.data.kakao || {})}
     </section>
   `;
 }
