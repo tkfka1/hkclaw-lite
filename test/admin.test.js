@@ -2628,7 +2628,7 @@ test('admin Kakao channel worker starts one platform process for connector-only 
   }
 });
 
-test('admin blocks Kakao agent worker when the platform worker already owns Kakao', async () => {
+test('admin reuses the Kakao platform worker when an agent start is requested', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
   const previousEntry = process.env.HKCLAW_LITE_KAKAO_SERVICE_ENTRY;
@@ -2667,8 +2667,9 @@ test('admin blocks Kakao agent worker when the platform worker already owns Kaka
       const startResponse = await requestJson(`${url}/api/agents/worker/start`, {
         method: 'POST',
       });
-      assert.equal(startResponse.response.status, 400, JSON.stringify(startResponse.payload));
-      assert.match(startResponse.payload.error, /Kakao.*worker.*already running|Kakao.*이미 실행/u);
+      assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
+      assert.equal(startResponse.payload.result.delegatedTo, 'kakao-platform');
+      assert.equal(startResponse.payload.result.alreadyRunning, true);
     });
   } finally {
     if (previousEntry === undefined) {

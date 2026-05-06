@@ -2416,7 +2416,7 @@ function renderAgentList(agents, discordService = {}, telegramService = {}, kaka
   const kakaoAgents = kakaoService?.agents || kakaoService?.accounts || {};
   const agentEntries = agents.map((agent) => ({
     agent,
-    context: buildAgentDisplayContext(agent, serviceAgents, telegramAgents, kakaoAgents),
+    context: buildAgentDisplayContext(agent, serviceAgents, telegramAgents, kakaoAgents, kakaoService),
   }));
 
   return `
@@ -2443,8 +2443,15 @@ function renderAgentCard(agent, context) {
     connected,
     credentialLabel,
     connectorOnly,
+    kakaoPlatformManaged,
+    kakaoPlatformService,
   } = context;
-  const primaryAction = connectorOnly
+  const primaryAction = kakaoPlatformManaged
+    ? renderKakaoPlatformAgentPrimaryAction({
+        service: kakaoPlatformService,
+        tokenConfigured,
+      })
+    : connectorOnly
     ? ''
     : !tokenConfigured
     ? `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" disabled>${renderButtonLabel('play', '연결 설정 필요')}</button>`
@@ -2452,7 +2459,7 @@ function renderAgentCard(agent, context) {
       ? `<button type="button" class="btn-secondary" data-action="restart-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale) ? 'disabled' : ''}>${renderButtonLabel('refresh', '연결 재시작')}</button>`
       : `<button type="button" class="btn-secondary" data-action="start-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || !tokenConfigured || agentServiceRunning || agentServiceStarting ? 'disabled' : ''}>${renderButtonLabel('play', '연결 시작')}</button>`;
   const stopAction =
-    agentServiceRunning || agentServiceStale || agentServiceStarting
+    !kakaoPlatformManaged && (agentServiceRunning || agentServiceStale || agentServiceStarting)
       ? `<button type="button" class="btn-secondary" data-action="stop-agent-service" data-name="${escapeAttr(agent.name)}" ${state.busy || (!agentServiceRunning && !agentServiceStale && !agentServiceStarting) ? 'disabled' : ''}>${renderButtonLabel('stop', '연결 중지')}</button>`
       : '';
   return `
@@ -2489,7 +2496,20 @@ function renderAgentCard(agent, context) {
   `;
 }
 
-function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}, kakaoAgents = {}) {
+function renderKakaoPlatformAgentPrimaryAction({ service = {}, tokenConfigured = false } = {}) {
+  if (!tokenConfigured) {
+    return `<button type="button" class="btn-secondary" disabled>${renderButtonLabel('play', '연결 설정 필요')}</button>`;
+  }
+  if (service.running || service.starting) {
+    return `<button type="button" class="btn-secondary" disabled>${renderButtonLabel('server', service.starting ? 'Kakao 연결 중' : 'Kakao 연결 실행 중')}</button>`;
+  }
+  if (service.stale) {
+    return `<button type="button" class="btn-secondary" data-action="restart-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('refresh', 'Kakao 연결 재시작')}</button>`;
+  }
+  return `<button type="button" class="btn-secondary" data-action="start-kakao-service" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('play', 'Kakao 연결 시작')}</button>`;
+}
+
+function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}, kakaoAgents = {}, kakaoPlatformService = {}) {
   const mappedChannels = Array.isArray(agent.mappedChannels) ? agent.mappedChannels : [];
   const agentPlatform = agent.platform || 'discord';
   const channelPlatforms = unique(
@@ -2527,6 +2547,16 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
   const runtimeAgent = serviceAgents[agent.name] || {};
   const telegramRuntime = telegramAgents[agent.name] || {};
   const kakaoRuntime = kakaoAgents[agent.name] || {};
+  const kakaoPlatformManaged =
+    agentPlatform === 'kakao' &&
+    Boolean(
+      kakaoPlatformService.running ||
+        kakaoPlatformService.starting ||
+        kakaoPlatformService.stale ||
+        kakaoRuntime.tokenConfigured ||
+        kakaoRuntime.connected ||
+        kakaoRuntime.pairingCode,
+    );
   const agentService = isDiscordPlatform
     ? (agent.discordService || null)
     : platform === 'kakao'
@@ -2605,6 +2635,8 @@ function buildAgentDisplayContext(agent, serviceAgents = {}, telegramAgents = {}
     tokenConfigured,
     credentialLabel,
     connectorOnly,
+    kakaoPlatformManaged,
+    kakaoPlatformService,
     connected,
     connectionSummary,
   };

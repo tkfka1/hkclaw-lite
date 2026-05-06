@@ -1346,6 +1346,15 @@ function shouldRestoreTelegramAgentService(agentName, agentStatus, legacyStatus,
 }
 
 function shouldRestoreKakaoAgentService(agentName, agentStatus, legacyStatus, legacySnapshot) {
+  if (legacySnapshot?.running || legacySnapshot?.starting || legacySnapshot?.pidAlive) {
+    return false;
+  }
+  if (
+    legacyStatus?.agentName === null &&
+    (legacyStatus?.desiredRunning ?? legacyStatus?.running)
+  ) {
+    return false;
+  }
   if (agentStatus?.desiredRunning ?? agentStatus?.running) {
     return true;
   }
@@ -1830,10 +1839,41 @@ async function startKakaoServiceProcess(projectRoot, agentName, options = {}) {
     `Agent "${agentName}" is not configured for Kakao.`,
   );
   const platformService = buildKakaoPlatformServiceSnapshot(projectRoot);
-  assert(
-    !platformService.running && !platformService.starting && !platformService.pidAlive,
-    'Kakao platform worker is already running. Stop it before starting an agent-specific Kakao worker.',
-  );
+  if (isManagedKakaoPlatformServiceActive(platformService)) {
+    setKakaoServiceDesiredRunning(projectRoot, true);
+    const runtimeAgent = platformService.agents?.[agentName] || null;
+    if (!runtimeAgent) {
+      const command = enqueueKakaoServiceCommand(projectRoot, {
+        action: 'reload-config',
+        agentName,
+      });
+      return {
+        action: 'start',
+        agentName,
+        platform: 'kakao',
+        delegatedTo: 'kakao-platform',
+        queued: true,
+        requestedAt: command.requestedAt,
+        running: platformService.running,
+        starting: platformService.starting,
+        pid: platformService.pid,
+        reason: 'platform-worker-running',
+      };
+    }
+
+    return {
+      action: 'start',
+      agentName,
+      platform: 'kakao',
+      delegatedTo: 'kakao-platform',
+      alreadyRunning: true,
+      running: platformService.running,
+      starting: platformService.starting,
+      pid: platformService.pid,
+      startedAt: platformService.startedAt,
+      reason: 'platform-worker-running',
+    };
+  }
 
   setKakaoAgentDesiredRunning(projectRoot, agentName, true);
   const current = buildKakaoAgentServiceSnapshot(projectRoot, agentName);
@@ -1881,6 +1921,32 @@ async function startKakaoServiceProcess(projectRoot, agentName, options = {}) {
 }
 
 async function restartKakaoServiceProcess(projectRoot, agentName) {
+  const config = loadConfig(projectRoot);
+  assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
+  assert(
+    (config.agents[agentName]?.platform || 'discord') === 'kakao',
+    `Agent "${agentName}" is not configured for Kakao.`,
+  );
+  const platformService = buildKakaoPlatformServiceSnapshot(projectRoot);
+  if (isManagedKakaoPlatformServiceActive(platformService)) {
+    const command = enqueueKakaoServiceCommand(projectRoot, {
+      action: 'reconnect-agent',
+      agentName,
+    });
+    return {
+      action: 'restart',
+      agentName,
+      platform: 'kakao',
+      delegatedTo: 'kakao-platform',
+      queued: true,
+      requestedAt: command.requestedAt,
+      running: platformService.running,
+      starting: platformService.starting,
+      pid: platformService.pid,
+      reason: 'platform-worker-running',
+    };
+  }
+
   const previous = await stopKakaoServiceProcess(projectRoot, agentName, {
     allowStopped: true,
     disableDesiredRunning: false,
@@ -1903,6 +1969,21 @@ async function stopKakaoServiceProcess(
   const config = loadConfig(projectRoot);
   assert(config.agents?.[agentName], `Agent "${agentName}" does not exist.`);
   const service = buildKakaoAgentServiceSnapshot(projectRoot, agentName);
+  const platformService = buildKakaoPlatformServiceSnapshot(projectRoot);
+  if (isManagedKakaoPlatformServiceActive(platformService) && !service.pidAlive) {
+    setKakaoAgentDesiredRunning(projectRoot, agentName, false);
+    return {
+      action: 'stop',
+      agentName,
+      platform: 'kakao',
+      delegatedTo: 'kakao-platform',
+      skipped: true,
+      running: platformService.running,
+      starting: platformService.starting,
+      pid: platformService.pid,
+      reason: 'managed-by-platform-worker',
+    };
+  }
   if (!service.pidAlive) {
     if (service.stale || service.state === 'stopped') {
       const normalized = normalizeKakaoServiceStoppedState(projectRoot, agentName, {
@@ -1955,6 +2036,10 @@ async function stopKakaoServiceProcess(
     pid: normalized.pid,
     stoppedAt: normalized.stoppedAt,
   };
+}
+
+function isManagedKakaoPlatformServiceActive(service) {
+  return Boolean(service?.running || service?.starting || service?.pidAlive);
 }
 
 async function stopKakaoPlatformServiceProcess(

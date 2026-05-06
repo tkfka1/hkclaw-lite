@@ -193,6 +193,10 @@ test('agent cards distinguish connector-managed channels from legacy agent token
   assert.match(appSource, /Kakao 연결 사용/u);
   assert.match(appSource, /Kakao 연결에서 수신/u);
   assert.match(appSource, /Kakao 연결에서 관리/u);
+  assert.match(appSource, /kakaoPlatformManaged/u);
+  assert.match(appSource, /renderKakaoPlatformAgentPrimaryAction/u);
+  assert.match(appSource, /Kakao 연결 실행 중/u);
+  assert.doesNotMatch(appSource, /Kakao platform worker is already running/u);
   assert.match(appSource, /function\s+unique\s*\(/u);
 });
 
