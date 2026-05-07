@@ -87,6 +87,13 @@ import {
 } from './bundled-cli.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import {
+  deleteSchedule,
+  listSchedules,
+  runScheduleNow,
+  startScheduler,
+  upsertSchedule,
+} from './scheduler.js';
+import {
   applyTopology,
   exportTopology,
   formatTopologyPlan,
@@ -178,6 +185,7 @@ export async function startAdminServer(
   await autoStartRequiredMessagingWorkers(projectRoot).catch((error) => {
     console.error(`Failed to auto-start messaging workers: ${toErrorMessage(error)}`);
   });
+  const scheduler = startScheduler(projectRoot);
 
   return {
     server,
@@ -187,8 +195,9 @@ export async function startAdminServer(
     authEnabled: auth.enabled,
     authStorage: auth.storage,
     passwordEnv: ADMIN_PASSWORD_ENV,
-    close: () =>
-      new Promise((resolve, reject) => {
+    close: () => {
+      scheduler.stop();
+      return new Promise((resolve, reject) => {
         server.close((error) => {
           if (error) {
             reject(error);
@@ -196,7 +205,8 @@ export async function startAdminServer(
           }
           resolve();
         });
-      }),
+      });
+    },
   };
 }
 
@@ -304,6 +314,52 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
         name,
       },
       history: await listRuntimeHistory(projectRoot, { targetType, name, limit }),
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/schedules') {
+    writeJson(response, 200, {
+      ok: true,
+      schedules: await listSchedules(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/schedules') {
+    const payload = await readJsonBody(request);
+    writeJson(response, 200, {
+      ok: true,
+      schedule: await upsertSchedule(
+        projectRoot,
+        payload.currentName || payload.currentNameOrId || null,
+        payload.definition || payload,
+      ),
+      state: await buildAdminSnapshot(projectRoot),
+    });
+    return;
+  }
+
+  if (
+    request.method === 'POST' &&
+    pathname.startsWith('/api/schedules/') &&
+    pathname.endsWith('/run')
+  ) {
+    const name = decodeEntityPath(pathname.slice(0, -'/run'.length), '/api/schedules/');
+    writeJson(response, 200, {
+      ok: true,
+      result: await runScheduleNow(projectRoot, name),
+      state: await buildAdminSnapshot(projectRoot),
+    });
+    return;
+  }
+
+  if (request.method === 'DELETE' && pathname.startsWith('/api/schedules/')) {
+    const name = decodeEntityPath(pathname, '/api/schedules/');
+    await deleteSchedule(projectRoot, name);
+    writeJson(response, 200, {
+      ok: true,
+      state: await buildAdminSnapshot(projectRoot),
     });
     return;
   }

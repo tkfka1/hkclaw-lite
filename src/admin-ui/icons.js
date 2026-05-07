@@ -2,6 +2,7 @@ const ICONS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
   agents: '<circle cx="9" cy="8" r="2.5"/><circle cx="16.5" cy="9.5" r="2"/><path d="M4.5 19a4.5 4.5 0 0 1 9 0"/><path d="M13.5 19a3.5 3.5 0 0 1 7 0"/>',
   channels: '<path d="M5 7h14"/><path d="M5 12h10"/><path d="M5 17h7"/><circle cx="19" cy="12" r="2"/>',
+  schedule: '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/><path d="M4 4l3 2"/><path d="M20 4l-3 2"/>',
   link: '<path d="M10 13a5 5 0 0 1 0-7l1.2-1.2a5 5 0 0 1 7 7L17 13"/><path d="M14 11a5 5 0 0 1 0 7l-1.2 1.2a5 5 0 1 1-7-7L7 11"/>',
   ai: '<rect x="6" y="7" width="12" height="10" rx="2"/><path d="M9 4v3"/><path d="M15 4v3"/><path d="M9 17v3"/><path d="M15 17v3"/><path d="M3 10h3"/><path d="M18 10h3"/><path d="M3 14h3"/><path d="M18 14h3"/>',
   tokens: '<path d="M12 3v18"/><path d="M7 7h7.5a3.5 3.5 0 0 1 0 7H9.5a3.5 3.5 0 0 0 0 7H17"/>',

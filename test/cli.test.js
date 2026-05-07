@@ -626,6 +626,62 @@ test('run command executes a mapped channel and status renders agents and channe
   assert.match(channelStatus.stdout, /workspace=~/u);
 });
 
+test('schedule command stores durable channel jobs and runs due entries once', () => {
+  const cwd = createProject();
+  assert.equal(runCli(cwd, ['init']).status, 0);
+  assert.equal(
+    runCli(cwd, ['add', 'agent'], {
+      input: buildCommandAgentAnswers({ name: 'worker' }),
+    }).status,
+    0,
+  );
+  assert.equal(
+    runCli(cwd, ['add', 'channel'], {
+      input: buildChannelAnswers({ name: 'discord-main', agentChoice: '1' }),
+    }).status,
+    0,
+  );
+
+  const add = runCli(cwd, [
+    'schedule',
+    'add',
+    'heartbeat',
+    '--channel',
+    'discord-main',
+    '--every',
+    '5m',
+    '--message',
+    'scheduled cli',
+    '--next-run-at',
+    new Date(Date.now() - 60_000).toISOString(),
+  ]);
+  assert.equal(add.status, 0, add.stderr);
+  assert.match(add.stdout, /Added schedule "heartbeat"/u);
+
+  const list = runCli(cwd, ['schedule', 'list']);
+  assert.equal(list.status, 0, list.stderr);
+  assert.match(list.stdout, /heartbeat/u);
+  assert.match(list.stdout, /channel=discord-main/u);
+
+  const tick = runCli(cwd, ['schedule', 'tick']);
+  assert.equal(tick.status, 0, tick.stderr);
+  assert.match(tick.stdout, /heartbeat\s+completed/u);
+
+  const show = runCli(cwd, ['schedule', 'show', 'heartbeat']);
+  assert.equal(show.status, 0, show.stderr);
+  const schedule = JSON.parse(show.stdout);
+  assert.equal(schedule.lastStatus, 'completed');
+  assert.ok(new Date(schedule.nextRunAt).getTime() > Date.now());
+
+  const blockedRemoveChannel = runCli(cwd, ['remove', 'channel', 'discord-main', '--yes']);
+  assert.notEqual(blockedRemoveChannel.status, 0);
+  assert.match(blockedRemoveChannel.stderr, /referenced by schedules/u);
+
+  const remove = runCli(cwd, ['schedule', 'remove', 'heartbeat', '--yes']);
+  assert.equal(remove.status, 0, remove.stderr);
+  assert.match(remove.stdout, /Removed schedule "heartbeat"/u);
+});
+
 test('help omits chat and session commands and documents the admin port', () => {
   const cwd = createProject();
   const help = runCli(cwd, ['help']);

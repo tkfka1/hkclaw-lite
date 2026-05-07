@@ -123,6 +123,23 @@ test('agent and channel cards expose click-through activity logs', () => {
   assert.match(styles, /\.activity-log-list/u);
 });
 
+test('admin UI exposes durable schedule management', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const shellSource = readRepoFile('src/admin-ui/ui-shell.js');
+  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
+
+  assert.match(appSource, /schedules/u);
+  assert.match(appSource, /open-schedule-modal/u);
+  assert.match(appSource, /api\/schedules/u);
+  assert.match(appSource, /run-schedule/u);
+  assert.match(appSource, /function\s+renderScheduleModal\s*\(/u);
+  assert.match(appSource, /function\s+renderScheduleList\s*\(/u);
+  assert.match(shellSource, /예약/u);
+  assert.match(shellSource, /schedule/u);
+  assert.match(viewsSource, /renderSchedulesView/u);
+  assert.match(viewsSource, /예약 실행/u);
+});
+
 test('channels page exposes relay server and routing channels without a Kakao session surface', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');

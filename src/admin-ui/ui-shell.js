@@ -1,4 +1,4 @@
-import { renderIcon } from './icons.js?v=20260427-02';
+import { renderIcon } from './icons.js?v=20260507-01';
 
 export const DESKTOP_NAV_MIN_WIDTH = 1081;
 
@@ -6,6 +6,7 @@ const NAV_TABS = [
   { view: 'home', label: '개요' },
   { view: 'agents', label: '에이전트' },
   { view: 'channels', label: '채널' },
+  { view: 'schedules', label: '예약' },
   { view: 'topology', label: '구성' },
   { view: 'ai', label: 'AI' },
   { view: 'tokens', label: '토큰' },
@@ -26,6 +27,9 @@ export function getViewMeta(view = 'home') {
     },
     channels: {
       title: '채널 관리',
+    },
+    schedules: {
+      title: '예약 실행',
     },
     topology: {
       title: '구성 자동화',
@@ -195,6 +199,8 @@ function resolveViewIcon(view) {
       return 'agents';
     case 'channels':
       return 'channels';
+    case 'schedules':
+      return 'schedule';
     case 'topology':
       return 'link';
     case 'ai':

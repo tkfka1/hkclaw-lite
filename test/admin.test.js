@@ -1240,6 +1240,54 @@ test('admin server saves config changes and can run a mapped channel', async () 
     assert.equal(runResponse.response.status, 200, JSON.stringify(runResponse.payload));
     assert.match(runResponse.payload.result.output, /response=HELLO ADMIN/u);
 
+    const scheduleResponse = await requestJson(`${url}/api/schedules`, {
+      method: 'POST',
+      body: {
+        definition: {
+          name: 'admin-heartbeat',
+          channelName: 'discord-main',
+          scheduleType: 'interval',
+          intervalMs: 60_000,
+          prompt: 'scheduled admin',
+          nextRunAt: '2099-01-01T00:00:00.000Z',
+        },
+      },
+    });
+    assert.equal(scheduleResponse.response.status, 200, JSON.stringify(scheduleResponse.payload));
+    assert.equal(scheduleResponse.payload.state.schedules[0].name, 'admin-heartbeat');
+
+    const scheduleList = await requestJson(`${url}/api/schedules`);
+    assert.equal(scheduleList.response.status, 200, JSON.stringify(scheduleList.payload));
+    assert.equal(scheduleList.payload.schedules[0].channelName, 'discord-main');
+
+    const scheduleRun = await requestJson(
+      `${url}/api/schedules/${encodeURIComponent('admin-heartbeat')}/run`,
+      {
+        method: 'POST',
+      },
+    );
+    assert.equal(scheduleRun.response.status, 200, JSON.stringify(scheduleRun.payload));
+    assert.equal(scheduleRun.payload.result.status, 'completed');
+    assert.match(scheduleRun.payload.result.result.content, /SCHEDULED ADMIN/u);
+    assert.equal(scheduleRun.payload.state.schedules[0].lastStatus, 'completed');
+
+    const blockedScheduledChannelDelete = await requestJson(
+      `${url}/api/channels/${encodeURIComponent('discord-main')}`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(blockedScheduledChannelDelete.response.status, 400);
+    assert.match(blockedScheduledChannelDelete.payload.error, /referenced by schedules/u);
+
+    const deleteScheduleResponse = await requestJson(
+      `${url}/api/schedules/${encodeURIComponent('admin-heartbeat')}`,
+      {
+        method: 'DELETE',
+      },
+    );
+    assert.equal(deleteScheduleResponse.response.status, 200, JSON.stringify(deleteScheduleResponse.payload));
+
     const deleteChannel = await requestJson(
       `${url}/api/channels/${encodeURIComponent('discord-main')}`,
       {

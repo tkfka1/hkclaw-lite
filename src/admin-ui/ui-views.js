@@ -1,5 +1,5 @@
-import { renderShortcutCard } from './ui-shell.js?v=20260427-02';
-import { renderIcon } from './icons.js?v=20260427-02';
+import { renderShortcutCard } from './ui-shell.js?v=20260507-01';
+import { renderIcon } from './icons.js?v=20260507-01';
 
 export function renderHomeView(ctx) {
   const { state, escapeHtml } = ctx;
@@ -15,6 +15,7 @@ export function renderHomeView(ctx) {
       <div class="shortcut-grid">
         ${renderShortcutCard({ view: 'agents', title: '에이전트', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
         ${renderShortcutCard({ view: 'channels', title: '채널', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
+        ${renderShortcutCard({ view: 'schedules', title: '예약', description: '정해진 시간에 채널 실행', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
         ${renderShortcutCard({ view: 'ai', title: 'AI', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
       </div>
     </section>
@@ -64,6 +65,22 @@ export function renderChannelsView(ctx) {
         </div>
       </div>
       ${renderKakaoRelayServerPanel(state.data || {})}
+    </section>
+  `;
+}
+
+export function renderSchedulesView(ctx) {
+  const { state, renderScheduleList } = ctx;
+  return `
+    <section class="panel section-panel">
+      <div class="section-head">
+        <div class="section-title-group">
+          <span class="section-title-icon">${renderIcon('schedule', 'ui-icon')}</span>
+          <h2>예약 실행</h2>
+        </div>
+        <button type="button" class="btn-primary" data-action="open-schedule-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}예약 추가</button>
+      </div>
+      ${renderScheduleList(state.data.schedules || [])}
     </section>
   `;
 }

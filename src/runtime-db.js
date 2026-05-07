@@ -949,6 +949,473 @@ export async function listRuntimeRoleSessions(
   }));
 }
 
+export async function listRuntimeSchedules(projectRoot, { limit = 200 } = {}) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedLimit = normalizePositiveInteger(limit, 200);
+  return db
+    .prepare(
+      `
+        SELECT
+          schedule_id,
+          name,
+          enabled,
+          target_type,
+          channel_name,
+          prompt,
+          skill_name,
+          schedule_type,
+          interval_ms,
+          time_of_day,
+          timezone,
+          next_run_at,
+          last_run_at,
+          last_status,
+          last_error,
+          lease_owner,
+          lease_expires_at,
+          created_at,
+          updated_at
+        FROM runtime_schedules
+        ORDER BY enabled DESC, next_run_at ASC, name ASC
+        LIMIT ?
+      `,
+    )
+    .all(normalizedLimit)
+    .map(mapRuntimeScheduleRow);
+}
+
+export async function getRuntimeSchedule(projectRoot, nameOrId) {
+  const db = await getRuntimeDb(projectRoot);
+  const identifier = normalizeNullableString(nameOrId);
+  assert(identifier, 'Schedule name is required.');
+  const row = db
+    .prepare(
+      `
+        SELECT
+          schedule_id,
+          name,
+          enabled,
+          target_type,
+          channel_name,
+          prompt,
+          skill_name,
+          schedule_type,
+          interval_ms,
+          time_of_day,
+          timezone,
+          next_run_at,
+          last_run_at,
+          last_status,
+          last_error,
+          lease_owner,
+          lease_expires_at,
+          created_at,
+          updated_at
+        FROM runtime_schedules
+        WHERE name = ? OR schedule_id = ?
+      `,
+    )
+    .get(identifier, identifier);
+  return row ? mapRuntimeScheduleRow(row) : null;
+}
+
+export async function upsertRuntimeSchedule(projectRoot, currentNameOrId, input) {
+  const db = await getRuntimeDb(projectRoot);
+  const now = timestamp();
+  const currentIdentifier = normalizeNullableString(currentNameOrId);
+  const existing = currentIdentifier
+    ? db
+        .prepare(
+          `
+            SELECT *
+            FROM runtime_schedules
+            WHERE name = ? OR schedule_id = ?
+          `,
+        )
+        .get(currentIdentifier, currentIdentifier)
+    : null;
+
+  const name = normalizeScheduleName(input?.name);
+  const scheduleId = existing?.schedule_id || crypto.randomUUID();
+  const createdAt = existing?.created_at || now;
+
+  if (!existing) {
+    const duplicate = db
+      .prepare('SELECT schedule_id FROM runtime_schedules WHERE name = ?')
+      .get(name);
+    assert(!duplicate, `Schedule "${name}" already exists.`);
+  } else if (name !== existing.name) {
+    const duplicate = db
+      .prepare(
+        `
+          SELECT schedule_id
+          FROM runtime_schedules
+          WHERE name = ?
+            AND schedule_id <> ?
+        `,
+      )
+      .get(name, scheduleId);
+    assert(!duplicate, `Schedule "${name}" already exists.`);
+  }
+
+  db.prepare(
+    `
+      INSERT INTO runtime_schedules (
+        schedule_id,
+        name,
+        enabled,
+        target_type,
+        channel_name,
+        prompt,
+        skill_name,
+        schedule_type,
+        interval_ms,
+        time_of_day,
+        timezone,
+        next_run_at,
+        last_run_at,
+        last_status,
+        last_error,
+        lease_owner,
+        lease_expires_at,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+      ON CONFLICT(schedule_id) DO UPDATE SET
+        name = excluded.name,
+        enabled = excluded.enabled,
+        target_type = excluded.target_type,
+        channel_name = excluded.channel_name,
+        prompt = excluded.prompt,
+        skill_name = excluded.skill_name,
+        schedule_type = excluded.schedule_type,
+        interval_ms = excluded.interval_ms,
+        time_of_day = excluded.time_of_day,
+        timezone = excluded.timezone,
+        next_run_at = excluded.next_run_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    scheduleId,
+    name,
+    input?.enabled ? 1 : 0,
+    normalizeNullableString(input?.targetType) || 'channel',
+    normalizeNullableString(input?.channelName),
+    String(input?.prompt || ''),
+    normalizeNullableString(input?.skillName),
+    normalizeNullableString(input?.scheduleType) || 'interval',
+    input?.intervalMs ?? null,
+    normalizeNullableString(input?.timeOfDay),
+    normalizeNullableString(input?.timezone),
+    normalizeNullableString(input?.nextRunAt),
+    existing?.last_run_at || null,
+    existing?.last_status || null,
+    existing?.last_error || null,
+    createdAt,
+    now,
+  );
+
+  return await getRuntimeSchedule(projectRoot, scheduleId);
+}
+
+export async function deleteRuntimeSchedule(projectRoot, nameOrId) {
+  const db = await getRuntimeDb(projectRoot);
+  const schedule = await getRuntimeSchedule(projectRoot, nameOrId);
+  assert(schedule, `Unknown schedule "${nameOrId}".`);
+  const result = db
+    .prepare('DELETE FROM runtime_schedules WHERE schedule_id = ?')
+    .run(schedule.scheduleId);
+  return Number(result?.changes || 0) > 0;
+}
+
+export async function listDueRuntimeSchedules(projectRoot, nowIso, { limit = 10 } = {}) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedNow = normalizeNullableString(nowIso) || timestamp();
+  const normalizedLimit = normalizePositiveInteger(limit, 10);
+  return db
+    .prepare(
+      `
+        SELECT
+          schedule_id,
+          name,
+          enabled,
+          target_type,
+          channel_name,
+          prompt,
+          skill_name,
+          schedule_type,
+          interval_ms,
+          time_of_day,
+          timezone,
+          next_run_at,
+          last_run_at,
+          last_status,
+          last_error,
+          lease_owner,
+          lease_expires_at,
+          created_at,
+          updated_at
+        FROM runtime_schedules
+        WHERE enabled = 1
+          AND next_run_at <= ?
+          AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+        ORDER BY next_run_at ASC, name ASC
+        LIMIT ?
+      `,
+    )
+    .all(normalizedNow, normalizedNow, normalizedLimit)
+    .map(mapRuntimeScheduleRow);
+}
+
+export async function claimRuntimeSchedule(
+  projectRoot,
+  scheduleId,
+  {
+    leaseOwner,
+    leaseExpiresAt,
+    now = timestamp(),
+    dueOnly = true,
+    requireEnabled = true,
+  } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedScheduleId = normalizeNullableString(scheduleId);
+  const normalizedLeaseOwner = normalizeNullableString(leaseOwner);
+  const normalizedLeaseExpiresAt = normalizeNullableString(leaseExpiresAt);
+  const normalizedNow = normalizeNullableString(now) || timestamp();
+  assert(normalizedScheduleId, 'scheduleId is required.');
+  assert(normalizedLeaseOwner, 'leaseOwner is required.');
+  assert(normalizedLeaseExpiresAt, 'leaseExpiresAt is required.');
+
+  const predicates = [
+    'schedule_id = ?',
+    '(lease_expires_at IS NULL OR lease_expires_at <= ?)',
+  ];
+  const values = [normalizedLeaseOwner, normalizedLeaseExpiresAt, normalizedNow, normalizedScheduleId, normalizedNow];
+  if (requireEnabled) {
+    predicates.push('enabled = 1');
+  }
+  if (dueOnly) {
+    predicates.push('next_run_at <= ?');
+    values.push(normalizedNow);
+  }
+
+  const result = db
+    .prepare(
+      `
+        UPDATE runtime_schedules
+        SET lease_owner = ?,
+            lease_expires_at = ?,
+            updated_at = ?
+        WHERE ${predicates.join(' AND ')}
+      `,
+    )
+    .run(...values);
+
+  if (Number(result?.changes || 0) === 0) {
+    return null;
+  }
+  return await getRuntimeSchedule(projectRoot, normalizedScheduleId);
+}
+
+export async function renewRuntimeScheduleLease(
+  projectRoot,
+  scheduleId,
+  {
+    leaseOwner,
+    leaseExpiresAt,
+    now = timestamp(),
+  } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedScheduleId = normalizeNullableString(scheduleId);
+  const normalizedLeaseOwner = normalizeNullableString(leaseOwner);
+  const normalizedLeaseExpiresAt = normalizeNullableString(leaseExpiresAt);
+  assert(normalizedScheduleId, 'scheduleId is required.');
+  assert(normalizedLeaseOwner, 'leaseOwner is required.');
+  assert(normalizedLeaseExpiresAt, 'leaseExpiresAt is required.');
+  const result = db
+    .prepare(
+      `
+        UPDATE runtime_schedules
+        SET lease_expires_at = ?,
+            updated_at = ?
+        WHERE schedule_id = ?
+          AND lease_owner = ?
+      `,
+    )
+    .run(
+      normalizedLeaseExpiresAt,
+      normalizeNullableString(now) || timestamp(),
+      normalizedScheduleId,
+      normalizedLeaseOwner,
+    );
+  return Number(result?.changes || 0) > 0;
+}
+
+export async function createRuntimeScheduleRun(
+  projectRoot,
+  schedule,
+  {
+    dueAt,
+    status = 'running',
+    leaseOwner = null,
+    startedAt = timestamp(),
+  } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedScheduleId = normalizeNullableString(schedule?.scheduleId);
+  assert(normalizedScheduleId, 'scheduleId is required.');
+  const normalizedStartedAt = normalizeNullableString(startedAt) || timestamp();
+  const normalizedDueAt =
+    normalizeNullableString(dueAt) ||
+    normalizeNullableString(schedule?.nextRunAt) ||
+    normalizedStartedAt;
+  const result = db
+    .prepare(
+      `
+        INSERT INTO runtime_schedule_runs (
+          schedule_id,
+          schedule_name,
+          due_at,
+          started_at,
+          completed_at,
+          status,
+          runtime_run_id,
+          error_text,
+          lease_owner
+        )
+        VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, ?)
+      `,
+    )
+    .run(
+      normalizedScheduleId,
+      normalizeNullableString(schedule?.name),
+      normalizedDueAt,
+      normalizedStartedAt,
+      normalizeNullableString(status) || 'running',
+      normalizeNullableString(leaseOwner),
+    );
+  return Number(result.lastInsertRowid);
+}
+
+export async function completeRuntimeScheduleRun(
+  projectRoot,
+  scheduleRunId,
+  {
+    scheduleId,
+    runtimeRunId = null,
+    nextRunAt = undefined,
+    completedAt = timestamp(),
+  } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedCompletedAt = normalizeNullableString(completedAt) || timestamp();
+  db.prepare(
+    `
+      UPDATE runtime_schedule_runs
+      SET status = 'completed',
+          runtime_run_id = ?,
+          completed_at = ?,
+          error_text = NULL
+      WHERE id = ?
+    `,
+  ).run(normalizeNullableString(runtimeRunId), normalizedCompletedAt, scheduleRunId);
+
+  updateRuntimeScheduleAfterRun(db, {
+    scheduleId,
+    status: 'completed',
+    completedAt: normalizedCompletedAt,
+    errorText: null,
+    nextRunAt,
+  });
+}
+
+export async function failRuntimeScheduleRun(
+  projectRoot,
+  scheduleRunId,
+  {
+    scheduleId,
+    runtimeRunId = null,
+    error,
+    nextRunAt = undefined,
+    completedAt = timestamp(),
+  } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedCompletedAt = normalizeNullableString(completedAt) || timestamp();
+  const errorText = toErrorMessage(error);
+  db.prepare(
+    `
+      UPDATE runtime_schedule_runs
+      SET status = 'failed',
+          runtime_run_id = ?,
+          completed_at = ?,
+          error_text = ?
+      WHERE id = ?
+    `,
+  ).run(
+    normalizeNullableString(runtimeRunId),
+    normalizedCompletedAt,
+    errorText,
+    scheduleRunId,
+  );
+
+  updateRuntimeScheduleAfterRun(db, {
+    scheduleId,
+    status: 'failed',
+    completedAt: normalizedCompletedAt,
+    errorText,
+    nextRunAt,
+  });
+}
+
+export async function listRuntimeScheduleRuns(
+  projectRoot,
+  { scheduleId = null, scheduleName = null, limit = 20 } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedLimit = normalizePositiveInteger(limit, 20);
+  const normalizedScheduleId = normalizeNullableString(scheduleId);
+  const normalizedScheduleName = normalizeNullableString(scheduleName);
+  const rows = normalizedScheduleId
+    ? db
+        .prepare(
+          `
+            SELECT *
+            FROM runtime_schedule_runs
+            WHERE schedule_id = ?
+            ORDER BY started_at DESC, id DESC
+            LIMIT ?
+          `,
+        )
+        .all(normalizedScheduleId, normalizedLimit)
+    : normalizedScheduleName
+      ? db
+          .prepare(
+            `
+              SELECT *
+              FROM runtime_schedule_runs
+              WHERE schedule_name = ?
+              ORDER BY started_at DESC, id DESC
+              LIMIT ?
+            `,
+          )
+          .all(normalizedScheduleName, normalizedLimit)
+      : db
+          .prepare(
+            `
+              SELECT *
+              FROM runtime_schedule_runs
+              ORDER BY started_at DESC, id DESC
+              LIMIT ?
+            `,
+          )
+          .all(normalizedLimit);
+  return rows.map(mapRuntimeScheduleRunRow);
+}
+
 export async function listPendingRuntimeOutboxEvents(
   projectRoot,
   { runId = null, limit = 100 } = {},
@@ -1771,6 +2238,39 @@ async function getRuntimeDb(projectRoot) {
       dispatched_at TEXT,
       FOREIGN KEY (run_id) REFERENCES runtime_runs(run_id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS runtime_schedules (
+      schedule_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      target_type TEXT NOT NULL DEFAULT 'channel',
+      channel_name TEXT,
+      prompt TEXT NOT NULL,
+      skill_name TEXT,
+      schedule_type TEXT NOT NULL,
+      interval_ms INTEGER,
+      time_of_day TEXT,
+      timezone TEXT,
+      next_run_at TEXT NOT NULL,
+      last_run_at TEXT,
+      last_status TEXT,
+      last_error TEXT,
+      lease_owner TEXT,
+      lease_expires_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS runtime_schedule_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id TEXT NOT NULL,
+      schedule_name TEXT,
+      due_at TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      status TEXT NOT NULL,
+      runtime_run_id TEXT,
+      error_text TEXT,
+      lease_owner TEXT
+    );
     CREATE TABLE IF NOT EXISTS admin_auth_config (
       id INTEGER PRIMARY KEY CHECK(id = 1),
       password_hash TEXT NOT NULL,
@@ -1853,6 +2353,14 @@ async function getRuntimeDb(projectRoot) {
       ON runtime_role_sessions(channel_name, updated_at DESC);
     CREATE INDEX IF NOT EXISTS runtime_outbox_events_pending_idx
       ON runtime_outbox_events(dispatched_at, id);
+    CREATE INDEX IF NOT EXISTS runtime_schedules_due_idx
+      ON runtime_schedules(enabled, next_run_at, lease_expires_at);
+    CREATE INDEX IF NOT EXISTS runtime_schedules_channel_idx
+      ON runtime_schedules(channel_name);
+    CREATE INDEX IF NOT EXISTS runtime_schedule_runs_schedule_idx
+      ON runtime_schedule_runs(schedule_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS runtime_schedule_runs_name_idx
+      ON runtime_schedule_runs(schedule_name, started_at DESC);
     CREATE INDEX IF NOT EXISTS admin_auth_sessions_expires_at_idx
       ON admin_auth_sessions(expires_at);
     CREATE INDEX IF NOT EXISTS managed_service_env_snapshots_updated_at_idx
@@ -2091,6 +2599,101 @@ function mapRuntimeRunRow(row) {
   };
 }
 
+function mapRuntimeScheduleRow(row) {
+  return {
+    scheduleId: row.schedule_id,
+    name: row.name,
+    enabled: Boolean(row.enabled),
+    targetType: row.target_type,
+    channelName: row.channel_name ?? null,
+    prompt: row.prompt,
+    skillName: row.skill_name ?? null,
+    scheduleType: row.schedule_type,
+    intervalMs: row.interval_ms ?? null,
+    timeOfDay: row.time_of_day ?? null,
+    timezone: row.timezone ?? null,
+    nextRunAt: row.next_run_at,
+    lastRunAt: row.last_run_at ?? null,
+    lastStatus: row.last_status ?? null,
+    lastError: row.last_error ?? null,
+    leaseOwner: row.lease_owner ?? null,
+    leaseExpiresAt: row.lease_expires_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapRuntimeScheduleRunRow(row) {
+  return {
+    id: row.id,
+    scheduleId: row.schedule_id,
+    scheduleName: row.schedule_name ?? null,
+    dueAt: row.due_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at ?? null,
+    status: row.status,
+    runtimeRunId: row.runtime_run_id ?? null,
+    error: row.error_text ?? null,
+    leaseOwner: row.lease_owner ?? null,
+  };
+}
+
+function updateRuntimeScheduleAfterRun(
+  db,
+  {
+    scheduleId,
+    status,
+    completedAt,
+    errorText,
+    nextRunAt = undefined,
+  },
+) {
+  const normalizedScheduleId = normalizeNullableString(scheduleId);
+  assert(normalizedScheduleId, 'scheduleId is required.');
+  if (nextRunAt === undefined) {
+    db.prepare(
+      `
+        UPDATE runtime_schedules
+        SET last_run_at = ?,
+            last_status = ?,
+            last_error = ?,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            updated_at = ?
+        WHERE schedule_id = ?
+      `,
+    ).run(
+      normalizeNullableString(completedAt) || timestamp(),
+      normalizeNullableString(status),
+      normalizeNullableString(errorText),
+      timestamp(),
+      normalizedScheduleId,
+    );
+    return;
+  }
+
+  db.prepare(
+    `
+      UPDATE runtime_schedules
+      SET last_run_at = ?,
+          last_status = ?,
+          last_error = ?,
+          next_run_at = ?,
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          updated_at = ?
+      WHERE schedule_id = ?
+    `,
+  ).run(
+    normalizeNullableString(completedAt) || timestamp(),
+    normalizeNullableString(status),
+    normalizeNullableString(errorText),
+    normalizeNullableString(nextRunAt),
+    timestamp(),
+    normalizedScheduleId,
+  );
+}
+
 function listRuntimeRunEventsForRunIds(db, runIds) {
   if (!runIds.length) {
     return new Map();
@@ -2184,6 +2787,24 @@ function normalizeRuntimeHistoryLimit(limit) {
     return 20;
   }
   return Math.min(numeric, 100);
+}
+
+function normalizePositiveInteger(value, fallbackValue) {
+  const numeric = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return fallbackValue;
+  }
+  return numeric;
+}
+
+function normalizeScheduleName(value) {
+  const normalized = normalizeNullableString(value);
+  assert(normalized, 'Schedule name is required.');
+  assert(
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(normalized),
+    'Schedule name may only contain letters, numbers, dot, underscore, and dash.',
+  );
+  return normalized;
 }
 
 function normalizeNullableString(value) {

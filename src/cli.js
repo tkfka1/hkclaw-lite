@@ -48,6 +48,14 @@ import { withPrompter } from './interactive.js';
 import { getDefaultKakaoRelayUrl } from './kakao-service.js';
 import { inspectAgentRuntime } from './runners.js';
 import {
+  deleteSchedule,
+  formatScheduleSummary,
+  listSchedules,
+  runDueSchedulesOnce,
+  runScheduleNow,
+  upsertSchedule,
+} from './scheduler.js';
+import {
   buildAgentDefinition,
   buildChannelDefinition,
   buildConnectorDefinition,
@@ -168,6 +176,9 @@ export async function main(argv) {
         return;
       case 'run':
         await handleRunCommand(projectRoot, tail);
+        return;
+      case 'schedule':
+        await handleScheduleCommand(projectRoot, tail);
         return;
       case 'dashboard':
         await handleDashboardCommand(projectRoot, tail);
@@ -592,6 +603,13 @@ async function handleRemoveCommand(projectRoot, argv) {
   if (kind === 'channel') {
     assert(name, 'Usage: hkclaw-lite remove channel <name> [--yes]');
     getChannel(config, name);
+    const blockingSchedules = (await listSchedules(projectRoot))
+      .filter((schedule) => schedule.channelName === name)
+      .map((schedule) => schedule.name);
+    assert(
+      blockingSchedules.length === 0,
+      `Channel "${name}" is referenced by schedules: ${blockingSchedules.join(', ')}.`,
+    );
     const confirmed = force
       ? true
       : await withPrompter((prompter) =>
@@ -624,6 +642,8 @@ async function handleListCommand(projectRoot, argv) {
     printChannels(listChannels(config));
     console.log('');
     printDashboards(listDashboards(config));
+    console.log('');
+    printSchedules(await listSchedules(projectRoot));
     return;
   }
 
@@ -647,7 +667,12 @@ async function handleListCommand(projectRoot, argv) {
     return;
   }
 
-  throw new Error('Usage: hkclaw-lite list [agents|connectors|channels|dashboards|all]');
+  if (['schedule', 'schedules'].includes(kind)) {
+    printSchedules(await listSchedules(projectRoot));
+    return;
+  }
+
+  throw new Error('Usage: hkclaw-lite list [agents|connectors|channels|dashboards|schedules|all]');
 }
 
 async function handleShowCommand(projectRoot, argv) {
@@ -701,6 +726,112 @@ async function handleRunCommand(projectRoot, argv) {
   });
 
   console.log(result.content);
+}
+
+async function handleScheduleCommand(projectRoot, argv) {
+  const [subcommand = 'list', ...tail] = argv;
+
+  if (['list', 'ls'].includes(subcommand)) {
+    printSchedules(await listSchedules(projectRoot));
+    return;
+  }
+
+  if (subcommand === 'show') {
+    const { positionals } = parseArgs(tail);
+    const scheduleName = positionals[0];
+    assert(scheduleName, 'Usage: hkclaw-lite schedule show <name>');
+    const schedule = (await listSchedules(projectRoot)).find(
+      (entry) => entry.name === scheduleName || entry.scheduleId === scheduleName,
+    );
+    assert(schedule, `Unknown schedule "${scheduleName}".`);
+    console.log(JSON.stringify(schedule, null, 2));
+    return;
+  }
+
+  if (['add', 'edit', 'set'].includes(subcommand)) {
+    const { flags, positionals } = parseArgs(tail);
+    const scheduleName = positionals[0];
+    assert(
+      scheduleName,
+      `Usage: hkclaw-lite schedule ${subcommand} <name> --channel <channel> (--every 10m|--daily HH:mm) --message TEXT`,
+    );
+    const definition = buildScheduleCliDefinition(scheduleName, flags);
+    const existingSchedule = (await listSchedules(projectRoot)).find(
+      (entry) => entry.name === scheduleName || entry.scheduleId === scheduleName,
+    );
+    assert(subcommand !== 'edit' || existingSchedule, `Unknown schedule "${scheduleName}".`);
+    const currentName =
+      subcommand === 'add'
+        ? null
+        : existingSchedule
+          ? existingSchedule.name
+          : null;
+    const schedule = await upsertSchedule(projectRoot, currentName, definition);
+    console.log(`${subcommand === 'add' ? 'Added' : 'Updated'} schedule "${schedule.name}".`);
+    console.log(`  ${formatScheduleSummary(schedule)} -> next=${humanDate(schedule.nextRunAt)}`);
+    return;
+  }
+
+  if (['remove', 'rm', 'delete'].includes(subcommand)) {
+    const { flags, positionals } = parseArgs(tail);
+    const scheduleName = positionals[0];
+    assert(scheduleName, 'Usage: hkclaw-lite schedule remove <name> [--yes]');
+    const confirmed = getBooleanFlag(flags, 'yes')
+      ? true
+      : await withPrompter((prompter) =>
+          prompter.askConfirm(`Remove schedule "${scheduleName}"?`, {
+            defaultValue: false,
+          }),
+        );
+    if (!confirmed) {
+      console.log('Cancelled.');
+      return;
+    }
+    await deleteSchedule(projectRoot, scheduleName);
+    console.log(`Removed schedule "${scheduleName}".`);
+    return;
+  }
+
+  if (subcommand === 'run') {
+    const { positionals } = parseArgs(tail);
+    const scheduleName = positionals[0];
+    assert(scheduleName, 'Usage: hkclaw-lite schedule run <name>');
+    const result = await runScheduleNow(projectRoot, scheduleName);
+    console.log(result.result?.content || `Schedule "${scheduleName}" completed.`);
+    return;
+  }
+
+  if (['tick', 'worker', 'due'].includes(subcommand)) {
+    const { flags } = parseArgs(tail);
+    const maxSchedules = parseOptionalInteger(getFlagValue(flags, 'max'), 'max') || 5;
+    const results = await runDueSchedulesOnce(projectRoot, { maxSchedules });
+    printScheduleRunResults(results);
+    return;
+  }
+
+  throw new Error(
+    'Usage: hkclaw-lite schedule <list|show|add|edit|set|remove|run|tick> ...',
+  );
+}
+
+function buildScheduleCliDefinition(name, flags) {
+  const every = getFlagValue(flags, 'every') || getFlagValue(flags, 'interval');
+  const intervalMs = getFlagValue(flags, 'interval-ms');
+  const daily = getFlagValue(flags, 'daily') || getFlagValue(flags, 'time-of-day');
+  const scheduleType = daily ? 'daily' : every || intervalMs ? 'interval' : undefined;
+  return {
+    name,
+    enabled: !getBooleanFlag(flags, 'disabled'),
+    channelName: getFlagValue(flags, 'channel') || getFlagValue(flags, 'channel-name'),
+    prompt: getFlagValue(flags, 'message') || getFlagValue(flags, 'prompt'),
+    skillName: getFlagValue(flags, 'skill') || getFlagValue(flags, 'skill-name'),
+    scheduleType,
+    every,
+    intervalMs,
+    timeOfDay: daily,
+    timezone: getFlagValue(flags, 'timezone') || getFlagValue(flags, 'tz'),
+    nextRunAt: getFlagValue(flags, 'next-run-at') || getFlagValue(flags, 'next'),
+  };
 }
 
 function resolveRunTarget(projectRoot, config, positionals, flags) {
@@ -2385,6 +2516,36 @@ function printDashboards(dashboards) {
   }
 }
 
+function printSchedules(schedules) {
+  console.log('Schedules');
+  if (schedules.length === 0) {
+    console.log('  (none)');
+    return;
+  }
+  for (const schedule of schedules) {
+    const stateText = schedule.enabled ? 'enabled' : 'disabled';
+    const targetText = `channel=${schedule.channelName || '-'}`;
+    const timingText = formatScheduleSummary(schedule);
+    const statusText = schedule.lastStatus ? `last=${schedule.lastStatus}` : 'last=never';
+    console.log(
+      `  ${schedule.name}\t${stateText}\t${targetText}\t${timingText}\tnext=${humanDate(schedule.nextRunAt)}\t${statusText}`,
+    );
+  }
+}
+
+function printScheduleRunResults(results) {
+  if (!results.length) {
+    console.log('No due schedules.');
+    return;
+  }
+  for (const result of results) {
+    const suffix = result.error ? `\t${result.error}` : '';
+    console.log(
+      `${result.scheduleName}\t${result.status}\trun=${result.runtimeRunId || '-'}\tnext=${result.nextRunAt ? humanDate(result.nextRunAt) : '-'}${suffix}`,
+    );
+  }
+}
+
 function formatDashboardMonitorText(monitors) {
   return monitors.includes(DASHBOARD_ALL_AGENTS) ? 'all' : monitors.join(', ');
 }
@@ -2521,6 +2682,7 @@ Execution model:
   hkclaw-lite / --help      Show help only
   hkclaw-lite admin         Start the web admin server
   hkclaw-lite run ...       Execute one one-shot turn
+  hkclaw-lite schedule ...  Manage durable channel schedules
   hkclaw-lite bundles update Update project-local bundled AI CLIs
   hkclaw-lite discord serve Start the long-running Discord worker
   hkclaw-lite telegram serve Start the long-running Telegram worker
@@ -2548,13 +2710,19 @@ Usage:
   hkclaw-lite remove connector <name> [--yes]
   hkclaw-lite remove channel <name> [--yes]
   hkclaw-lite remove dashboard <name> [--yes]
-  hkclaw-lite list [agents|connectors|channels|dashboards|all]
+  hkclaw-lite list [agents|connectors|channels|dashboards|schedules|all]
   hkclaw-lite show agent <name>
   hkclaw-lite show connector <name>
   hkclaw-lite show channel <name>
   hkclaw-lite show dashboard <name>
   hkclaw-lite run <agent> [--workdir DIR] [--message TEXT]
   hkclaw-lite run --channel <name> [--message TEXT]
+  hkclaw-lite schedule list
+  hkclaw-lite schedule add <name> --channel <channel> (--every 10m|--daily 09:00 --timezone Asia/Seoul) --message TEXT
+  hkclaw-lite schedule edit <name> [--every 1h|--daily 09:00] [--message TEXT] [--disabled]
+  hkclaw-lite schedule run <name>
+  hkclaw-lite schedule tick
+  hkclaw-lite schedule remove <name> [--yes]
   hkclaw-lite bundles status
   hkclaw-lite bundles update [codex|claude-code|gemini-cli|all] [--version latest]
   hkclaw-lite topology plan --file <file> [--actor <agent>]
@@ -2589,6 +2757,8 @@ Examples:
   hkclaw-lite add dashboard
   hkclaw-lite run --channel discord-main --message "summarize the repo"
   hkclaw-lite run dev-codex --workdir ./workspaces/dev --message "review the latest diff"
+  hkclaw-lite schedule add daily-ops --channel discord-main --daily 09:00 --timezone Asia/Seoul --message "run the daily ops checklist"
+  hkclaw-lite schedule add repo-watch --channel discord-main --every 30m --message "check for actionable repository updates"
   hkclaw-lite bundles update all
   hkclaw-lite topology plan --file ./topology.json
   hkclaw-lite topology apply --file ./topology.json --yes

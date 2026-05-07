@@ -3,24 +3,25 @@ import {
   renderFrame as buildFrame,
   renderMetricCard as buildMetricCard,
   shouldUseDesktopSidebar,
-} from './ui-shell.js?v=20260427-02';
+} from './ui-shell.js?v=20260507-01';
 import {
   renderAgentsView as buildAgentsView,
   renderAiView as buildAiView,
   renderAllView as buildAllView,
   renderChannelsView as buildChannelsView,
   renderHomeView as buildHomeView,
+  renderSchedulesView as buildSchedulesView,
   renderTopologyView as buildTopologyView,
-} from './ui-views.js?v=20260427-02';
+} from './ui-views.js?v=20260507-01';
 import {
   AI_MANAGER_STATUS_POLL_MAX_ATTEMPTS,
   getAiManagerStatusPollDelay,
-} from './polling.js?v=20260427-02';
+} from './polling.js?v=20260507-01';
 import {
   getClaudeRuntimeSourceBadge,
   getClaudeRuntimeSourceHintLines,
-} from './claude-runtime-ui.js?v=20260427-02';
-import { renderIcon } from './icons.js?v=20260427-02';
+} from './claude-runtime-ui.js?v=20260507-01';
+import { renderIcon } from './icons.js?v=20260507-01';
 import {
   applyTelegramRecentChatToDraft,
   formatTelegramRecentChatTitle,
@@ -32,7 +33,7 @@ const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
 const FALLBACK_KAKAO_RELAY_URL = 'https://k.tess.dev/';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 const STATE_REFRESH_INTERVAL_MS = 5_000;
-const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'topology', 'ai', 'tokens', 'all']);
+const VIEW_NAMES = new Set(['home', 'agents', 'channels', 'schedules', 'topology', 'ai', 'tokens', 'all']);
 const ADMIN_PASSWORD_FIELD_NAMES = ['currentPassword', 'newPassword', 'confirmPassword'];
 let noticeTimer = null;
 let stateRefreshTimer = null;
@@ -58,11 +59,13 @@ const state = {
   agentModalOpen: false,
   connectorModalOpen: false,
   channelModalOpen: false,
+  scheduleModalOpen: false,
   localLlmModalOpen: false,
   adminPasswordModalOpen: false,
   runtimeHistoryModal: null,
   connectorDraft: null,
   channelDraft: null,
+  scheduleDraft: null,
   localLlmDraft: null,
   agentWizard: null,
   aiManager: null,
@@ -71,6 +74,7 @@ const state = {
     agentWizard: {},
     connector: {},
     channel: {},
+    schedule: {},
     localLlm: {},
     adminPassword: {},
   },
@@ -154,6 +158,7 @@ function canAutoRefreshState() {
       !state.agentModalOpen &&
       !state.connectorModalOpen &&
       !state.channelModalOpen &&
+      !state.scheduleModalOpen &&
       !state.localLlmModalOpen &&
       !state.adminPasswordModalOpen &&
       !state.runtimeHistoryModal &&
@@ -604,6 +609,46 @@ function handleClick(event) {
     return;
   }
 
+  if (action === 'open-schedule-modal') {
+    state.scheduleModalOpen = true;
+    state.scheduleDraft = createBlankSchedule();
+    setFormErrors('schedule', collectScheduleDraftErrors(state.scheduleDraft));
+    render();
+    return;
+  }
+
+  if (action === 'edit-schedule') {
+    const schedule = state.data?.schedules?.find((entry) => entry.name === button.dataset.name);
+    if (!schedule) {
+      setNotice('error', '예약을 찾지 못했습니다.');
+      render();
+      return;
+    }
+    state.scheduleModalOpen = true;
+    state.scheduleDraft = createScheduleDraft(schedule);
+    setFormErrors('schedule', collectScheduleDraftErrors(state.scheduleDraft));
+    render();
+    return;
+  }
+
+  if (action === 'close-schedule-modal') {
+    state.scheduleModalOpen = false;
+    state.scheduleDraft = null;
+    clearFormErrors('schedule');
+    render();
+    return;
+  }
+
+  if (action === 'run-schedule') {
+    void runSchedule(button.dataset.name);
+    return;
+  }
+
+  if (action === 'delete-schedule') {
+    void deleteSchedule(button.dataset.name);
+    return;
+  }
+
   if (action === 'apply-telegram-recent-chat') {
     if (!state.channelDraft) {
       return;
@@ -854,6 +899,26 @@ function handleInput(event) {
       render();
       return;
     }
+    if (
+      state.scheduleDraft &&
+      target.closest('[data-form="schedule"]') &&
+      target.name
+    ) {
+      state.scheduleDraft[target.name] =
+        target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : target.value;
+      if (target.name === 'scheduleType') {
+        if (state.scheduleDraft.scheduleType === 'daily') {
+          state.scheduleDraft.every = '';
+          state.scheduleDraft.timezone =
+            state.scheduleDraft.timezone || getBrowserTimezone();
+        } else {
+          state.scheduleDraft.timeOfDay = '';
+        }
+      }
+      setFormErrors('schedule', collectScheduleDraftErrors(state.scheduleDraft));
+      render();
+      return;
+    }
     if (target.closest('[data-form="admin-password"]') && target.name) {
       const form = target.closest('form');
       if (form) {
@@ -981,6 +1046,11 @@ async function handleSubmit(event) {
 
     if (kind === 'channel') {
       await saveChannel(form);
+      return;
+    }
+
+    if (kind === 'schedule') {
+      await saveSchedule(form);
       return;
     }
 
@@ -1243,6 +1313,82 @@ async function saveChannel(form) {
   clearFormErrors('channel');
   setNotice('info', `채널 "${definition.name}"을(를) ${currentName ? '수정' : '추가'}했습니다.`);
   render();
+}
+
+async function saveSchedule(form) {
+  const values = new FormData(form);
+  const draft = state.scheduleDraft || createBlankSchedule();
+  const errors = collectScheduleDraftErrors(draft);
+  if (Object.keys(errors).length > 0) {
+    throw createValidationError('schedule', errors);
+  }
+  const currentName = optionalText(values, 'currentName');
+  const scheduleType = requiredText(values, 'scheduleType');
+  const definition = {
+    name: requiredText(values, 'name'),
+    enabled: values.get('enabled') === 'on',
+    channelName: requiredText(values, 'channelName'),
+    prompt: requiredText(values, 'prompt'),
+    skillName: optionalText(values, 'skillName'),
+    scheduleType,
+    every: scheduleType === 'interval' ? requiredText(values, 'every') : undefined,
+    timeOfDay: scheduleType === 'daily' ? requiredText(values, 'timeOfDay') : undefined,
+    timezone: scheduleType === 'daily' ? requiredText(values, 'timezone') : undefined,
+    nextRunAt: optionalText(values, 'nextRunAt'),
+  };
+
+  const response = await mutateJson('/api/schedules', {
+    method: 'POST',
+    body: {
+      currentName,
+      definition,
+    },
+  });
+
+  state.data = response.state;
+  state.scheduleModalOpen = false;
+  state.scheduleDraft = null;
+  clearFormErrors('schedule');
+  setNotice('info', `예약 "${definition.name}"을(를) ${currentName ? '수정' : '추가'}했습니다.`);
+  render();
+}
+
+async function runSchedule(name) {
+  if (!name) {
+    return;
+  }
+  try {
+    const response = await mutateJson(`/api/schedules/${encodeURIComponent(name)}/run`, {
+      method: 'POST',
+    });
+    state.data = response.state;
+    setNotice('info', `예약 "${name}"을(를) 즉시 실행했습니다.`);
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
+}
+
+async function deleteSchedule(name) {
+  if (!name) {
+    return;
+  }
+  const confirmed = window.confirm(`예약 "${name}"을(를) 삭제할까요?`);
+  if (!confirmed) {
+    return;
+  }
+  try {
+    const response = await mutateJson(`/api/schedules/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    state.data = response.state;
+    setNotice('info', `예약 "${name}"을(를) 삭제했습니다.`);
+    render();
+  } catch (error) {
+    setNotice('error', localizeErrorMessage(error.message));
+    render();
+  }
 }
 
 async function saveLocalLlmConnection(form) {
@@ -1862,6 +2008,7 @@ function render() {
     ${state.agentModalOpen ? renderAgentModal() : ''}
     ${state.connectorModalOpen ? renderConnectorModal() : ''}
     ${state.channelModalOpen ? renderChannelModal() : ''}
+    ${state.scheduleModalOpen ? renderScheduleModal() : ''}
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
     ${state.runtimeHistoryModal ? renderRuntimeHistoryModal() : ''}
@@ -2077,6 +2224,9 @@ function renderActiveView() {
   if (state.activeView === 'channels') {
     return renderChannelsView();
   }
+  if (state.activeView === 'schedules') {
+    return renderSchedulesView();
+  }
   if (state.activeView === 'topology') {
     return renderTopologyView();
   }
@@ -2117,6 +2267,13 @@ function renderChannelsView() {
     state,
     renderKakaoRelayServerPanel,
     renderChannelList,
+  });
+}
+
+function renderSchedulesView() {
+  return buildSchedulesView({
+    state,
+    renderScheduleList,
   });
 }
 
@@ -2894,6 +3051,54 @@ function renderChannelList(channels) {
         })
         .join('')}
     </div>
+  `;
+}
+
+function renderScheduleList(schedules) {
+  if (!schedules.length) {
+    return `
+      <div class="empty-inline empty-inline--action">
+        <strong>아직 예약이 없습니다.</strong>
+        <span>채널과 프롬프트를 정해두면 관리 서버가 주기적으로 실행합니다.</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="card-list">
+      ${schedules.map((schedule) => renderScheduleCard(schedule)).join('')}
+    </div>
+  `;
+}
+
+function renderScheduleCard(schedule) {
+  const statusClass = schedule.lastStatus === 'completed'
+    ? 'mini-chip--ok'
+    : schedule.lastStatus === 'failed'
+      ? 'mini-chip--danger'
+      : '';
+  return `
+    <article class="card card--stack">
+      <div class="card-main">
+        ${renderCardTitle('schedule', schedule.name, schedule.enabled ? 'calm' : '')}
+        ${renderMetaText(`${formatScheduleTiming(schedule)} · channel=${schedule.channelName || '-'}`)}
+        <div class="card-tags">
+          <span class="mini-chip ${schedule.enabled ? 'mini-chip--ok' : ''}">${renderIcon(schedule.enabled ? 'play' : 'stop', 'ui-icon')}${escapeHtml(schedule.enabled ? '사용' : '중지')}</span>
+          <span class="mini-chip">${renderIcon('schedule', 'ui-icon')}${escapeHtml(`다음 ${formatRelativeDateTime(schedule.nextRunAt)}`)}</span>
+          <span class="mini-chip ${statusClass}">${renderIcon('notice', 'ui-icon')}${escapeHtml(schedule.lastStatus ? localizeScheduleStatus(schedule.lastStatus) : '실행 전')}</span>
+        </div>
+        ${
+          schedule.lastError
+            ? `<div class="field-hint field-hint--danger">${escapeHtml(localizeWorkerError(schedule.lastError))}</div>`
+            : ''
+        }
+      </div>
+      <div class="inline-actions">
+        <button type="button" class="btn-secondary" data-action="run-schedule" data-name="${escapeAttr(schedule.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('play', '즉시 실행')}</button>
+        <button type="button" class="btn-secondary" data-action="edit-schedule" data-name="${escapeAttr(schedule.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
+        <button type="button" class="btn-danger" data-action="delete-schedule" data-name="${escapeAttr(schedule.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>
+      </div>
+    </article>
   `;
 }
 
@@ -4177,6 +4382,100 @@ function renderChannelModal() {
   `;
 }
 
+function renderScheduleModal() {
+  const current = state.scheduleDraft || createBlankSchedule();
+  const isEditing = Boolean(optionalDraftText(current.currentName));
+  const channels = (state.data?.channels || []).map((entry) => entry.name);
+  const hasErrors = Object.keys(getFormErrors('schedule')).length > 0;
+  const errorText = getFirstFormError('schedule');
+  const isDaily = current.scheduleType === 'daily';
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="예약 ${isEditing ? '수정' : '추가'}">
+      <div class="modal-backdrop" data-action="close-schedule-modal"></div>
+      <div class="panel modal-card">
+        <div class="section-head">
+          <div class="section-title-group">
+            <span class="section-title-icon">${renderIcon('schedule', 'ui-icon')}</span>
+            <h2>예약 ${isEditing ? '수정' : '추가'}</h2>
+          </div>
+          <button type="button" class="btn-secondary" data-action="close-schedule-modal" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '닫기')}</button>
+        </div>
+        <form data-form="schedule" class="form">
+          ${renderFormErrorSummary('schedule')}
+          <input type="hidden" name="currentName" value="${escapeAttr(current.currentName || '')}" />
+          <div class="form-grid">
+            <div class="field ${fieldErrorClass('schedule', 'name')}">
+              <label for="schedule-name">${renderRequiredLabel('예약 이름')}</label>
+              <input id="schedule-name" name="name" value="${escapeAttr(current.name)}" />
+              ${renderFormError('schedule', 'name')}
+            </div>
+            <div class="field ${fieldErrorClass('schedule', 'channelName')}">
+              <label for="schedule-channel">${renderRequiredLabel('실행 채널')}</label>
+              <select id="schedule-channel" name="channelName">${renderNameOptions(channels, current.channelName, true)}</select>
+              ${renderFormError('schedule', 'channelName')}
+            </div>
+            <div class="field">
+              <label for="schedule-type">${renderRequiredLabel('예약 방식')}</label>
+              <select id="schedule-type" name="scheduleType">
+                <option value="interval" ${current.scheduleType !== 'daily' ? 'selected' : ''}>반복 간격</option>
+                <option value="daily" ${current.scheduleType === 'daily' ? 'selected' : ''}>매일 특정 시각</option>
+              </select>
+            </div>
+            ${
+              isDaily
+                ? `
+                  <div class="field ${fieldErrorClass('schedule', 'timeOfDay')}">
+                    <label for="schedule-time">${renderRequiredLabel('실행 시각')}</label>
+                    <input id="schedule-time" name="timeOfDay" value="${escapeAttr(current.timeOfDay)}" placeholder="09:00" />
+                    ${renderFormError('schedule', 'timeOfDay')}
+                  </div>
+                  <div class="field ${fieldErrorClass('schedule', 'timezone')}">
+                    <label for="schedule-timezone">${renderRequiredLabel('타임존')}</label>
+                    <input id="schedule-timezone" name="timezone" value="${escapeAttr(current.timezone || getBrowserTimezone())}" placeholder="Asia/Seoul" />
+                    ${renderFormError('schedule', 'timezone')}
+                  </div>
+                `
+                : `
+                  <div class="field ${fieldErrorClass('schedule', 'every')}">
+                    <label for="schedule-every">${renderRequiredLabel('반복 간격')}</label>
+                    <input id="schedule-every" name="every" value="${escapeAttr(current.every)}" placeholder="예: 30m, 1h, 1d" />
+                    ${renderFormError('schedule', 'every')}
+                  </div>
+                `
+            }
+            <div class="field ${fieldErrorClass('schedule', 'nextRunAt')}">
+              <label for="schedule-next">다음 실행 시각(선택)</label>
+              <input id="schedule-next" name="nextRunAt" value="${escapeAttr(current.nextRunAt)}" placeholder="비우면 자동 계산" />
+              <div class="field-hint">ISO 시각을 넣으면 첫 실행 시각을 직접 지정합니다. 예: 2026-05-07T00:00:00.000Z</div>
+              ${renderFormError('schedule', 'nextRunAt')}
+            </div>
+            <div class="field">
+              <label for="schedule-skill">스킬 힌트(선택)</label>
+              <input id="schedule-skill" name="skillName" value="${escapeAttr(current.skillName)}" placeholder="예: reviewer" />
+              <div class="field-hint">에이전트에 연결된 skill 파일이 있으면 이 이름을 사용하도록 프롬프트에 명시합니다.</div>
+            </div>
+            <div class="field field-full">
+              <label class="checkbox-row">
+                <input type="checkbox" name="enabled" ${current.enabled ? 'checked' : ''} />
+                <span>자동 실행 사용</span>
+              </label>
+            </div>
+            <div class="field field-full ${fieldErrorClass('schedule', 'prompt')}">
+              <label for="schedule-prompt">${renderRequiredLabel('실행 프롬프트')}</label>
+              <textarea id="schedule-prompt" name="prompt" placeholder="예: 오늘 장애/배포 상태를 요약하고 필요한 액션을 정리해줘.">${escapeHtml(current.prompt)}</textarea>
+              ${renderFormError('schedule', 'prompt')}
+            </div>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn-primary" ${state.busy || hasErrors ? 'disabled' : ''}${hasErrors && errorText ? ` title="${escapeAttr(errorText)}"` : ''}>${renderButtonLabel('save', isEditing ? '예약 저장' : '예약 추가')}</button>
+            <button type="button" class="btn-secondary" data-action="close-schedule-modal" ${state.busy ? 'disabled' : ''}>취소</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
 function renderLocalLlmConnectionEditor() {
   const current = state.localLlmDraft || createLocalLlmConnectionDraft();
   const isEditing = Boolean(optionalDraftText(current.currentName));
@@ -4392,6 +4691,7 @@ function focusFirstInvalidField(scope) {
     agentWizard: '[data-form="agent-wizard"]',
     connector: '[data-form="connector"]',
     channel: '[data-form="channel"]',
+    schedule: '[data-form="schedule"]',
     localLlm: '[data-form="local-llm-connection"]',
     adminPassword: '[data-form="admin-password"]',
   };
@@ -4976,6 +5276,46 @@ function collectChannelDraftErrors(draft = state.channelDraft || {}) {
     }
   }
   return errors;
+}
+
+function collectScheduleDraftErrors(draft = state.scheduleDraft || {}) {
+  const errors = {};
+  const name = optionalDraftText(draft.name);
+  const scheduleType = optionalDraftText(draft.scheduleType) || 'interval';
+  if (!name) {
+    errors.name = '예약 이름을 입력하세요.';
+  } else if (!isSafeEntityName(name)) {
+    errors.name = '영문, 숫자, .-_ 만 가능합니다.';
+  }
+  if (!optionalDraftText(draft.channelName)) {
+    errors.channelName = '실행 채널을 고르세요.';
+  }
+  if (scheduleType === 'daily') {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/u.test(optionalDraftText(draft.timeOfDay))) {
+      errors.timeOfDay = 'HH:mm 형식으로 입력하세요.';
+    }
+    if (!optionalDraftText(draft.timezone)) {
+      errors.timezone = '타임존을 입력하세요.';
+    }
+  } else if (!isValidDurationText(draft.every)) {
+    errors.every = '예: 30m, 1h, 1d 형식으로 입력하세요.';
+  }
+  if (!optionalDraftText(draft.prompt)) {
+    errors.prompt = '실행 프롬프트를 입력하세요.';
+  }
+  if (optionalDraftText(draft.nextRunAt)) {
+    const nextDate = new Date(optionalDraftText(draft.nextRunAt));
+    if (Number.isNaN(nextDate.getTime())) {
+      errors.nextRunAt = '유효한 날짜/시간을 입력하세요.';
+    }
+  }
+  return errors;
+}
+
+function isValidDurationText(value) {
+  return /^\d+(?:\.\d+)?\s*(ms|msec|milliseconds?|s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)?$/iu.test(
+    optionalDraftText(value),
+  );
 }
 
 function findKakaoChannelRouteConflict(draft) {
@@ -6066,6 +6406,38 @@ function createBlankChannel() {
   };
 }
 
+function createScheduleDraft(schedule = {}) {
+  return {
+    currentName: schedule?.name || '',
+    name: schedule?.name || '',
+    enabled: schedule?.enabled !== false,
+    channelName: schedule?.channelName || getDefaultScheduleChannelName(),
+    scheduleType: schedule?.scheduleType || 'interval',
+    every: schedule?.intervalMs ? formatDurationText(schedule.intervalMs) : '1h',
+    timeOfDay: schedule?.timeOfDay || '09:00',
+    timezone: schedule?.timezone || getBrowserTimezone(),
+    nextRunAt: schedule?.nextRunAt || '',
+    prompt: schedule?.prompt || '',
+    skillName: schedule?.skillName || '',
+  };
+}
+
+function createBlankSchedule() {
+  return createScheduleDraft({
+    enabled: true,
+    channelName: getDefaultScheduleChannelName(),
+    scheduleType: 'interval',
+    intervalMs: 60 * 60 * 1000,
+    timeOfDay: '09:00',
+    timezone: getBrowserTimezone(),
+    prompt: '',
+  });
+}
+
+function getDefaultScheduleChannelName() {
+  return state.data?.channels?.[0]?.name || '';
+}
+
 function getDefaultChannelWorkspace() {
   return state.data?.defaults?.channelWorkspace || DEFAULT_CHANNEL_WORKSPACE;
 }
@@ -6497,6 +6869,47 @@ function formatUsageBreakdownLabel(value, field) {
     return '(미지정 에이전트)';
   }
   return '(미기록)';
+}
+
+function formatScheduleTiming(schedule) {
+  if (schedule?.scheduleType === 'daily') {
+    return `매일 ${schedule.timeOfDay || '-'} ${schedule.timezone || getBrowserTimezone()}`;
+  }
+  return `${formatDurationText(schedule?.intervalMs || 0)}마다`;
+}
+
+function formatDurationText(value) {
+  const intervalMs = Number(value || 0);
+  if (intervalMs > 0 && intervalMs % (24 * 60 * 60 * 1000) === 0) {
+    return `${intervalMs / (24 * 60 * 60 * 1000)}d`;
+  }
+  if (intervalMs > 0 && intervalMs % (60 * 60 * 1000) === 0) {
+    return `${intervalMs / (60 * 60 * 1000)}h`;
+  }
+  if (intervalMs > 0 && intervalMs % (60 * 1000) === 0) {
+    return `${intervalMs / (60 * 1000)}m`;
+  }
+  if (intervalMs > 0 && intervalMs % 1000 === 0) {
+    return `${intervalMs / 1000}s`;
+  }
+  return `${intervalMs || 0}ms`;
+}
+
+function localizeScheduleStatus(status) {
+  if (status === 'completed') {
+    return '완료';
+  }
+  if (status === 'failed') {
+    return '실패';
+  }
+  if (status === 'running') {
+    return '실행 중';
+  }
+  return status || '실행 전';
+}
+
+function getBrowserTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
 function renderUsageBreakdownPanel(entries, { field, emptyText = '기록이 없습니다.' } = {}) {

@@ -30,6 +30,7 @@ import {
   listPendingRuntimeOutboxEvents,
   listRecentRuntimeRuns,
   listRuntimeRoleSessions,
+  listRuntimeSchedules,
   listRuntimeUsageBreakdown,
   listRuntimeUsageHistory,
   clearRuntimeRoleSessions,
@@ -71,6 +72,7 @@ export async function buildAdminSnapshot(projectRoot) {
   const telegram = buildTelegramStatus(projectRoot, config, channels);
   const kakao = buildKakaoStatus(projectRoot, config, channels);
   const tokenUsage = await buildTokenUsageSnapshot(projectRoot);
+  const schedules = await listRuntimeSchedules(projectRoot, { limit: 500 });
   const watchers = listCiWatchers(projectRoot).map((watcher) => ({
     ...watcher,
     hasLog: watcher.logPath
@@ -92,6 +94,7 @@ export async function buildAdminSnapshot(projectRoot) {
     agents,
     channels: runtime.channels,
     dashboards,
+    schedules,
     discord,
     telegram,
     kakao,
@@ -410,6 +413,13 @@ export async function upsertChannel(projectRoot, currentName, input) {
 export async function deleteChannelByName(projectRoot, name) {
   const config = loadConfig(projectRoot);
   const channel = getChannel(config, name);
+  const blockingSchedules = (await listRuntimeSchedules(projectRoot, { limit: 500 }))
+    .filter((schedule) => schedule.channelName === name)
+    .map((schedule) => schedule.name);
+  assert(
+    blockingSchedules.length === 0,
+    `Channel "${name}" is referenced by schedules: ${blockingSchedules.join(', ')}.`,
+  );
   removeChannel(config, name);
   removeChannelManagedKakaoConnectorIfUnused(config, channel);
   saveConfig(projectRoot, config);
