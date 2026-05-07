@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.24 - 2026-05-08
+
+### Fixed
+- Kept KakaoTalk relay pairings across worker restarts by saving the generated session token after pairing succeeds.
+
 ## 1.0.23 - 2026-05-06
 
 ### Added

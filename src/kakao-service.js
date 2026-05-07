@@ -6,7 +6,7 @@ import {
   listPendingRuntimeOutboxEvents,
   markRuntimeOutboxEventDispatched,
 } from './runtime-db.js';
-import { listChannels, loadConfig, resolveProjectPath } from './store.js';
+import { listChannels, loadConfig, resolveProjectPath, saveConfig } from './store.js';
 import {
   createKakaoServiceStatus,
   deleteKakaoServiceCommand,
@@ -238,6 +238,16 @@ async function createKakaoClient(
         client.pairingCode = '';
         client.pairingExpiresIn = null;
         clearKakaoPairingRenewal(client);
+        try {
+          if (persistPairedKakaoSessionToken(projectRoot, agentConfig, client)) {
+            agentConfig.sessionToken = client.token;
+          }
+        } catch (error) {
+          serviceStatus.lastError = `Failed to persist Kakao session token: ${toErrorMessage(error)}`;
+          serviceStatus.heartbeatAt = timestamp();
+          persistServiceStatus(serviceStatus);
+          console.error(`Kakao session token persist failed for ${agentConfig.name}: ${toErrorMessage(error)}`);
+        }
         updateStatus();
       },
       onPairingExpired: () => {
@@ -350,6 +360,38 @@ async function resolveKakaoRelayToken(agentConfig, { onSessionCreateError = null
     pairingCode: session.pairingCode,
     pairingExpiresIn: session.expiresIn,
   };
+}
+
+function persistPairedKakaoSessionToken(projectRoot, agentConfig, client) {
+  if (
+    client?.tokenSource !== 'created-session' ||
+    !client?.token ||
+    !agentConfig?.name
+  ) {
+    return false;
+  }
+
+  const config = loadConfig(projectRoot);
+  const connector = config.connectors?.[agentConfig.name];
+  if (connector?.type === 'kakao') {
+    if (connector.kakaoSessionToken || connector.kakaoRelayToken) {
+      return false;
+    }
+    connector.kakaoSessionToken = client.token;
+    saveConfig(projectRoot, config);
+    return true;
+  }
+
+  const agent = config.agents?.[agentConfig.name];
+  if ((agent?.platform || 'discord') !== 'kakao') {
+    return false;
+  }
+  if (agent.kakaoSessionToken || agent.kakaoRelayToken) {
+    return false;
+  }
+  agent.kakaoSessionToken = client.token;
+  saveConfig(projectRoot, config);
+  return true;
 }
 
 async function createKakaoRelaySessionWithRetry(relayUrl, { onError = null } = {}) {
