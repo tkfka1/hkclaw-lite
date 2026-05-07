@@ -30,6 +30,7 @@ const KAKAO_RECONNECT_DELAY_MS = 1_000;
 const KAKAO_MAX_RECONNECT_DELAY_MS = 30_000;
 const KAKAO_SSE_TIMEOUT_MS = 300_000;
 const KAKAO_MESSAGE_LIMIT = 900;
+const KAKAO_TEMPLATE_OUTPUT_LIMIT = 3;
 const KAKAO_PAIRING_RENEWAL_GRACE_MS = 1_000;
 
 export async function serveKakao(projectRoot, { agentName = null } = {}) {
@@ -720,12 +721,15 @@ export function buildKakaoSkillResponses(text) {
   if (cardResponse) {
     return [cardResponse];
   }
-  return splitKakaoMessage(stripMarkdown(String(text || '').trim()) || '(빈 응답)').map((chunk) => ({
+  const outputs = splitKakaoMessage(stripMarkdown(String(text || '').trim()) || '(빈 응답)').map((chunk) => ({
+    simpleText: { text: chunk },
+  }));
+  return [{
     version: '2.0',
     template: {
-      outputs: [{ simpleText: { text: chunk } }],
+      outputs,
     },
-  }));
+  }];
 }
 
 function tryBuildKakaoCardResponse(text) {
@@ -879,7 +883,7 @@ function splitKakaoMessage(text) {
   }
   const chunks = [];
   let remaining = input;
-  while (remaining.length > KAKAO_MESSAGE_LIMIT && chunks.length < 3) {
+  while (remaining.length > KAKAO_MESSAGE_LIMIT && chunks.length < KAKAO_TEMPLATE_OUTPUT_LIMIT) {
     let splitIndex = remaining.lastIndexOf('\n', KAKAO_MESSAGE_LIMIT);
     if (splitIndex < Math.floor(KAKAO_MESSAGE_LIMIT / 2)) {
       splitIndex = remaining.lastIndexOf(' ', KAKAO_MESSAGE_LIMIT);
@@ -890,10 +894,19 @@ function splitKakaoMessage(text) {
     chunks.push(remaining.slice(0, splitIndex).trim());
     remaining = remaining.slice(splitIndex).trim();
   }
-  if (remaining && chunks.length < 3) {
+  if (remaining && chunks.length < KAKAO_TEMPLATE_OUTPUT_LIMIT) {
     chunks.push(remaining);
+  } else if (remaining && chunks.length === KAKAO_TEMPLATE_OUTPUT_LIMIT) {
+    chunks[chunks.length - 1] = appendKakaoTruncationNotice(chunks[chunks.length - 1], remaining.length);
   }
   return chunks.filter(Boolean);
+}
+
+function appendKakaoTruncationNotice(text, omittedLength) {
+  const notice = `\n\n…\n[카카오 응답 길이 제한으로 이후 ${omittedLength.toLocaleString('ko-KR')}자를 생략했습니다. 더 짧게 다시 요청해주세요.]`;
+  const maxTextLength = Math.max(0, KAKAO_MESSAGE_LIMIT - notice.length);
+  const trimmed = String(text || '').slice(0, maxTextLength).trimEnd();
+  return `${trimmed}${notice}`;
 }
 
 export function stripMarkdown(text) {

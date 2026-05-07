@@ -349,8 +349,23 @@ test('kakao formatter strips markdown and preserves tribunal role labels', () =>
 
 test('kakao responses support plain text chunking and card JSON', () => {
   const plain = buildKakaoSkillResponses('**hello** world');
+  assert.equal(plain.length, 1);
   assert.equal(plain[0].version, '2.0');
   assert.equal(plain[0].template.outputs[0].simpleText.text, 'hello world');
+
+  const longText = ['가'.repeat(900), '나'.repeat(900), '다'.repeat(900)].join('\n');
+  const longPlain = buildKakaoSkillResponses(longText);
+  assert.equal(longPlain.length, 1);
+  assert.equal(longPlain[0].template.outputs.length, 3);
+  assert.equal(longPlain[0].template.outputs[0].simpleText.text.length, 900);
+  assert.equal(longPlain[0].template.outputs[1].simpleText.text.length, 900);
+  assert.equal(longPlain[0].template.outputs[2].simpleText.text.length, 900);
+
+  const overLimit = buildKakaoSkillResponses('라'.repeat(4000));
+  assert.equal(overLimit.length, 1);
+  assert.equal(overLimit[0].template.outputs.length, 3);
+  assert.ok(overLimit[0].template.outputs.every((output) => output.simpleText.text.length <= 900));
+  assert.match(overLimit[0].template.outputs[2].simpleText.text, /길이 제한/u);
 
   const card = buildKakaoSkillResponses('{"textCard":{"title":"제목","description":"설명"},"quickReplies":[{"label":"A","action":"message","messageText":"A"}]}');
   assert.equal(card.length, 1);
