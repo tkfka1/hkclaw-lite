@@ -764,6 +764,111 @@ export async function listRuntimeRoleMessages(projectRoot, runId) {
     }));
 }
 
+export async function listRuntimeHistory(
+  projectRoot,
+  { targetType = 'channel', name, limit = 20 } = {},
+) {
+  const db = await getRuntimeDb(projectRoot);
+  const normalizedTargetType = normalizeRuntimeHistoryTargetType(targetType);
+  const normalizedName = normalizeNullableString(name);
+  assert(normalizedName, 'Runtime history target name is required.');
+  const normalizedLimit = normalizeRuntimeHistoryLimit(limit);
+
+  const rows =
+    normalizedTargetType === 'channel'
+      ? db
+          .prepare(
+            `
+              SELECT
+                rr.run_id,
+                rr.channel_name,
+                rr.discord_channel_id,
+                rr.mode,
+                rr.workspace,
+                rr.owner_agent,
+                rr.reviewer_agent,
+                rr.arbiter_agent,
+                rr.prompt,
+                rr.status,
+                rr.active_role,
+                rr.current_round,
+                rr.max_rounds,
+                rr.reviewer_verdict,
+                rr.final_disposition,
+                rr.started_at,
+                rr.completed_at,
+                rr.result_role,
+                rr.result_agent,
+                rr.result_content,
+                rr.error_text
+              FROM runtime_runs rr
+              WHERE rr.channel_name = ?
+              ORDER BY rr.started_at DESC, rr.rowid DESC
+              LIMIT ?
+            `,
+          )
+          .all(normalizedName, normalizedLimit)
+      : db
+          .prepare(
+            `
+              SELECT
+                rr.run_id,
+                rr.channel_name,
+                rr.discord_channel_id,
+                rr.mode,
+                rr.workspace,
+                rr.owner_agent,
+                rr.reviewer_agent,
+                rr.arbiter_agent,
+                rr.prompt,
+                rr.status,
+                rr.active_role,
+                rr.current_round,
+                rr.max_rounds,
+                rr.reviewer_verdict,
+                rr.final_disposition,
+                rr.started_at,
+                rr.completed_at,
+                rr.result_role,
+                rr.result_agent,
+                rr.result_content,
+                rr.error_text
+              FROM runtime_runs rr
+              WHERE rr.owner_agent = ?
+                OR rr.reviewer_agent = ?
+                OR rr.arbiter_agent = ?
+                OR rr.result_agent = ?
+                OR EXISTS (
+                  SELECT 1
+                  FROM runtime_role_messages rm
+                  WHERE rm.run_id = rr.run_id
+                    AND rm.agent_name = ?
+                )
+              ORDER BY rr.started_at DESC, rr.rowid DESC
+              LIMIT ?
+            `,
+          )
+          .all(
+            normalizedName,
+            normalizedName,
+            normalizedName,
+            normalizedName,
+            normalizedName,
+            normalizedLimit,
+          );
+
+  const runs = rows.map(mapRuntimeRunRow);
+  const runIds = runs.map((run) => run.runId).filter(Boolean);
+  const eventsByRunId = listRuntimeRunEventsForRunIds(db, runIds);
+  const messagesByRunId = listRuntimeRoleMessagesForRunIds(db, runIds);
+
+  return runs.map((run) => ({
+    ...run,
+    events: eventsByRunId.get(run.runId) || [],
+    messages: messagesByRunId.get(run.runId) || [],
+  }));
+}
+
 export async function listRuntimeRoleSessions(
   projectRoot,
   { channelName = null, limit = 20 } = {},
@@ -1984,6 +2089,101 @@ function mapRuntimeRunRow(row) {
     resultContent: row.result_content ?? null,
     error: row.error_text ?? null,
   };
+}
+
+function listRuntimeRunEventsForRunIds(db, runIds) {
+  if (!runIds.length) {
+    return new Map();
+  }
+  const placeholders = runIds.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          run_id,
+          status,
+          role,
+          round,
+          max_rounds,
+          verdict,
+          note,
+          created_at
+        FROM runtime_run_events
+        WHERE run_id IN (${placeholders})
+        ORDER BY created_at ASC, id ASC
+      `,
+    )
+    .all(...runIds);
+  const output = new Map(runIds.map((runId) => [runId, []]));
+  for (const row of rows) {
+    output.get(row.run_id)?.push({
+      status: row.status,
+      role: row.role ?? undefined,
+      round: row.round ?? undefined,
+      maxRounds: row.max_rounds ?? undefined,
+      verdict: row.verdict ?? undefined,
+      note: row.note ?? undefined,
+      createdAt: row.created_at,
+    });
+  }
+  return output;
+}
+
+function listRuntimeRoleMessagesForRunIds(db, runIds) {
+  if (!runIds.length) {
+    return new Map();
+  }
+  const placeholders = runIds.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          run_id,
+          role,
+          agent_name,
+          content,
+          final,
+          round,
+          max_rounds,
+          verdict,
+          created_at
+        FROM runtime_role_messages
+        WHERE run_id IN (${placeholders})
+        ORDER BY created_at ASC, id ASC
+      `,
+    )
+    .all(...runIds);
+  const output = new Map(runIds.map((runId) => [runId, []]));
+  for (const row of rows) {
+    output.get(row.run_id)?.push({
+      role: row.role,
+      agentName: row.agent_name,
+      content: row.content,
+      final: Boolean(row.final),
+      round: row.round ?? undefined,
+      maxRounds: row.max_rounds ?? undefined,
+      verdict: row.verdict ?? undefined,
+      createdAt: row.created_at,
+    });
+  }
+  return output;
+}
+
+function normalizeRuntimeHistoryTargetType(targetType) {
+  const normalized = String(targetType || '').trim().toLowerCase();
+  assert(
+    normalized === 'agent' || normalized === 'channel',
+    'Runtime history target type must be agent or channel.',
+  );
+  return normalized;
+}
+
+function normalizeRuntimeHistoryLimit(limit) {
+  const numeric = Number.parseInt(String(limit ?? ''), 10);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return 20;
+  }
+  return Math.min(numeric, 100);
 }
 
 function normalizeNullableString(value) {

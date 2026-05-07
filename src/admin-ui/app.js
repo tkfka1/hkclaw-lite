@@ -38,6 +38,7 @@ let noticeTimer = null;
 let stateRefreshTimer = null;
 let aiManagerStatusPollTimer = null;
 let aiManagerStatusPollSession = 0;
+let runtimeHistoryRequestId = 0;
 
 const state = {
   data: null,
@@ -59,6 +60,7 @@ const state = {
   channelModalOpen: false,
   localLlmModalOpen: false,
   adminPasswordModalOpen: false,
+  runtimeHistoryModal: null,
   connectorDraft: null,
   channelDraft: null,
   localLlmDraft: null,
@@ -154,6 +156,7 @@ function canAutoRefreshState() {
       !state.channelModalOpen &&
       !state.localLlmModalOpen &&
       !state.adminPasswordModalOpen &&
+      !state.runtimeHistoryModal &&
       !hasOpenActionDrawer() &&
       !state.agentWizard &&
       !state.aiManager,
@@ -310,6 +313,24 @@ function handleClick(event) {
 
   if (action === 'close-notice') {
     clearNotice();
+    render();
+    return;
+  }
+
+  if (action === 'open-runtime-history') {
+    void openRuntimeHistory(button.dataset.targetType || '', button.dataset.name || '');
+    return;
+  }
+
+  if (action === 'refresh-runtime-history') {
+    const modal = state.runtimeHistoryModal || {};
+    void openRuntimeHistory(modal.targetType || '', modal.name || '');
+    return;
+  }
+
+  if (action === 'close-runtime-history') {
+    runtimeHistoryRequestId += 1;
+    state.runtimeHistoryModal = null;
     render();
     return;
   }
@@ -1551,6 +1572,67 @@ async function refreshStateAfterServiceCommand() {
   }
 }
 
+async function openRuntimeHistory(targetType, name) {
+  const normalizedTargetType = targetType === 'agent' ? 'agent' : 'channel';
+  const normalizedName = String(name || '').trim();
+  if (!normalizedName) {
+    return;
+  }
+
+  const requestId = runtimeHistoryRequestId + 1;
+  runtimeHistoryRequestId = requestId;
+  state.runtimeHistoryModal = {
+    targetType: normalizedTargetType,
+    name: normalizedName,
+    loading: true,
+    error: null,
+    history: [],
+  };
+  render();
+
+  try {
+    const payload = await requestJson(
+      `/api/runtime-history?targetType=${encodeURIComponent(normalizedTargetType)}&name=${encodeURIComponent(normalizedName)}&limit=30`,
+    );
+    if (!isCurrentRuntimeHistoryRequest(requestId, normalizedTargetType, normalizedName)) {
+      return;
+    }
+    state.runtimeHistoryModal = {
+      targetType: normalizedTargetType,
+      name: normalizedName,
+      loading: false,
+      error: null,
+      history: Array.isArray(payload.history) ? payload.history : [],
+    };
+    render();
+  } catch (error) {
+    if (!isCurrentRuntimeHistoryRequest(requestId, normalizedTargetType, normalizedName)) {
+      return;
+    }
+    if (handleAuthError(error)) {
+      state.runtimeHistoryModal = null;
+      render();
+      return;
+    }
+    state.runtimeHistoryModal = {
+      targetType: normalizedTargetType,
+      name: normalizedName,
+      loading: false,
+      error: localizeErrorMessage(error.message),
+      history: [],
+    };
+    render();
+  }
+}
+
+function isCurrentRuntimeHistoryRequest(requestId, targetType, name) {
+  return Boolean(
+    requestId === runtimeHistoryRequestId &&
+      state.runtimeHistoryModal?.targetType === targetType &&
+      state.runtimeHistoryModal?.name === name,
+  );
+}
+
 function resolveAgentPlatform(name) {
   const agent = state.data?.agents?.find((entry) => entry.name === name);
   return agent?.platform || 'discord';
@@ -1782,6 +1864,7 @@ function render() {
     ${state.channelModalOpen ? renderChannelModal() : ''}
     ${state.aiManager ? renderAiModal() : ''}
     ${state.adminPasswordModalOpen ? renderAdminPasswordModal() : ''}
+    ${state.runtimeHistoryModal ? renderRuntimeHistoryModal() : ''}
   `);
   restoreRenderState(previousViewState);
 }
@@ -2476,6 +2559,7 @@ function renderAgentCard(agent, context) {
         ${primaryAction}
         ${stopAction}
         ${renderTelegramAgentGetUpdatesLink(agent, context)}
+        <button type="button" class="btn-secondary" data-action="open-runtime-history" data-target-type="agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('channels', '기록')}</button>
         <button type="button" class="btn-secondary" data-action="edit-agent" data-name="${escapeAttr(agent.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
         ${renderCardActionDrawer({
           drawerId: `agent:${agent.name}`,
@@ -2801,6 +2885,7 @@ function renderChannelList(channels) {
                 ${renderKakaoChannelStatusTags(channel)}
               </div>
               <div class="inline-actions">
+                <button type="button" class="btn-secondary" data-action="open-runtime-history" data-target-type="channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('channels', '기록')}</button>
                 <button type="button" class="btn-secondary" data-action="edit-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('edit', '수정')}</button>
                 <button type="button" class="btn-danger" data-action="delete-channel" data-name="${escapeAttr(channel.name)}" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('trash', '삭제')}</button>
               </div>
@@ -3029,6 +3114,198 @@ function renderAgentModal() {
       </div>
     </section>
   `;
+}
+
+function renderRuntimeHistoryModal() {
+  const modal = state.runtimeHistoryModal || {};
+  const targetLabel = modal.targetType === 'agent' ? '에이전트' : '채널';
+  const title = `${targetLabel} 기록`;
+  return `
+    <section class="modal-shell" aria-modal="true" role="dialog" aria-label="${escapeAttr(title)}">
+      <div class="modal-backdrop" data-action="close-runtime-history"></div>
+      <div class="panel modal-card modal-card--history">
+        <div class="section-head">
+          <div class="section-title-group">
+            <span class="section-title-icon">${renderIcon(modal.targetType === 'agent' ? 'agents' : 'channels', 'ui-icon')}</span>
+            <h2>${escapeHtml(title)}</h2>
+            <span class="card-meta">${escapeHtml(modal.name || '')}</span>
+          </div>
+          <div class="inline-actions">
+            <button type="button" class="btn-secondary" data-action="refresh-runtime-history" ${modal.loading ? 'disabled' : ''}>${renderButtonLabel('refresh', '새로고침')}</button>
+            <button type="button" class="btn-secondary" data-action="close-runtime-history">${renderButtonLabel('stop', '닫기')}</button>
+          </div>
+        </div>
+        ${renderRuntimeHistoryBody(modal)}
+      </div>
+    </section>
+  `;
+}
+
+function renderRuntimeHistoryBody(modal) {
+  if (modal.loading) {
+    return `
+      <div class="activity-log-empty is-loading">
+        <strong>기록을 불러오는 중입니다.</strong>
+        <span>최근 실행과 메시지 로그를 확인하고 있습니다.</span>
+      </div>
+    `;
+  }
+
+  if (modal.error) {
+    return `
+      <div class="activity-log-empty activity-log-empty--error">
+        <strong>기록을 불러오지 못했습니다.</strong>
+        <span>${escapeHtml(modal.error)}</span>
+      </div>
+    `;
+  }
+
+  const history = Array.isArray(modal.history) ? modal.history : [];
+  if (!history.length) {
+    return `
+      <div class="activity-log-empty">
+        <strong>아직 기록이 없습니다.</strong>
+        <span>이 ${escapeHtml(modal.targetType === 'agent' ? '에이전트' : '채널')}로 실행된 대화가 생기면 여기에 표시됩니다.</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="activity-log-list">
+      ${history.map((run) => renderRuntimeHistoryRun(run)).join('')}
+    </div>
+  `;
+}
+
+function renderRuntimeHistoryRun(run) {
+  const statusClass = run.status === 'completed'
+    ? 'mini-chip--ok'
+    : run.status === 'failed'
+      ? 'mini-chip--danger'
+      : '';
+  const participants = [
+    run.ownerAgent ? `owner:${run.ownerAgent}` : '',
+    run.reviewerAgent ? `reviewer:${run.reviewerAgent}` : '',
+    run.arbiterAgent ? `arbiter:${run.arbiterAgent}` : '',
+  ].filter(Boolean);
+  const timeline = buildRuntimeHistoryTimeline(run);
+
+  return `
+    <article class="activity-run">
+      <div class="activity-run-head">
+        <div>
+          <strong>${escapeHtml(run.channelName || '(채널 없음)')}</strong>
+          <div class="activity-run-meta">${escapeHtml([
+            run.startedAt ? formatRelativeDateTime(run.startedAt) : '',
+            run.mode || '',
+            participants.join(' · '),
+          ].filter(Boolean).join(' · '))}</div>
+        </div>
+        <span class="mini-chip ${statusClass}">${renderIcon('notice', 'ui-icon')}${escapeHtml(localizeRunStatus(run.status))}</span>
+      </div>
+      <div class="activity-prompt">
+        <span>입력</span>
+        <p>${escapeHtml(run.prompt || '(비어 있음)')}</p>
+      </div>
+      <div class="activity-timeline">
+        ${timeline.map((entry) => renderRuntimeHistoryTimelineEntry(entry)).join('')}
+      </div>
+      ${
+        run.error
+          ? `<div class="activity-log-error">${escapeHtml(run.error)}</div>`
+          : ''
+      }
+    </article>
+  `;
+}
+
+function buildRuntimeHistoryTimeline(run) {
+  const messages = Array.isArray(run.messages) ? run.messages : [];
+  const events = (Array.isArray(run.events) ? run.events : [])
+    .filter((event) => event.status === 'failed' || event.status === 'completed')
+    .map((event) => ({
+      type: 'event',
+      status: event.status,
+      role: event.role || '',
+      note: event.note || event.verdict || '',
+      createdAt: event.createdAt || run.completedAt || run.startedAt || '',
+    }));
+  return [
+    ...messages.map((message) => ({
+      type: 'message',
+      role: message.role || '',
+      agentName: message.agentName || '',
+      content: message.content || '',
+      final: Boolean(message.final),
+      round: message.round,
+      maxRounds: message.maxRounds,
+      verdict: message.verdict || '',
+      createdAt: message.createdAt || run.startedAt || '',
+    })),
+    ...events,
+  ].sort((left, right) => {
+    const leftTime = new Date(left.createdAt).getTime();
+    const rightTime = new Date(right.createdAt).getTime();
+    if (Number.isNaN(leftTime) || Number.isNaN(rightTime) || leftTime === rightTime) {
+      if (left.type === right.type) {
+        return 0;
+      }
+      return left.type === 'message' ? -1 : 1;
+    }
+    return leftTime - rightTime;
+  });
+}
+
+function renderRuntimeHistoryTimelineEntry(entry) {
+  if (entry.type === 'event') {
+    return `
+      <div class="activity-entry activity-entry--event">
+        <div class="activity-entry-head">
+          <strong>${escapeHtml(localizeRunStatus(entry.status))}</strong>
+          <span>${escapeHtml(entry.createdAt ? formatRelativeDateTime(entry.createdAt) : '')}</span>
+        </div>
+        ${entry.note ? `<p>${escapeHtml(entry.note)}</p>` : ''}
+      </div>
+    `;
+  }
+
+  const roundLabel =
+    entry.round === undefined || entry.round === null
+      ? ''
+      : `round ${entry.round}${entry.maxRounds ? `/${entry.maxRounds}` : ''}`;
+  const meta = [
+    entry.agentName,
+    roundLabel,
+    entry.verdict ? `verdict:${entry.verdict}` : '',
+    entry.final ? 'final' : '',
+    entry.createdAt ? formatRelativeDateTime(entry.createdAt) : '',
+  ].filter(Boolean);
+
+  return `
+    <div class="activity-entry">
+      <div class="activity-entry-head">
+        <strong>${escapeHtml(localizeAgentRole(entry.role))}</strong>
+        <span>${escapeHtml(meta.join(' · '))}</span>
+      </div>
+      <p>${escapeHtml(entry.content || '(내용 없음)')}</p>
+    </div>
+  `;
+}
+
+function localizeRunStatus(status) {
+  if (status === 'queued') {
+    return '대기';
+  }
+  if (status === 'running') {
+    return '실행 중';
+  }
+  if (status === 'completed') {
+    return '완료';
+  }
+  if (status === 'failed') {
+    return '실패';
+  }
+  return status || '상태 없음';
 }
 
 function renderAiModal() {

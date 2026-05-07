@@ -492,6 +492,9 @@ strong,
 .token-breakdown-list,
 .token-chart,
 .token-table-body,
+.activity-log-list,
+.activity-run,
+.activity-timeline,
 .telegram-discovery {
   display: grid;
   gap: 12px;
@@ -1317,6 +1320,87 @@ strong,
 
 .modal-card--small {
   width: min(460px, calc(100vw - 24px));
+}
+
+.modal-card--history {
+  width: min(980px, calc(100vw - 24px));
+}
+
+.activity-log-empty {
+  display: grid;
+  gap: 6px;
+  padding: 24px;
+  border: 1px dashed rgba(148, 163, 184, 0.7);
+  border-radius: var(--radius-md);
+  background: rgba(248, 250, 252, 0.82);
+  color: var(--ink-muted);
+}
+
+.activity-log-empty strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.activity-log-empty--error,
+.activity-log-error {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(254, 242, 242, 0.88);
+  color: var(--danger);
+}
+
+.activity-run {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.activity-run-head,
+.activity-entry-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.activity-run-meta,
+.activity-entry-head span,
+.activity-prompt span {
+  color: var(--ink-faint);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.activity-prompt,
+.activity-entry,
+.activity-log-error {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+}
+
+.activity-prompt {
+  background: rgba(47, 91, 216, 0.06);
+  border: 1px solid rgba(47, 91, 216, 0.08);
+}
+
+.activity-prompt p,
+.activity-entry p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+.activity-entry {
+  border: 1px solid rgba(216, 225, 234, 0.86);
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.activity-entry--event {
+  background: rgba(15, 23, 42, 0.035);
 }
 
 .form,

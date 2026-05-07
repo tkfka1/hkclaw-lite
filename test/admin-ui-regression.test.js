@@ -110,6 +110,19 @@ test('agent more drawers stay open across unavoidable re-renders', () => {
   assert.match(appSource, /drawerId:\s*`agent:\$\{agent\.name\}`/u);
 });
 
+test('agent and channel cards expose click-through activity logs', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const styles = readRepoFile('src/admin-ui/styles.css');
+
+  assert.match(appSource, /open-runtime-history/u);
+  assert.match(appSource, /api\/runtime-history/u);
+  assert.match(appSource, /function\s+renderRuntimeHistoryModal\s*\(/u);
+  assert.match(appSource, /data-target-type="agent"/u);
+  assert.match(appSource, /data-target-type="channel"/u);
+  assert.match(styles, /\.modal-card--history/u);
+  assert.match(styles, /\.activity-log-list/u);
+});
+
 test('channels page exposes relay server and routing channels without a Kakao session surface', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
   const viewsSource = readRepoFile('src/admin-ui/ui-views.js');

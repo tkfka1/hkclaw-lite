@@ -987,6 +987,63 @@ test('admin server exposes project snapshot and watcher logs', async () => {
   });
 });
 
+test('admin server exposes runtime history for agent and channel logs', async () => {
+  const projectRoot = createProject();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    discordChannelId: '123456789012345678',
+    workspace: 'workspace',
+    agent: 'owner',
+  });
+  saveConfig(projectRoot, config);
+
+  const loadedConfig = loadConfig(projectRoot);
+  await executeChannelTurn({
+    projectRoot,
+    config: loadedConfig,
+    channel: getChannel(loadedConfig, 'main'),
+    prompt: 'history check',
+    workdir: workspacePath,
+  });
+
+  await withAdminServer(projectRoot, async ({ url }) => {
+    const channelLog = await requestJson(
+      `${url}/api/runtime-history?targetType=channel&name=${encodeURIComponent('main')}`,
+    );
+    assert.equal(channelLog.response.status, 200, JSON.stringify(channelLog.payload));
+    assert.equal(channelLog.payload.target.type, 'channel');
+    assert.equal(channelLog.payload.target.name, 'main');
+    assert.equal(channelLog.payload.history.length, 1);
+    assert.equal(channelLog.payload.history[0].channelName, 'main');
+    assert.equal(channelLog.payload.history[0].prompt, 'history check');
+    assert.equal(channelLog.payload.history[0].messages.length, 1);
+    assert.equal(channelLog.payload.history[0].messages[0].agentName, 'owner');
+    assert.match(channelLog.payload.history[0].messages[0].content, /response=HISTORY CHECK/u);
+    assert.ok(
+      channelLog.payload.history[0].events.some((entry) => entry.status === 'completed'),
+    );
+
+    const agentLog = await requestJson(
+      `${url}/api/runtime-history?targetType=agent&name=${encodeURIComponent('owner')}`,
+    );
+    assert.equal(agentLog.response.status, 200, JSON.stringify(agentLog.payload));
+    assert.equal(agentLog.payload.target.type, 'agent');
+    assert.equal(agentLog.payload.target.name, 'owner');
+    assert.equal(agentLog.payload.history.length, 1);
+    assert.equal(agentLog.payload.history[0].runId, channelLog.payload.history[0].runId);
+  });
+});
+
 test('admin server redirects Telegram getUpdates helper through the selected agent token', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);

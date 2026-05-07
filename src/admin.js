@@ -27,6 +27,7 @@ import {
   getManagedServiceEnvSnapshot,
   getAdminAuthStatus,
   isAdminSessionValid,
+  listRuntimeHistory,
   recordRuntimeUsageEvent,
   setManagedServiceEnvSnapshot,
   setAdminPassword,
@@ -289,6 +290,21 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
 
   if (request.method === 'GET' && pathname === '/api/state') {
     writeJson(response, 200, await buildAdminSnapshot(projectRoot));
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/runtime-history') {
+    const targetType = url.searchParams.get('targetType') || url.searchParams.get('type') || 'channel';
+    const name = url.searchParams.get('name');
+    const limit = url.searchParams.get('limit') || 20;
+    writeJson(response, 200, {
+      ok: true,
+      target: {
+        type: targetType,
+        name,
+      },
+      history: await listRuntimeHistory(projectRoot, { targetType, name, limit }),
+    });
     return;
   }
 
