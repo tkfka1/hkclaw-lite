@@ -15,7 +15,13 @@ import {
   resolveKakaoChannelForMessage,
   stripMarkdown,
 } from '../src/kakao-service.js';
-import { buildAgentDefinition, initProject, loadConfig, saveConfig } from '../src/store.js';
+import {
+  buildAgentDefinition,
+  buildConnectorDefinition,
+  initProject,
+  loadConfig,
+  saveConfig,
+} from '../src/store.js';
 
 const repoRoot = process.cwd();
 const cliPath = path.join(repoRoot, 'bin', 'hkclaw-lite.js');
@@ -294,6 +300,113 @@ test('kakao serve refreshes expired pairing sessions with a new code', async () 
     assert.equal(status.agents.kao.pairingCode, 'PAIR-0002');
     assert.equal(sessionCreateCount >= 2, true);
     assert.match(stderr, /queued a fresh relay session/u);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      await waitForProcessExit(child).catch(() => {});
+    }
+    for (const response of eventResponses) {
+      response.end();
+    }
+    await new Promise((resolve) => relay.close(resolve));
+  }
+});
+
+test('kakao serve persists generated connector session token after pairing completes', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  let sessionCreateCount = 0;
+  let eventResponse = null;
+  const eventResponses = new Set();
+  const eventAuthorizations = [];
+
+  const relay = http.createServer((request, response) => {
+    if (request.method === 'POST' && request.url === '/v1/sessions/create') {
+      sessionCreateCount += 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          sessionToken: 'session-persisted',
+          pairingCode: 'PAIR-0001',
+          expiresIn: 60,
+          status: 'pending_pairing',
+        }),
+      );
+      return;
+    }
+    if (request.method === 'GET' && request.url === '/v1/events') {
+      eventAuthorizations.push(request.headers.authorization);
+      eventResponse = response;
+      eventResponses.add(response);
+      response.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      });
+      response.write('event: connected\n');
+      response.write('data: {"status":"pending_pairing"}\n\n');
+      request.on('close', () => {
+        eventResponses.delete(response);
+        if (eventResponse === response) {
+          eventResponse = null;
+        }
+      });
+      return;
+    }
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'not found' }));
+  });
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve));
+  const relayUrl = `http://127.0.0.1:${relay.address().port}/`;
+
+  const config = loadConfig(projectRoot);
+  config.connectors.kao = buildConnectorDefinition('kao', {
+    type: 'kakao',
+    kakaoRelayUrl: relayUrl,
+  });
+  saveConfig(projectRoot, config);
+
+  const child = spawn(process.execPath, [cliPath, 'kakao', 'serve'], {
+    cwd: projectRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+
+  try {
+    await waitForProcessOutput(
+      child,
+      /pairing=\/pair PAIR-0001/u,
+      () => `${stdout}\n${stderr}`,
+    );
+
+    assert.equal(loadConfig(projectRoot).connectors.kao.kakaoSessionToken, undefined);
+    const activeEventResponse = await waitForCondition(
+      () => eventResponse,
+      'Kakao relay SSE connection',
+    );
+    assert.deepEqual(eventAuthorizations, ['Bearer session-persisted']);
+
+    activeEventResponse.write('event: pairing_complete\n');
+    activeEventResponse.write('data: {"kakaoUserId":"user-1","pairedAt":"now"}\n\n');
+
+    const saved = await waitForCondition(() => {
+      const nextConfig = loadConfig(projectRoot);
+      return nextConfig.connectors.kao.kakaoSessionToken === 'session-persisted'
+        ? nextConfig
+        : null;
+    }, 'persisted Kakao session token');
+
+    assert.equal(saved.connectors.kao.kakaoSessionToken, 'session-persisted');
+    assert.equal(sessionCreateCount, 1);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGTERM');

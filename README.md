@@ -378,6 +378,7 @@ KAKAO_TALKCHANNEL_RELAY_URL=https://your-domain.example/
 
 - KakaoTalk Channel이 운영자가 다루는 수신 단위다. 내부 `connector`/session은 pairing/relay 상태 보존을 위한 호환 계층이다.
 - 새 KakaoTalk Channel을 저장하면 같은 이름의 내부 연결이 자동 생성된다. 이름 충돌이 있으면 `<channel>-kakao` 형식으로 안전하게 분리된다.
+- 페어링이 성공하면 워커가 생성된 relay `sessionToken`을 내부 연결 또는 legacy Kakao Agent 설정에 자동 저장한다. 이후 같은 `.hkclaw-lite/config.json`과 relay 상태 DB가 유지되면 재시작·재배포 후에도 다시 `/pair`할 필요가 없다.
 - `kakaoChannelId`의 `*`는 모든 channelId를 받는다는 뜻이다.
 - 같은 내부 연결 안에서 라우팅 필터가 겹치는 Channel은 저장되지 않는다.
 - 내부 연결 하나로 여러 Channel을 처리할 수 있지만, `kakaoChannelId`나 `kakaoUserId`로 메시지가 정확히 하나의 Channel에만 매칭되게 나눠야 한다.
