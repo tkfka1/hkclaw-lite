@@ -405,3 +405,12 @@ test('admin login keeps the first screen focused on hkclaw-lite password entry',
   assert.match(viewsSource, /현재 비밀번호 변경/u);
   assert.match(viewsSource, /현재 브라우저 세션 종료/u);
 });
+
+test('admin UI fallbacks no longer point at the removed /workspace container path', () => {
+  const appSource = readRepoFile('src/admin-ui/app.js');
+  const viewsSource = readRepoFile('src/admin-ui/ui-views.js');
+
+  assert.match(appSource, /const DEFAULT_CHANNEL_WORKSPACE = '~';/u);
+  assert.doesNotMatch(appSource, /DEFAULT_CHANNEL_WORKSPACE\s*=\s*'\/workspace'/u);
+  assert.doesNotMatch(viewsSource, /"workspace":\s*"\/workspace"/u);
+});

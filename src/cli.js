@@ -2685,7 +2685,7 @@ Installing the package never starts a process by itself.
 
 Execution model:
   hkclaw-lite / --help      Show help only
-  hkclaw-lite admin         Start the web admin server in the foreground
+  hkclaw-lite admin         Start the web admin server (foreground)
   hkclaw-lite start         Install + enable the systemd user service
   hkclaw-lite stop          Stop the systemd user service
   hkclaw-lite restart       Restart the systemd user service

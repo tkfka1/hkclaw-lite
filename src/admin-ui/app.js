@@ -29,7 +29,7 @@ import {
 } from './telegram-discovery.js?v=20260430-01';
 
 const app = document.getElementById('app');
-const DEFAULT_CHANNEL_WORKSPACE = '/workspace';
+const DEFAULT_CHANNEL_WORKSPACE = '~';
 const FALLBACK_KAKAO_RELAY_URL = 'https://k.tess.dev/';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 const STATE_REFRESH_INTERVAL_MS = 5_000;

@@ -114,7 +114,7 @@ export function renderTopologyView(ctx) {
       "platform": "kakao",
       "connector": "auto-kakao",
       "kakaoChannelId": "*",
-      "workspace": "/workspace",
+      "workspace": "~/workspace",
       "agent": "auto-owner"
     }
   ]
