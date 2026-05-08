@@ -15,7 +15,6 @@ export function buildPromptEnvelope({
   const systemPrompt = loadSystemPrompt(projectRoot, agent);
   const skills = loadSkillDocuments(projectRoot, agent);
   const contextFiles = loadContextDocuments(projectRoot, agent);
-  const topologyGuidance = buildTopologyGuidance(agent);
 
   if (systemPrompt) {
     sections.push(`System instructions:\n${systemPrompt}`);
@@ -27,10 +26,6 @@ export function buildPromptEnvelope({
 
   if (contextFiles.length > 0) {
     sections.push(formatNamedDocuments('Baseline context:', contextFiles));
-  }
-
-  if (topologyGuidance) {
-    sections.push(topologyGuidance);
   }
 
   sections.push(
@@ -134,22 +129,6 @@ function formatNamedDocuments(title, documents) {
       (document) => `Source: ${document.label}\n${document.content}`,
     ),
   ].join('\n\n');
-}
-
-function buildTopologyGuidance(agent) {
-  const policy = agent?.managementPolicy;
-  if (!policy?.canPlan && !policy?.canApply) {
-    return '';
-  }
-  return [
-    'Topology management:',
-    '- You may propose hkclaw-lite topology changes by writing a JSON spec to a file.',
-    '- Dry-run first with: hkclaw-lite topology plan --file <file>.',
-    policy.canApply
-      ? '- Apply only when explicitly requested and allowed by your management policy: hkclaw-lite topology apply --file <file> --yes.'
-      : '- You are not allowed to apply topology changes; ask an operator to run apply.',
-    '- Never write raw tokens into topology files; use secretRefs.*Env fields.',
-  ].join('\n');
 }
 
 function formatSessionHistory(entries) {

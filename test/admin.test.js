@@ -908,7 +908,7 @@ test('admin server exposes project snapshot and watcher logs', async () => {
     const viewsJs = await viewsJsResponse.text();
     assert.equal(viewsJsResponse.status, 200);
     assert.match(viewsJsResponse.headers.get('content-type') || '', /text\/javascript/u);
-    assert.match(viewsJs, /renderHomeView/u);
+    assert.match(viewsJs, /renderAgentsView/u);
 
     const faviconResponse = await fetch(`${url}/favicon.ico`);
     const favicon = Buffer.from(await faviconResponse.arrayBuffer());
@@ -1447,84 +1447,6 @@ test('admin server hides Kakao pairing state as a channel-managed connector', as
   assert.equal(config.connectors['kakao-owned-renamed'], undefined);
 });
 
-test('admin server plans and applies topology changes with redacted results', async () => {
-  const projectRoot = createProject();
-  fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
-  initProject(projectRoot);
-  const spec = {
-    version: 1,
-    agents: [
-      {
-        name: 'auto-owner',
-        agent: 'command',
-        platform: 'kakao',
-        command: `node ${fixturePath}`,
-      },
-    ],
-    connectors: [
-      {
-        name: 'auto-kakao',
-        type: 'kakao',
-        secretRefs: {
-          kakaoRelayTokenEnv: 'HKCLAW_TEST_ADMIN_KAKAO_TOKEN',
-        },
-      },
-    ],
-    channels: [
-      {
-        name: 'auto-kakao-main',
-        platform: 'kakao',
-        connector: 'auto-kakao',
-        kakaoChannelId: '*',
-        workspace: 'workspace',
-        agent: 'auto-owner',
-      },
-    ],
-  };
-
-  const priorToken = process.env.HKCLAW_TEST_ADMIN_KAKAO_TOKEN;
-  process.env.HKCLAW_TEST_ADMIN_KAKAO_TOKEN = 'admin-secret-token';
-  try {
-    await withAdminServer(projectRoot, async ({ url }) => {
-      const plan = await requestJson(`${url}/api/topology/plan`, {
-        method: 'POST',
-        body: { spec },
-      });
-      assert.equal(plan.response.status, 200, JSON.stringify(plan.payload));
-      assert.equal(plan.payload.ok, true);
-      assert.equal(plan.payload.result.changedCount, 3);
-      assert.match(plan.payload.summary, /Topology plan: changes=3/u);
-      assert.equal(plan.payload.result.changes[1].after.kakaoRelayToken, '***');
-      assert.doesNotMatch(JSON.stringify(plan.payload), /admin-secret-token/u);
-      assert.equal(loadConfig(projectRoot).agents['auto-owner'], undefined);
-
-      const apply = await requestJson(`${url}/api/topology/apply`, {
-        method: 'POST',
-        body: { spec },
-      });
-      assert.equal(apply.response.status, 200, JSON.stringify(apply.payload));
-      assert.equal(apply.payload.ok, true);
-      assert.equal(apply.payload.result.changedCount, 3);
-      assert.doesNotMatch(JSON.stringify(apply.payload), /admin-secret-token/u);
-
-      const config = loadConfig(projectRoot);
-      assert.equal(config.agents['auto-owner'].agent, 'command');
-      assert.equal(config.connectors['auto-kakao'].kakaoRelayToken, 'admin-secret-token');
-      assert.equal(config.channels['auto-kakao-main'].connector, 'auto-kakao');
-
-      const exported = await requestJson(`${url}/api/topology/export`);
-      assert.equal(exported.response.status, 200, JSON.stringify(exported.payload));
-      assert.equal(exported.payload.spec.connectors[0].kakaoRelayToken, '***');
-      assert.doesNotMatch(JSON.stringify(exported.payload), /admin-secret-token/u);
-    });
-  } finally {
-    if (priorToken === undefined) {
-      delete process.env.HKCLAW_TEST_ADMIN_KAKAO_TOKEN;
-    } else {
-      process.env.HKCLAW_TEST_ADMIN_KAKAO_TOKEN = priorToken;
-    }
-  }
-});
 
 test('admin server removes deleted agent runtime artifacts from service snapshots', async () => {
   const projectRoot = createProject();

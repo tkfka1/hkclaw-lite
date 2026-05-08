@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.1.0 - 2026-05-09
+
+### Removed
+- Topology automation removed entirely: deleted `src/topology.js`, the `hkclaw-lite topology plan|apply|export` CLI subcommands, the `/api/topology/{plan,apply,export}` admin endpoints, the `구성` (Topology) admin view (`renderTopologyView`, `topologyDraft`/`topologyResult` state, `data-form="topology"` UI, all `topology-*` action handlers and CSS), the `managementPolicy` agent field plus its store-side normalization/validation, and the prompt-envelope `Topology management:` block. Operate the runtime through the regular agents/channels/schedules screens or the equivalent CLI commands.
+- Removed the `home` (`운영 개요`) view: deleted `renderHomeView` from `ui-views.js` and `app.js`, dropped `home` from `VIEW_NAMES` / `getViewMeta`, removed the home nav entry, and dropped the unused `renderShortcutCard` helper. The default landing is now the `agents` view, and `normalizeView` falls back to `agents`.
+- Deleted dead admin-UI CSS: `.topology-*`, `.shortcut-*`, `.hero-panel`, `.hero-copy`, `.hero-meta`, `.hero-chip[.is-busy]`, `.metrics--hero`, `.metrics--three`, `.metrics--four`, `.metrics--compact`, `.grid-three`, `.overview-panel`, plus their entries in the responsive `@media (max-width: 900px)` block.
+
+### Fixed
+- Connector and schedule modal save buttons rendered the `sparkles` glyph because `renderButtonLabel('save', …)` referenced a non-existent icon; switched to `renderButtonLabel('edit', …)` to match the agent modal.
+- Schedule modal "disabled" checkbox label used the unknown class `checkbox-row` instead of `checkbox`, so the styled label never applied; corrected the class name.
+- Connector / schedule / local LLM modal "취소" buttons rendered without an icon while every other modal close affordance used `renderButtonLabel('stop', '닫기')`; standardized them via `renderButtonLabel('stop', '취소')`.
+- `.activity-log-empty` referenced an undeclared CSS variable `--ink-muted`; replaced every occurrence with `--ink-soft`, which is the actual palette token.
+- `card-title-icon` was 32×32 / radius 10px while sibling `section-title-icon` and `metric-icon` were 38×38 / radius 12px, causing visible size jumps between the section header icon and per-card icons in the channels view; unified `card-title-icon` to 36×36 / radius 11px so the spacing scales smoothly.
+
+### Changed
+- Agents view empty-state now uses the `empty-inline empty-inline--action` layout with a CTA hint pointing at the "에이전트 추가" button (matches the schedules view empty-state pattern).
+- Admin password modal hint replaced the deployment-era phrasing "최초 bootstrap 용도" with the npm-runtime-accurate "최초 서버 시작 시 한 번만 읽힙니다" so the copy stops implying container init semantics.
+- `hkclaw-lite admin` execution-model help label trimmed redundant "in the foreground" wording to "(foreground)".
+
 ## 2.0.2 - 2026-05-09
 
 ### Fixed

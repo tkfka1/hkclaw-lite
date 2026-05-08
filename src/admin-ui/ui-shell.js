@@ -3,11 +3,9 @@ import { renderIcon } from './icons.js?v=20260507-01';
 export const DESKTOP_NAV_MIN_WIDTH = 1081;
 
 const NAV_TABS = [
-  { view: 'home', label: '개요' },
   { view: 'agents', label: '에이전트' },
   { view: 'channels', label: '채널' },
   { view: 'schedules', label: '예약' },
-  { view: 'topology', label: '구성' },
   { view: 'ai', label: 'AI' },
   { view: 'tokens', label: '토큰' },
   { view: 'all', label: '설정' },
@@ -17,11 +15,8 @@ export function shouldUseDesktopSidebar(viewportWidth) {
   return Number(viewportWidth) >= DESKTOP_NAV_MIN_WIDTH;
 }
 
-export function getViewMeta(view = 'home') {
+export function getViewMeta(view = 'agents') {
   const views = {
-    home: {
-      title: '운영 개요',
-    },
     agents: {
       title: '에이전트 운영',
     },
@@ -30,9 +25,6 @@ export function getViewMeta(view = 'home') {
     },
     schedules: {
       title: '예약 실행',
-    },
-    topology: {
-      title: '구성 자동화',
     },
     ai: {
       title: 'AI 연결 관리',
@@ -44,7 +36,7 @@ export function getViewMeta(view = 'home') {
       title: '관리 설정',
     },
   };
-  return views[view] || views.home;
+  return views[view] || views.agents;
 }
 
 export function renderMetricCard(label, value, escapeHtml, tone = '', meta = '') {
@@ -56,26 +48,6 @@ export function renderMetricCard(label, value, escapeHtml, tone = '', meta = '')
       </div>
       <strong class="metric-value">${escapeHtml(String(value))}</strong>
       ${meta ? `<span class="metric-meta">${escapeHtml(meta)}</span>` : ''}
-    </article>
-  `;
-}
-
-export function renderShortcutCard({ view, title, description = '', meta = '', state, escapeHtml, escapeAttr }) {
-  return `
-    <article
-      class="shortcut-card ${state.activeView === view ? 'is-active' : ''}"
-      data-action="switch-view"
-      data-view="${escapeAttr(view)}"
-      data-clickable="true"
-      role="button"
-      tabindex="${state.busy ? '-1' : '0'}"
-      aria-disabled="${state.busy ? 'true' : 'false'}"
-      aria-current="${state.activeView === view ? 'page' : 'false'}"
-    >
-      <div class="shortcut-icon">${renderIcon(resolveViewIcon(view), 'ui-icon')}</div>
-      <strong>${escapeHtml(title)}</strong>
-      ${description ? `<span class="shortcut-copy">${escapeHtml(description)}</span>` : ''}
-      ${meta ? `<span class="shortcut-meta">${escapeHtml(meta)}</span>` : ''}
     </article>
   `;
 }
@@ -201,8 +173,6 @@ function resolveViewIcon(view) {
       return 'channels';
     case 'schedules':
       return 'schedule';
-    case 'topology':
-      return 'link';
     case 'ai':
       return 'ai';
     case 'tokens':
@@ -210,7 +180,7 @@ function resolveViewIcon(view) {
     case 'all':
       return 'settings';
     default:
-      return 'home';
+      return 'agents';
   }
 }
 

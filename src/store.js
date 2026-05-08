@@ -338,9 +338,6 @@ export function buildAgentDefinition(projectRoot, name, input, existing = {}) {
     fallbackAgent: normalizeOptionalString(
       input.fallbackAgent ?? input['fallback-agent'] ?? existing.fallbackAgent,
     ),
-    managementPolicy: normalizeManagementPolicy(
-      input.managementPolicy ?? input['management-policy'] ?? existing.managementPolicy,
-    ),
     model: normalizeOptionalString(input.model ?? existing.model),
     effort: normalizeOptionalString(input.effort ?? existing.effort),
     systemPrompt: normalizeOptionalString(
@@ -775,10 +772,6 @@ function validateAgentDefinition(projectRoot, agent) {
     assert(agent.fallbackAgent !== agent.name, 'fallbackAgent must be different from the agent.');
   }
 
-  if (agent.managementPolicy !== undefined) {
-    validateManagementPolicy(agent.managementPolicy);
-  }
-
   if (agent.systemPromptFile) {
     const resolvedPromptFile = resolveProjectPath(projectRoot, agent.systemPromptFile);
     assert(
@@ -1164,93 +1157,6 @@ function normalizeDashboardMonitors(value) {
     return [DASHBOARD_ALL_AGENTS];
   }
   return unique;
-}
-
-function normalizeManagementPolicy(value) {
-  if (value === undefined || value === null || value === '') {
-    return undefined;
-  }
-  assert(isPlainObject(value), 'managementPolicy must be an object.');
-
-  const policy = {
-    canApply: resolveBooleanValue(value.canApply ?? value['can-apply'], false),
-    canPlan: resolveBooleanValue(value.canPlan ?? value['can-plan'], false),
-    allowInlineSecrets: resolveBooleanValue(
-      value.allowInlineSecrets ?? value['allow-inline-secrets'],
-      false,
-    ),
-    allowServiceControl: resolveBooleanValue(
-      value.allowServiceControl ?? value['allow-service-control'],
-      false,
-    ),
-    allowedActions: normalizeStringList(
-      value.allowedActions ?? value['allowed-actions'],
-    ),
-    allowedNamePrefixes: normalizeStringList(
-      value.allowedNamePrefixes ?? value['allowed-name-prefixes'],
-    ),
-    allowedPlatforms: normalizeStringList(
-      value.allowedPlatforms ?? value['allowed-platforms'],
-    ),
-    allowedWorkspaces: normalizeStringList(
-      value.allowedWorkspaces ?? value['allowed-workspaces'],
-    ),
-    maxChangesPerApply: parseOptionalInteger(
-      value.maxChangesPerApply ?? value['max-changes-per-apply'],
-      'managementPolicy.maxChangesPerApply',
-    ),
-  };
-
-  return sortObjectKeys(policy);
-}
-
-function normalizeStringList(value) {
-  const values = Array.isArray(value)
-    ? value.flatMap((entry) => normalizeStringList(entry) ?? [])
-    : parseCommaSeparatedList(value);
-  const unique = [
-    ...new Set(values.map((entry) => String(entry).trim()).filter(Boolean)),
-  ];
-  return unique.length > 0 ? unique : undefined;
-}
-
-function validateManagementPolicy(policy) {
-  assert(isPlainObject(policy), 'managementPolicy must be an object.');
-  for (const fieldName of [
-    'canApply',
-    'canPlan',
-    'allowInlineSecrets',
-    'allowServiceControl',
-  ]) {
-    if (policy[fieldName] !== undefined) {
-      assert(
-        typeof policy[fieldName] === 'boolean',
-        `managementPolicy.${fieldName} must be a boolean.`,
-      );
-    }
-  }
-  for (const fieldName of [
-    'allowedActions',
-    'allowedNamePrefixes',
-    'allowedPlatforms',
-    'allowedWorkspaces',
-  ]) {
-    if (policy[fieldName] !== undefined) {
-      assert(
-        Array.isArray(policy[fieldName]) &&
-          policy[fieldName].every(
-            (entry) => typeof entry === 'string' && entry.trim(),
-          ),
-        `managementPolicy.${fieldName} must be a list of non-empty strings.`,
-      );
-    }
-  }
-  if (policy.maxChangesPerApply !== undefined) {
-    assert(
-      Number.isInteger(policy.maxChangesPerApply) && policy.maxChangesPerApply > 0,
-      'managementPolicy.maxChangesPerApply must be a positive integer.',
-    );
-  }
 }
 
 function normalizeMessagingConnectorRecords(connectors, rawAgents = {}) {

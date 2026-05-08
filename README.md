@@ -6,7 +6,6 @@
 - 기본 진입점은 웹 어드민(`http://127.0.0.1:5687`)이다.
 - 에이전트는 Codex/Claude/Gemini/local LLM/command 같은 **AI 실행 주체**다.
 - 채널은 **대화가 들어갈 라우팅 단위**다. Discord/Telegram 토큰은 에이전트 설정에 두고, KakaoTalk은 Admin 내장 릴레이 + KakaoTalk 채널로 운영한다.
-- CLI 자동화가 필요하면 `topology plan/apply/export`로 desired-state JSON을 dry-run 후 적용할 수 있다.
 - 반복 작업은 Admin의 **예약** 화면이나 `hkclaw-lite schedule` 명령으로 채널에 붙여 실행할 수 있다.
 
 ## 요구 사항
@@ -103,8 +102,6 @@ hkclaw-lite schedule add daily-ops --channel <name> --daily 09:00 --timezone Asi
 hkclaw-lite schedule add repo-watch --channel <name> --every 30m --message "check actionable repo updates"
 hkclaw-lite schedule list
 hkclaw-lite schedule run daily-ops
-hkclaw-lite topology plan --file topology.json
-hkclaw-lite topology apply --file topology.json --yes
 hkclaw-lite discord serve --agent <agent-name>
 hkclaw-lite telegram serve --agent <agent-name>
 hkclaw-lite kakao serve --connector <kakao-connector-name>
@@ -140,20 +137,6 @@ hkclaw-lite schedule tick
 - 예약은 `runtime_schedules`에, 개별 실행은 `runtime_schedule_runs`에 남는다.
 - 실행 중에는 SQLite lease와 heartbeat가 잡혀 같은 예약이 동시에 두 번 돌지 않는다.
 - `HKCLAW_LITE_SCHEDULER=0` 으로 Admin 내장 스케줄러 폴링을 끌 수 있다. 외부 워커는 `hkclaw-lite schedule tick` 으로 호출하면 된다.
-
-### CLI topology 자동화
-
-```bash
-hkclaw-lite topology plan --file topology.json
-hkclaw-lite topology apply --file topology.json --yes
-hkclaw-lite topology export
-```
-
-- `plan`은 읽기 전용 dry-run이며 `.hkclaw-lite/config.json`을 수정하지 않는다.
-- `apply`는 기존 store validator로 전체 미래 config를 먼저 검증한 뒤 한 번에 저장한다.
-- 토큰은 JSON에 직접 쓰지 말고 `secretRefs.*Env` 를 사용한다. 출력과 export에서는 secret 값이 `***` 로 redaction 된다.
-- 에이전트가 직접 `apply` 하려면 해당 에이전트 설정에 `managementPolicy.canApply=true` 와 허용 action/name/platform/workspace/max-change 정책이 있어야 한다.
-- 웹 어드민의 **구성 자동화** 화면에서도 같은 plan/apply/export 흐름을 사용할 수 있다. API: `GET /api/topology/export`, `POST /api/topology/plan`, `POST /api/topology/apply`.
 
 ## KakaoTalk 채널
 

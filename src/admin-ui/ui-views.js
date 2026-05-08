@@ -1,26 +1,4 @@
-import { renderShortcutCard } from './ui-shell.js?v=20260507-01';
 import { renderIcon } from './icons.js?v=20260507-01';
-
-export function renderHomeView(ctx) {
-  const { state, escapeHtml } = ctx;
-
-  return `
-    <section class="panel section-panel overview-panel">
-      <div class="section-head section-head--stack">
-        <div class="section-title-group">
-          <span class="section-title-icon">${renderIcon('sparkles', 'ui-icon')}</span>
-          <h2>바로가기</h2>
-        </div>
-      </div>
-      <div class="shortcut-grid">
-        ${renderShortcutCard({ view: 'agents', title: '에이전트', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-        ${renderShortcutCard({ view: 'channels', title: '채널', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-        ${renderShortcutCard({ view: 'schedules', title: '예약', description: '정해진 시간에 채널 실행', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-        ${renderShortcutCard({ view: 'ai', title: 'AI', state, escapeHtml, escapeAttr: ctx.escapeAttr })}
-      </div>
-    </section>
-  `;
-}
 
 export function renderAgentsView(ctx) {
   const { state, renderAgentList } = ctx;
@@ -81,72 +59,6 @@ export function renderSchedulesView(ctx) {
         <button type="button" class="btn-primary" data-action="open-schedule-modal" ${state.busy ? 'disabled' : ''}>${renderIcon('plus', 'ui-icon')}예약 추가</button>
       </div>
       ${renderScheduleList(state.data.schedules || [])}
-    </section>
-  `;
-}
-
-export function renderTopologyView(ctx) {
-  const { state, escapeHtml, escapeAttr, renderTopologyResult } = ctx;
-  const draft = state.topologyDraft || '';
-  const placeholder = `{
-  "version": 1,
-  "agents": [
-    {
-      "name": "auto-owner",
-      "agent": "codex",
-      "platform": "kakao",
-      "sandbox": "workspace-write"
-    }
-  ],
-  "connectors": [
-    {
-      "name": "auto-kakao",
-      "type": "kakao",
-      "kakaoRelayUrl": "https://hkclaw.example/",
-      "secretRefs": {
-        "kakaoRelayTokenEnv": "HKCLAW_KAKAO_RELAY_TOKEN"
-      }
-    }
-  ],
-  "channels": [
-    {
-      "name": "auto-kakao-main",
-      "platform": "kakao",
-      "connector": "auto-kakao",
-      "kakaoChannelId": "*",
-      "workspace": "~/workspace",
-      "agent": "auto-owner"
-    }
-  ]
-}`;
-
-  return `
-    <section class="panel section-panel topology-panel">
-      <div class="section-head">
-        <div class="section-title-group">
-          <span class="section-title-icon">${renderIcon('link', 'ui-icon')}</span>
-          <h2>Topology 자동화</h2>
-        </div>
-        <div class="inline-actions">
-          <button type="button" class="btn-secondary" data-action="topology-export" ${state.busy ? 'disabled' : ''}>${renderIcon('refresh', 'ui-icon')}현재 구성 불러오기</button>
-          <button type="button" class="btn-secondary" data-action="topology-plan" ${state.busy ? 'disabled' : ''}>${renderIcon('notice', 'ui-icon')}Plan</button>
-          <button type="button" class="btn-primary" data-action="topology-apply" ${state.busy ? 'disabled' : ''}>${renderIcon('play', 'ui-icon')}Apply</button>
-        </div>
-      </div>
-      <div class="topology-grid" data-form="topology">
-        <label class="field topology-editor">
-          <span>Topology JSON</span>
-          <textarea
-            name="topologySpec"
-            class="topology-textarea"
-            spellcheck="false"
-            placeholder="${escapeAttr(placeholder)}"
-          >${escapeHtml(draft)}</textarea>
-        </label>
-        <div class="topology-result">
-          ${renderTopologyResult(state.topologyResult)}
-        </div>
-      </div>
     </section>
   `;
 }
