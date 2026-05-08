@@ -1,7 +1,7 @@
 {
   "name": "hkclaw-lite",
   "version": "1.0.24",
-  "description": "Discord/Telegram/KakaoTalk AI agent runtime with a local web admin and full host-account privileges",
+  "description": "Local Discord/Telegram/KakaoTalk AI agent runtime with a web admin, installed via npm",
   "license": "MIT",
   "author": "hankyo",
   "repository": {
@@ -34,9 +34,7 @@
     "src"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "release:sync-version": "node scripts/sync-release-version.mjs",
-    "release:verify-version": "node scripts/verify-release-version.mjs"
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=24"

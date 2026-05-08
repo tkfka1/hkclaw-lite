@@ -4,7 +4,6 @@ export const CURRENT_CONFIG_VERSION = 3;
 export const DEFAULT_ADMIN_PORT = 5687;
 export const DEFAULT_DASHBOARD_REFRESH_MS = 5000;
 export const DEFAULT_CHANNEL_WORKSPACE = '~';
-export const CONTAINER_CHANNEL_WORKSPACE = '/workspace';
 export const DEFAULT_CODEX_SANDBOX = 'workspace-write';
 export const DEFAULT_CLAUDE_PERMISSION_MODE = 'bypassPermissions';
 export const DEFAULT_LOCAL_LLM_BASE_URL = 'http://127.0.0.1:11434/v1';

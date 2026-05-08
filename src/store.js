@@ -7,7 +7,6 @@ import {
   AGENT_ACCESS_MODE_CHOICES,
   CHANNEL_MODE_CHOICES,
   CONNECTOR_PLATFORM_CHOICES,
-  CONTAINER_CHANNEL_WORKSPACE,
   CONFIG_FILENAME,
   CURRENT_CONFIG_VERSION,
   DASHBOARD_ALL_AGENTS,
@@ -45,9 +44,7 @@ export function getDefaultChannelWorkspace() {
   if (fs.existsSync(homeWorkspace)) {
     return homeWorkspace;
   }
-  return fs.existsSync(CONTAINER_CHANNEL_WORKSPACE)
-    ? CONTAINER_CHANNEL_WORKSPACE
-    : DEFAULT_CHANNEL_WORKSPACE;
+  return DEFAULT_CHANNEL_WORKSPACE;
 }
 
 export function findProjectRoot(startDir) {

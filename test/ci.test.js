@@ -161,43 +161,6 @@ test('ci check github prints completed run details', async () => {
   });
 });
 
-test('container publish workflow builds amd64 and arm64 images without deployment credentials', () => {
-  const workflow = fs.readFileSync(path.resolve('.github/workflows/container-publish.yml'), 'utf8');
-  const dockerfile = fs.readFileSync(path.resolve('Dockerfile'), 'utf8');
-  const readme = fs.readFileSync(path.resolve('README.md'), 'utf8');
-
-  assert.match(workflow, /docker\/setup-qemu-action@/u);
-  assert.match(workflow, /docker\/setup-buildx-action@/u);
-  assert.match(workflow, /platforms:\s*linux\/amd64,linux\/arm64/u);
-  assert.match(workflow, /id:\s*build/u);
-  assert.match(dockerfile, /ARG TARGETARCH/u);
-  assert.match(dockerfile, /case "\$\{arch\}" in amd64\|arm64\)/u);
-  const privateDeploymentMarkers = [
-    ['GIT', 'OPS'].join(''),
-    ['DEPLOY', '_KEY'].join(''),
-    ['infra', '-values'].join(''),
-    ['git@', 'gitlab', '.com'].join(''),
-  ];
-  for (const marker of privateDeploymentMarkers) {
-    assert.equal(workflow.includes(marker), false);
-    assert.equal(readme.includes(marker), false);
-  }
-});
-
-test('ci workflow smoke-builds amd64 and arm64 container images', () => {
-  const workflow = fs.readFileSync(path.resolve('.github/workflows/ci.yml'), 'utf8');
-
-  assert.match(workflow, /container-build:/u);
-  assert.match(workflow, /docker\/setup-qemu-action@/u);
-  assert.match(workflow, /docker\/setup-buildx-action@/u);
-  assert.match(workflow, /arch:\s*amd64[\s\S]*platform:\s*linux\/amd64/u);
-  assert.match(workflow, /arch:\s*arm64[\s\S]*platform:\s*linux\/arm64/u);
-  assert.match(workflow, /docker\/build-push-action@/u);
-  assert.match(workflow, /platforms:\s*\$\{\{\s*matrix\.platform\s*\}\}/u);
-  assert.match(workflow, /push:\s*false/u);
-  assert.match(workflow, /outputs:\s*type=cacheonly/u);
-});
-
 test('ci watch gitlab polls until pipeline completes', async () => {
   let pipelineChecks = 0;
 

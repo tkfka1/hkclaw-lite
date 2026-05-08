@@ -694,32 +694,8 @@ test('help omits chat and session commands and documents the admin port', () => 
   assert.match(help.stdout, /Installing the package never starts a process by itself\./u);
   assert.match(help.stdout, /hkclaw-lite admin\s+Start the web admin server/u);
   assert.match(help.stdout, /hkclaw-lite run \.\.\.\s+Execute one one-shot turn/u);
-  assert.match(help.stdout, /hkclaw-lite admin \[--root DIR\] \[--host 127\.0\.0\.1\] \[--port 5687\] \[--foreground\]/u);
+  assert.match(help.stdout, /hkclaw-lite admin \[--root DIR\] \[--host 127\.0\.0\.1\] \[--port 5687\]/u);
   assert.match(help.stdout, /hkclaw-lite discord serve \[--root DIR\]/u);
-});
-
-test('admin command can delegate Homebrew installs to launchd service automatically', () => {
-  const cwd = createProject();
-  const fakeBrewPath = path.join(cwd, 'brew');
-  const logPath = path.join(cwd, 'brew.log');
-  fs.writeFileSync(
-    fakeBrewPath,
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${logPath}"\nexit 0\n`,
-    { mode: 0o755 },
-  );
-
-  const result = runCli(cwd, ['admin'], {
-    env: {
-      HKCLAW_LITE_ADMIN_AUTO_SERVICE: 'always',
-      HKCLAW_LITE_BREW_COMMAND: fakeBrewPath,
-    },
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Homebrew service started: hkclaw-lite/u);
-  assert.match(result.stdout, /http:\/\/0\.0\.0\.0:5687/u);
-  assert.match(fs.readFileSync(logPath, 'utf8'), /services start hkclaw-lite/u);
-  assert.equal(fs.existsSync(path.join(cwd, '.hkclaw-lite', 'config.json')), false);
 });
 
 test('run command injects prompt envelope, raw prompt, and channel workspace', () => {

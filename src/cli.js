@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { serveAdmin } from './admin.js';
@@ -107,10 +107,6 @@ import {
   toErrorMessage,
 } from './utils.js';
 
-const HOMEBREW_PACKAGE_NAME = 'hkclaw-lite';
-const ADMIN_AUTO_SERVICE_ENV = 'HKCLAW_LITE_ADMIN_AUTO_SERVICE';
-const ADMIN_FOREGROUND_ENV = 'HKCLAW_LITE_ADMIN_FOREGROUND';
-const BREW_COMMAND_ENV = 'HKCLAW_LITE_BREW_COMMAND';
 
 export async function main(argv) {
   try {
@@ -1096,12 +1092,7 @@ async function handleBundlesCommand(projectRoot, argv) {
 
 async function handleAdminCommand({ cwd, rootOverride, argv }) {
   const { flags, positionals } = parseArgs(argv);
-  assert(positionals.length === 0, 'Usage: hkclaw-lite admin [--host HOST] [--port PORT] [--foreground]');
-
-  if (shouldStartHomebrewAdminService({ flags, rootOverride })) {
-    startHomebrewAdminService();
-    return;
-  }
+  assert(positionals.length === 0, 'Usage: hkclaw-lite admin [--host HOST] [--port PORT]');
 
   const projectRoot = resolveOrInitProjectRoot(cwd, rootOverride);
   const host = getFlagValue(flags, 'host', '127.0.0.1');
@@ -1110,91 +1101,6 @@ async function handleAdminCommand({ cwd, rootOverride, argv }) {
     host,
     port,
   });
-}
-
-function shouldStartHomebrewAdminService({ flags, rootOverride }) {
-  if (getBooleanFlag(flags, 'foreground') || isTruthyEnv(process.env[ADMIN_FOREGROUND_ENV])) {
-    return false;
-  }
-  if (rootOverride || getFlagValue(flags, 'host') !== undefined || getFlagValue(flags, 'port') !== undefined) {
-    return false;
-  }
-
-  const mode = normalizeAdminAutoServiceMode(process.env[ADMIN_AUTO_SERVICE_ENV]);
-  if (mode === 'never') {
-    return false;
-  }
-  if (mode === 'always') {
-    return true;
-  }
-
-  return process.platform === 'darwin' && process.stdout.isTTY && isRunningFromHomebrewInstall();
-}
-
-function normalizeAdminAutoServiceMode(value) {
-  const mode = String(value || 'auto').trim().toLowerCase();
-  if (['0', 'false', 'no', 'off', 'never', 'foreground'].includes(mode)) {
-    return 'never';
-  }
-  if (['1', 'true', 'yes', 'on', 'always', 'service'].includes(mode)) {
-    return 'always';
-  }
-  return 'auto';
-}
-
-function isTruthyEnv(value) {
-  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
-}
-
-function isRunningFromHomebrewInstall() {
-  const prefix = readHomebrewPackagePrefix();
-  if (!prefix) {
-    return false;
-  }
-  const executablePath = process.argv[1] ? safeRealpath(process.argv[1]) : '';
-  const packagePrefix = safeRealpath(prefix);
-  return Boolean(executablePath && packagePrefix && executablePath.startsWith(`${packagePrefix}${path.sep}`));
-}
-
-function readHomebrewPackagePrefix() {
-  const result = spawnSync(getBrewCommand(), ['--prefix', HOMEBREW_PACKAGE_NAME], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
-  if (result.status !== 0) {
-    return '';
-  }
-  return String(result.stdout || '').trim();
-}
-
-function safeRealpath(targetPath) {
-  try {
-    return fs.realpathSync(targetPath);
-  } catch {
-    return '';
-  }
-}
-
-function getBrewCommand() {
-  return String(process.env[BREW_COMMAND_ENV] || 'brew').trim() || 'brew';
-}
-
-function startHomebrewAdminService() {
-  const result = spawnSync(getBrewCommand(), ['services', 'start', HOMEBREW_PACKAGE_NAME], {
-    stdio: 'inherit',
-    env: process.env,
-  });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    throw new Error(`brew services start ${HOMEBREW_PACKAGE_NAME} failed with exit code ${result.status}.`);
-  }
-  console.log('Homebrew service started: hkclaw-lite');
-  console.log('Web admin: http://0.0.0.0:5687');
-  console.log('Project root: $(brew --prefix)/var/hkclaw-lite');
-  console.log('Logs: $(brew --prefix)/var/log/hkclaw-lite.log');
-  console.log('Foreground mode: hkclaw-lite admin --foreground');
 }
 
 async function handleDiscordCommand(projectRoot, argv) {
@@ -2687,11 +2593,10 @@ Execution model:
   hkclaw-lite discord serve Start the long-running Discord worker
   hkclaw-lite telegram serve Start the long-running Telegram worker
   hkclaw-lite kakao serve   Start the long-running Kakao TalkChannel worker
-  Containers and Kubernetes only run whichever command you pass explicitly.
 
 Usage:
   hkclaw-lite init [--root DIR] [--force]
-  hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}] [--foreground]
+  hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
   hkclaw-lite discord serve [--root DIR] [--agent <legacy-agent-name>]
   hkclaw-lite telegram serve [--root DIR] [--agent <legacy-agent-name>]
   hkclaw-lite kakao serve [--root DIR] [--connector <kakao-name>|--agent <legacy-agent-name>]
