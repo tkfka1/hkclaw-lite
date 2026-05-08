@@ -60,6 +60,24 @@ npx hkclaw-lite admin
 - 에이전트/채널/AI 로그인은 모두 웹에서 관리한다.
 - Discord/Telegram은 채널이 있으면 필요한 수신 워커가 자동으로 켜진다. KakaoTalk은 KakaoTalk 채널/플랫폼 에이전트가 있으면 하나의 릴레이 수신 워커가 켜진다.
 
+### 서비스로 등록 (Linux/systemd)
+
+`hkclaw-lite admin` 을 systemd user unit 으로 등록해서 백그라운드에서 항상 띄울 수 있다.
+
+```bash
+cd ~/hkclaw-lite               # state 가 살 프로젝트 루트
+hkclaw-lite start               # ~/.config/systemd/user/hkclaw-lite.service 작성 + enable + start
+hkclaw-lite service status     # systemctl --user status hkclaw-lite
+hkclaw-lite service logs -f    # journalctl --user -u hkclaw-lite -f
+hkclaw-lite stop               # 정지
+hkclaw-lite restart            # 재시작
+hkclaw-lite service uninstall  # disable + unit 파일 삭제
+```
+
+- 기본 bind 는 `0.0.0.0:5687` 이다. `--host`/`--port` 로 바꿀 수 있다.
+- 재부팅 자동 기동을 원하면 `loginctl enable-linger $USER` 을 한 번 켜둔다.
+- 비밀이나 환경 변수를 추가로 주입하려면 `<root>/.hkclaw-lite/service.env` 를 만들어 두면 unit 의 `EnvironmentFile=-` 로 자동 로드된다.
+
 ## 기본 흐름
 
 1. `hkclaw-lite admin` 으로 웹 어드민을 띄운다.

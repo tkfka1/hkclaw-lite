@@ -90,6 +90,17 @@ import {
   planTopology,
 } from './topology.js';
 import {
+  getUnitPath,
+  installSystemdUnit,
+  readBinPath,
+  restartService,
+  serviceLogs,
+  serviceStatus,
+  startService,
+  stopService,
+  uninstallSystemdUnit,
+} from './service.js';
+import {
   assert,
   ensureDir,
   getBooleanFlag,
@@ -152,6 +163,16 @@ export async function main(argv) {
       return;
     }
 
+    if (command === 'start' || command === 'stop' || command === 'restart' || command === 'service') {
+      await handleServiceCommand({
+        cwd: process.cwd(),
+        rootOverride,
+        command,
+        argv: tail,
+      });
+      return;
+    }
+
     const projectRoot = resolveOrInitProjectRoot(process.cwd(), rootOverride);
 
     switch (command) {
@@ -201,10 +222,6 @@ export async function main(argv) {
       case 'kakao':
         await handleKakaoCommand(projectRoot, tail);
         return;
-      case 'service':
-        throw new Error(
-          'The service command was removed. Use "add agent", "edit agent", "remove agent", "list", and "show".',
-        );
       default:
         throw new Error(`Unknown command "${command}". Run "hkclaw-lite help".`);
     }
@@ -1101,6 +1118,88 @@ async function handleAdminCommand({ cwd, rootOverride, argv }) {
     host,
     port,
   });
+}
+
+async function handleServiceCommand({ cwd, rootOverride, command, argv }) {
+  if (command === 'start') {
+    return runServiceInstallAndStart({ cwd, rootOverride, argv });
+  }
+  if (command === 'stop') {
+    stopService();
+    console.log(`Stopped ${getUnitPath()}`);
+    return undefined;
+  }
+  if (command === 'restart') {
+    restartService();
+    console.log(`Restarted ${getUnitPath()}`);
+    return undefined;
+  }
+
+  const [subcommand, ...tail] = argv;
+  switch (subcommand) {
+    case 'install':
+      return runServiceInstall({ cwd, rootOverride, argv: tail, autoStart: false });
+    case 'start':
+      return runServiceInstallAndStart({ cwd, rootOverride, argv: tail });
+    case 'stop':
+      stopService();
+      return undefined;
+    case 'restart':
+      restartService();
+      return undefined;
+    case 'status':
+      serviceStatus();
+      return undefined;
+    case 'logs': {
+      const { flags } = parseArgs(tail);
+      serviceLogs({
+        follow: getBooleanFlag(flags, 'follow') || getBooleanFlag(flags, 'f'),
+        lines: parseOptionalInteger(getFlagValue(flags, 'lines')) ?? 200,
+      });
+      return undefined;
+    }
+    case 'uninstall':
+      uninstallSystemdUnit();
+      console.log(`Removed ${getUnitPath()}`);
+      return undefined;
+    default:
+      throw new Error(
+        'Usage: hkclaw-lite service <install|start|stop|restart|status|logs|uninstall>',
+      );
+  }
+}
+
+function runServiceInstall({ cwd, rootOverride, argv, autoStart }) {
+  const { flags, positionals } = parseArgs(argv);
+  assert(
+    positionals.length === 0,
+    'Usage: hkclaw-lite service install [--host HOST] [--port PORT]',
+  );
+  const projectRoot = resolveOrInitProjectRoot(cwd, rootOverride);
+  const host = getFlagValue(flags, 'host', '0.0.0.0');
+  const port = getFlagValue(flags, 'port', String(DEFAULT_ADMIN_PORT));
+  const binPath = readBinPath();
+  assert(binPath, 'Could not resolve hkclaw-lite binary path. Reinstall via npm install -g hkclaw-lite.');
+  const { unitPath, envFile } = installSystemdUnit({ binPath, projectRoot, host, port });
+  console.log(`Installed ${unitPath}`);
+  console.log(`Project root: ${projectRoot}`);
+  console.log(`Bind: ${host}:${port}`);
+  if (envFile) {
+    console.log(`EnvironmentFile: ${envFile}`);
+  }
+  if (autoStart) {
+    startService();
+    console.log('Service enabled and started.');
+    console.log('  hkclaw-lite status   # SQLite-backed app status');
+    console.log('  hkclaw-lite service status   # systemd unit state');
+    console.log('  hkclaw-lite service logs -f  # follow journal');
+  } else {
+    console.log('Run "hkclaw-lite start" or "hkclaw-lite service start" to enable and launch.');
+  }
+}
+
+function runServiceInstallAndStart({ cwd, rootOverride, argv }) {
+  return runServiceInstall({ cwd, rootOverride, argv, autoStart: true });
 }
 
 async function handleDiscordCommand(projectRoot, argv) {
@@ -2586,7 +2685,11 @@ Installing the package never starts a process by itself.
 
 Execution model:
   hkclaw-lite / --help      Show help only
-  hkclaw-lite admin         Start the web admin server
+  hkclaw-lite admin         Start the web admin server in the foreground
+  hkclaw-lite start         Install + enable the systemd user service
+  hkclaw-lite stop          Stop the systemd user service
+  hkclaw-lite restart       Restart the systemd user service
+  hkclaw-lite service ...   Manage the systemd user service (status, logs, uninstall)
   hkclaw-lite run ...       Execute one one-shot turn
   hkclaw-lite schedule ...  Manage durable channel schedules
   hkclaw-lite bundles update Update project-local bundled AI CLIs
@@ -2597,6 +2700,13 @@ Execution model:
 Usage:
   hkclaw-lite init [--root DIR] [--force]
   hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
+  hkclaw-lite start [--root DIR] [--host 0.0.0.0] [--port ${DEFAULT_ADMIN_PORT}]
+  hkclaw-lite stop
+  hkclaw-lite restart
+  hkclaw-lite service install [--root DIR] [--host 0.0.0.0] [--port ${DEFAULT_ADMIN_PORT}]
+  hkclaw-lite service status
+  hkclaw-lite service logs [--follow] [--lines 200]
+  hkclaw-lite service uninstall
   hkclaw-lite discord serve [--root DIR] [--agent <legacy-agent-name>]
   hkclaw-lite telegram serve [--root DIR] [--agent <legacy-agent-name>]
   hkclaw-lite kakao serve [--root DIR] [--connector <kakao-name>|--agent <legacy-agent-name>]
