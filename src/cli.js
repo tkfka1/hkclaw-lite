@@ -1195,6 +1195,7 @@ function runServiceInstall({ cwd, rootOverride, argv, autoStart }) {
     console.log('  hkclaw-lite service logs -f  # follow journal');
   } else {
     console.log('Run "hkclaw-lite start" or "hkclaw-lite service start" to enable and launch.');
+    console.log('If the service is already running, use "hkclaw-lite restart" to apply the new unit.');
   }
 }
 

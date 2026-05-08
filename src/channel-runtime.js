@@ -136,6 +136,7 @@ async function executeTribunalTurn({
   let ownerPrompt = prompt;
   let ownerResponse = '';
   let reviewerResponse = '';
+  let lastReviewerVerdict = 'blocked';
 
   for (let round = 1; round <= maxRounds; round += 1) {
     await recorder.transition({
@@ -202,6 +203,7 @@ async function executeTribunalTurn({
     });
     reviewerResponse = reviewerTurn.content;
     const reviewerVerdict = parseReviewerVerdict(reviewerResponse);
+    lastReviewerVerdict = reviewerVerdict;
     await emitRoleMessage(onRoleMessage, {
       role: 'reviewer',
       agent: reviewer,
@@ -296,7 +298,7 @@ async function executeTribunalTurn({
     activeRole: 'arbiter',
     currentRound: maxRounds,
     maxRounds,
-    reviewerVerdict: 'blocked',
+    reviewerVerdict: lastReviewerVerdict,
     note: 'Arbiter invoked after review rounds were exhausted.',
   });
   const arbiterTurn = await executeAgentTurnWithFallback({
@@ -310,6 +312,7 @@ async function executeTribunalTurn({
       ownerResponse,
       reviewerResponse,
       maxRounds,
+      reviewerVerdict: lastReviewerVerdict,
     }),
     workdir: resolveRoleWorkdir(projectRoot, channel, 'arbiter', workdir),
     onStreamEvent,
@@ -325,13 +328,13 @@ async function executeTribunalTurn({
     round: maxRounds,
     maxRounds,
     mode: 'tribunal',
-    verdict: 'blocked',
+    verdict: lastReviewerVerdict,
   });
   return {
     role: 'arbiter',
     agent: arbiter,
     content: arbiterResponse,
-    reviewerVerdict: 'blocked',
+    reviewerVerdict: lastReviewerVerdict,
     runtimeFinalDisposition: 'arbiter_after_blocked_review',
   };
 }
@@ -612,6 +615,9 @@ async function loadRoleRuntimeSession(projectRoot, { channel, role }) {
   if (!channel?.name || !role) {
     return null;
   }
+  if (role === 'arbiter') {
+    return null;
+  }
 
   try {
     const session = await getRuntimeRoleSession(projectRoot, {
@@ -621,8 +627,11 @@ async function loadRoleRuntimeSession(projectRoot, { channel, role }) {
     if (!session) {
       return null;
     }
+    if (session.sessionPolicy === 'ephemeral') {
+      return null;
+    }
     const currentAgentName =
-      role === 'reviewer' ? channel.reviewer : role === 'arbiter' ? channel.arbiter : channel.agent;
+      role === 'reviewer' ? channel.reviewer : channel.agent;
     if (currentAgentName && session.agentName && session.agentName !== currentAgentName) {
       return null;
     }

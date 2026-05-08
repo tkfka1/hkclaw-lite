@@ -479,15 +479,31 @@ function resolveExistingScheduleWorkdir(projectRoot, workdir) {
   return resolved;
 }
 
+const LEASE_RENEWAL_FAILURE_THRESHOLD = 3;
+
 function startLeaseHeartbeat(projectRoot, scheduleId, { leaseOwner, leaseMs }) {
   const heartbeatMs = Math.max(1000, Math.floor(leaseMs / 2));
+  let consecutiveFailures = 0;
   const timer = setInterval(() => {
     void renewRuntimeScheduleLease(projectRoot, scheduleId, {
       leaseOwner,
       leaseExpiresAt: new Date(Date.now() + leaseMs).toISOString(),
-    }).catch((error) => {
-      console.error(`Scheduler lease renewal failed: ${toErrorMessage(error)}`);
-    });
+    })
+      .then(() => {
+        consecutiveFailures = 0;
+      })
+      .catch((error) => {
+        consecutiveFailures += 1;
+        console.error(
+          `Scheduler lease renewal failed (${consecutiveFailures}/${LEASE_RENEWAL_FAILURE_THRESHOLD}) for schedule ${scheduleId}: ${toErrorMessage(error)}`,
+        );
+        if (consecutiveFailures >= LEASE_RENEWAL_FAILURE_THRESHOLD) {
+          clearInterval(timer);
+          console.error(
+            `Scheduler lease for ${scheduleId} abandoned after ${LEASE_RENEWAL_FAILURE_THRESHOLD} consecutive renewal failures; another worker may claim it before the in-flight run completes.`,
+          );
+        }
+      });
   }, heartbeatMs);
   timer.unref?.();
   return () => clearInterval(timer);

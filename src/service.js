@@ -13,6 +13,18 @@ export function getUnitPath(homeDir = os.homedir()) {
 export function buildSystemdUnit({ binPath, projectRoot, host, port, envFile, homeDir, nodePath }) {
   const home = homeDir || os.homedir();
   const node = nodePath || process.execPath;
+  const bundledClisBin = path.join(projectRoot, '.hkclaw-lite', 'bundled-clis', 'bin');
+  const pathSegments = [
+    path.dirname(node),
+    path.dirname(binPath),
+    bundledClisBin,
+    '/usr/local/sbin',
+    '/usr/local/bin',
+    '/usr/sbin',
+    '/usr/bin',
+    '/sbin',
+    '/bin',
+  ];
   const lines = [
     '[Unit]',
     `Description=${SERVICE_NAME} local admin`,
@@ -26,7 +38,7 @@ export function buildSystemdUnit({ binPath, projectRoot, host, port, envFile, ho
     'Restart=always',
     'RestartSec=5',
     `Environment=HOME=${home}`,
-    `Environment=PATH=${path.dirname(node)}:${path.dirname(binPath)}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+    `Environment=PATH=${pathSegments.join(':')}`,
   ];
   if (envFile) {
     lines.push(`EnvironmentFile=-${envFile}`);
@@ -41,7 +53,7 @@ export function writeSystemdUnit(unitPath, content) {
 }
 
 export function readBinPath() {
-  return process.argv[1] ? fs.realpathSync(process.argv[1]) : '';
+  return process.argv[1] ? path.resolve(process.argv[1]) : '';
 }
 
 function ensureLinux() {

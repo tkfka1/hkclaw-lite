@@ -210,10 +210,13 @@ export async function enqueueRuntimeOutboxEvent(projectRoot, { runId, channel, e
 }
 
 export async function recordRuntimeRoleSession(projectRoot, { channel, runId, entry }) {
+  const channelName = normalizeNullableString(channel?.name);
+  const role = normalizeNullableString(entry?.role);
+  if (!channelName || !role) {
+    return;
+  }
   const db = await getRuntimeDb(projectRoot);
   const now = timestamp();
-  const channelName = normalizeNullableString(channel?.name) || 'unknown';
-  const role = normalizeNullableString(entry?.role) || 'unknown';
   const sessionKey = `${channelName}:${role}`;
   const existing = db
     .prepare(
@@ -1486,6 +1489,11 @@ export async function listPendingRuntimeOutboxEvents(
   }));
 }
 
+// Outbox claim is intentionally non-atomic between SELECT and UPDATE: hkclaw-lite is a
+// single-process npm runtime, and each platform service (discord/telegram/kakao) chains
+// flushes through outboxFlushTask so only one flush per service runs at a time. If the
+// runtime ever grows multi-process semantics, switch to a claim_token column so concurrent
+// workers cannot dispatch the same event twice.
 export async function markRuntimeOutboxEventDispatched(projectRoot, eventId) {
   const db = await getRuntimeDb(projectRoot);
   db.prepare(
