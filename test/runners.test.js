@@ -15,51 +15,12 @@ function createTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-runners-test-'));
 }
 
-function createFakeClaudeAgentSdkBundle() {
-  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-runners-claude-sdk-'));
-  const packageDir = path.join(rootDir, '@anthropic-ai', 'claude-agent-sdk');
-  const modulePath = path.join(packageDir, 'sdk.mjs');
-  const cliPath = path.join(packageDir, 'cli.js');
-  fs.mkdirSync(path.dirname(modulePath), { recursive: true });
+function createFakeClaudeCli() {
+  const dir = createTempDir();
+  const scriptPath = path.join(dir, 'claude.mjs');
   fs.writeFileSync(
-    path.join(packageDir, 'package.json'),
-    JSON.stringify({
-      name: '@anthropic-ai/claude-agent-sdk',
-      version: '0.0.0-test',
-      type: 'module',
-      exports: {
-        '.': {
-          default: './sdk.mjs',
-        },
-      },
-    }),
-  );
-  fs.writeFileSync(
-    modulePath,
-    `export function query({ options = {} }) {
-  async function* run() {
-    yield {
-      type: 'result',
-      subtype: 'success',
-      result: JSON.stringify({
-        model: options.model || null,
-        permissionMode: options.permissionMode || null,
-        dangerous: Boolean(options.allowDangerouslySkipPermissions),
-      }),
-    };
-  }
-
-  const iterator = run();
-  iterator.close = () => {};
-  return iterator;
-}
-`,
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(
-    cliPath,
-    `#!/usr/bin/env node
-const args = process.argv.slice(2);
+    scriptPath,
+    `const args = process.argv.slice(2);
 
 if (args[0] === 'auth' && args[1] === 'status' && args[2] === '--json') {
   process.stdout.write(JSON.stringify({
@@ -181,75 +142,22 @@ if (args.includes('-p') && args.includes('--output-format') && args.includes('st
 process.stderr.write(\`unexpected args: \${args.join(' ')}\\n\`);
 process.exit(1);
 `,
+  );
+  const cliPath = path.join(dir, 'claude');
+  fs.writeFileSync(
+    cliPath,
+    `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}" "$@"\n`,
     { mode: 0o755 },
   );
-  return path.join(packageDir, 'package.json');
+  return cliPath;
 }
 
-function resolveFakeClaudeCliPath(packageJsonPath) {
-  return path.join(path.dirname(packageJsonPath), 'cli.js');
-}
-
-function createFakeCodexNativeBundle() {
-  const rootDir = createTempDir();
-  const packageDir = path.join(rootDir, '@openai', 'codex');
-  const bundleDir = path.join(rootDir, '@openai', 'codex-linux-x64');
-  const bundledScriptPath = path.join(packageDir, 'bin', 'codex.js');
-  const nativeBinaryPath = path.join(
-    bundleDir,
-    'vendor',
-    'x86_64-unknown-linux-musl',
-    'codex',
-    'codex',
-  );
-  const rgPath = path.join(
-    bundleDir,
-    'vendor',
-    'x86_64-unknown-linux-musl',
-    'path',
-    'rg',
-  );
-
-  fs.mkdirSync(path.dirname(bundledScriptPath), { recursive: true });
-  fs.mkdirSync(path.dirname(nativeBinaryPath), { recursive: true });
-  fs.mkdirSync(path.dirname(rgPath), { recursive: true });
-  fs.writeFileSync(
-    path.join(packageDir, 'package.json'),
-    JSON.stringify({
-      name: '@openai/codex',
-      version: '0.0.0-test',
-      bin: {
-        codex: './bin/codex.js',
-      },
-    }),
-  );
-  fs.writeFileSync(bundledScriptPath, '#!/usr/bin/env node\n', { mode: 0o755 });
-  fs.writeFileSync(nativeBinaryPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(rgPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-
-  return path.join(packageDir, 'package.json');
-}
-
-function createFakeCodexCliBundle() {
-  const rootDir = createTempDir();
-  const packageDir = path.join(rootDir, '@openai', 'codex');
-  const scriptPath = path.join(packageDir, 'bin', 'codex.js');
-  fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
-  fs.writeFileSync(
-    path.join(packageDir, 'package.json'),
-    JSON.stringify({
-      name: '@openai/codex',
-      version: '0.0.0-test',
-      type: 'module',
-      bin: {
-        codex: './bin/codex.js',
-      },
-    }),
-  );
+function createFakeCodexCli() {
+  const dir = createTempDir();
+  const scriptPath = path.join(dir, 'codex.mjs');
   fs.writeFileSync(
     scriptPath,
-    `#!/usr/bin/env node
-import fs from 'node:fs';
+    `import fs from 'node:fs';
 
 const args = process.argv.slice(2);
 
@@ -297,33 +205,22 @@ process.stdin.on('end', () => {
 });
 process.stdin.on('error', () => process.exit(1));
 `,
+  );
+  const cliPath = path.join(dir, 'codex');
+  fs.writeFileSync(
+    cliPath,
+    `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}" "$@"\n`,
     { mode: 0o755 },
   );
-
-  return path.join(packageDir, 'package.json');
+  return cliPath;
 }
 
-function createFakeGeminiCliBundle() {
-  const rootDir = createTempDir();
-  const packageDir = path.join(rootDir, '@google', 'gemini-cli');
-  const scriptPath = path.join(packageDir, 'bundle', 'gemini.js');
-
-  fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
-  fs.writeFileSync(
-    path.join(packageDir, 'package.json'),
-    JSON.stringify({
-      name: '@google/gemini-cli',
-      version: '0.0.0-test',
-      type: 'module',
-      bin: {
-        gemini: './bundle/gemini.js',
-      },
-    }),
-  );
+function createFakeGeminiCli() {
+  const dir = createTempDir();
+  const scriptPath = path.join(dir, 'gemini.mjs');
   fs.writeFileSync(
     scriptPath,
-    `#!/usr/bin/env node
-import fs from 'node:fs';
+    `import fs from 'node:fs';
 
 const settingsPath = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH || '';
 const payload = {
@@ -348,10 +245,14 @@ const payload = {
 };
 process.stdout.write(JSON.stringify(payload));
 `,
+  );
+  const cliPath = path.join(dir, 'gemini');
+  fs.writeFileSync(
+    cliPath,
+    `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}" "$@"\n`,
     { mode: 0o755 },
   );
-
-  return path.join(packageDir, 'package.json');
+  return cliPath;
 }
 
 async function withEnv(entries, callback) {
@@ -389,60 +290,54 @@ test('resolveExecutable finds Windows command shims via PATHEXT', () => {
   assert.equal(resolved, shimPath);
 });
 
-test('resolveManagedAgentCli uses the bundled package json override', () => {
+test('resolveManagedAgentCli resolves codex by binary name on PATH', () => {
   const dir = createTempDir();
-  const packageDir = path.join(dir, '@openai', 'codex');
-  const bundledScriptPath = path.join(packageDir, 'bin', 'codex.js');
-
-  fs.mkdirSync(path.dirname(bundledScriptPath), { recursive: true });
-  fs.writeFileSync(
-    path.join(packageDir, 'package.json'),
-    JSON.stringify({
-      name: '@openai/codex',
-      version: '0.0.0-test',
-      bin: {
-        codex: './bin/codex.js',
-      },
-    }),
-  );
-  fs.writeFileSync(bundledScriptPath, '#!/usr/bin/env node\n', 'utf8');
+  const codexPath = path.join(dir, 'codex');
+  fs.writeFileSync(codexPath, '#!/usr/bin/env node\n', { mode: 0o755 });
 
   const resolved = resolveManagedAgentCli('codex', {
-    HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: path.join(packageDir, 'package.json'),
-  });
-
-  assert.equal(resolved?.source, 'bundled');
-  assert.equal(resolved?.command, process.execPath);
-  assert.equal(resolved?.packageName, '@openai/codex');
-  assert.equal(resolved?.packageVersion, '0.0.0-test');
-  assert.deepEqual(resolved?.argsPrefix, [bundledScriptPath]);
-});
-
-test('resolveManagedAgentCli prefers the bundled Codex native binary when available', () => {
-  const fakePackageJson = createFakeCodexNativeBundle();
-
-  const resolved = resolveManagedAgentCli('codex', {
-    HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakePackageJson,
-    PATH: '/usr/bin',
-  });
-
-  assert.equal(resolved?.source, 'bundled');
-  assert.equal(resolved?.packageName, '@openai/codex');
-  assert.equal(resolved?.packageVersion, '0.0.0-test');
-  assert.match(resolved?.command || '', /codex-linux-x64\/vendor\/x86_64-unknown-linux-musl\/codex\/codex$/u);
-  assert.deepEqual(resolved?.argsPrefix, []);
-  assert.match(resolved?.envPatch?.PATH || '', /^.+codex-linux-x64\/vendor\/x86_64-unknown-linux-musl\/path/u);
-  assert.equal(resolved?.envPatch?.CODEX_MANAGED_BY_NPM, '1');
-});
-
-test('resolveManagedAgentCli ignores PATH when the bundled cli is missing', () => {
-  const dir = createTempDir();
-  fs.writeFileSync(path.join(dir, 'codex.cmd'), '@echo off\r\n', 'utf8');
-
-  const resolved = resolveManagedAgentCli('codex', {
-    HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: path.join(dir, 'missing', 'package.json'),
     PATH: dir,
-    PATHEXT: '.CMD',
+  });
+
+  assert.equal(resolved?.source, 'system');
+  assert.equal(resolved?.command, codexPath);
+  assert.equal(resolved?.packageName, '@openai/codex');
+  assert.deepEqual(resolved?.argsPrefix, []);
+});
+
+test('resolveManagedAgentCli honors HKCLAW_LITE_CODEX_CLI override', () => {
+  const dir = createTempDir();
+  const overridePath = path.join(dir, 'my-codex');
+  fs.writeFileSync(overridePath, '#!/usr/bin/env node\n', { mode: 0o755 });
+
+  const resolved = resolveManagedAgentCli('codex', {
+    HKCLAW_LITE_CODEX_CLI: overridePath,
+    PATH: '',
+  });
+
+  assert.equal(resolved?.source, 'external');
+  assert.equal(resolved?.command, overridePath);
+});
+
+test('resolveManagedAgentCli honors HKCLAW_LITE_GEMINI_CLI override', () => {
+  const dir = createTempDir();
+  const overridePath = path.join(dir, 'my-gemini');
+  fs.writeFileSync(overridePath, '#!/usr/bin/env node\n', { mode: 0o755 });
+
+  const resolved = resolveManagedAgentCli('gemini-cli', {
+    HKCLAW_LITE_GEMINI_CLI: overridePath,
+    PATH: '',
+  });
+
+  assert.equal(resolved?.source, 'external');
+  assert.equal(resolved?.command, overridePath);
+});
+
+test('resolveManagedAgentCli returns null when binary is missing from PATH', () => {
+  const dir = createTempDir();
+
+  const resolved = resolveManagedAgentCli('codex', {
+    PATH: dir,
   });
 
   assert.equal(resolved, null);
@@ -452,11 +347,11 @@ test('runAgentTurn returns Codex CLI usage metadata when captureRuntimeMetadata 
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
-  const fakePackageJson = createFakeCodexCliBundle();
+  const fakeCliPath = createFakeCodexCli();
 
   await withEnv(
     {
-      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_CODEX_CLI: fakeCliPath,
     },
     async () => {
       const output = await runAgentTurn({
@@ -488,46 +383,11 @@ test('runAgentTurn returns Codex CLI usage metadata when captureRuntimeMetadata 
   );
 });
 
-test('runAgentTurn uses the bundled Claude Code CLI runtime override', async () => {
+test('runAgentTurn uses the explicit Claude CLI override', async () => {
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
-  const fakePackageJson = createFakeClaudeAgentSdkBundle();
-
-  await withEnv(
-    {
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
-    },
-    async () => {
-      const output = await runAgentTurn({
-        projectRoot,
-        agent: {
-          name: 'claude-agent',
-          agent: 'claude-code',
-          model: 'claude-sonnet-4-6',
-          permissionMode: 'acceptEdits',
-        },
-        prompt: 'Return exactly OK.',
-        rawPrompt: 'Return exactly OK.',
-        workdir: 'workspace',
-      });
-
-      assert.deepEqual(JSON.parse(output), {
-        model: 'claude-sonnet-4-6',
-        permissionMode: 'acceptEdits',
-        dangerous: false,
-        effort: null,
-      });
-    },
-  );
-});
-
-test('runAgentTurn uses the explicit external Claude CLI override', async () => {
-  const projectRoot = createTempDir();
-  const workspacePath = path.join(projectRoot, 'workspace');
-  fs.mkdirSync(workspacePath, { recursive: true });
-  const fakePackageJson = createFakeClaudeAgentSdkBundle();
-  const fakeCliPath = resolveFakeClaudeCliPath(fakePackageJson);
+  const fakeCliPath = createFakeClaudeCli();
 
   await withEnv(
     {
@@ -561,11 +421,11 @@ test('runAgentTurn strips Gemini process-env auth overrides and forces managed G
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
-  const fakePackageJson = createFakeGeminiCliBundle();
+  const fakeCliPath = createFakeGeminiCli();
 
   await withEnv(
     {
-      HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_GEMINI_CLI: fakeCliPath,
       GEMINI_API_KEY: 'process-gemini-key',
       GOOGLE_API_KEY: 'process-google-key',
       GOOGLE_APPLICATION_CREDENTIALS: '/tmp/google-creds.json',
@@ -590,17 +450,6 @@ test('runAgentTurn strips Gemini process-env auth overrides and forces managed G
       assert.equal(parsed.googleApplicationCredentials, '');
       assert.equal(parsed.googleCloudAccessToken, '');
       assert.equal(parsed.googleGenAiUseGca, 'true');
-      assert.equal(
-        fs.existsSync(
-          path.join(
-            path.dirname(fakePackageJson),
-            'bundle',
-            'policies',
-            'sandbox-default.toml',
-          ),
-        ),
-        true,
-      );
     },
   );
 });
@@ -609,11 +458,11 @@ test('runAgentTurn maps Gemini full access to YOLO approval mode', async () => {
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
-  const fakePackageJson = createFakeGeminiCliBundle();
+  const fakeCliPath = createFakeGeminiCli();
 
   await withEnv(
     {
-      HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_GEMINI_CLI: fakeCliPath,
     },
     async () => {
       const output = await runAgentTurn({
@@ -643,11 +492,11 @@ test('runAgentTurn maps Gemini effort to a temporary model config override', asy
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
-  const fakePackageJson = createFakeGeminiCliBundle();
+  const fakeCliPath = createFakeGeminiCli();
 
   await withEnv(
     {
-      HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_GEMINI_CLI: fakeCliPath,
     },
     async () => {
       const output = await runAgentTurn({
@@ -693,11 +542,11 @@ test('runAgentTurn returns Claude usage metadata when captureRuntimeMetadata is 
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
-  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const fakeCliPath = createFakeClaudeCli();
 
   await withEnv(
     {
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_CLAUDE_CLI: fakeCliPath,
     },
     async () => {
       const output = await runAgentTurn({
@@ -730,12 +579,12 @@ test('runAgentTurn forwards Claude stream events while preserving the final resu
   const projectRoot = createTempDir();
   const workspacePath = path.join(projectRoot, 'workspace');
   fs.mkdirSync(workspacePath, { recursive: true });
-  const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const fakeCliPath = createFakeClaudeCli();
   const events = [];
 
   await withEnv(
     {
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_CLAUDE_CLI: fakeCliPath,
     },
     async () => {
       const output = await runAgentTurn({

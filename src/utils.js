@@ -1,8 +1,5 @@
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
-
-const moduleRequire = createRequire(import.meta.url);
 
 export function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -182,38 +179,6 @@ export function resolveExecutable(
   return null;
 }
 
-export function resolveBundledNodeCli(
-  packageName,
-  binaryName,
-  {
-    resolvePackageJson = defaultResolvePackageJson,
-  } = {},
-) {
-  try {
-    const packageJsonPath = resolvePackageJson(`${packageName}/package.json`);
-    const packageDirectory = path.dirname(packageJsonPath);
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    const relativeBinPath = resolvePackageBinPath(packageJson.bin, binaryName);
-    if (!relativeBinPath) {
-      return null;
-    }
-
-    const scriptPath = path.resolve(packageDirectory, relativeBinPath);
-    if (!isFilePath(scriptPath)) {
-      return null;
-    }
-
-    return {
-      packageName,
-      binaryName,
-      packageVersion: typeof packageJson.version === 'string' ? packageJson.version : '',
-      scriptPath,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function hasPathSeparator(value) {
   return value.includes('/') || value.includes('\\');
 }
@@ -241,23 +206,6 @@ function isFilePath(filePath) {
   } catch {
     return false;
   }
-}
-
-function resolvePackageBinPath(binField, binaryName) {
-  if (typeof binField === 'string') {
-    return binField;
-  }
-  if (!binField || typeof binField !== 'object') {
-    return null;
-  }
-  if (typeof binField[binaryName] === 'string') {
-    return binField[binaryName];
-  }
-  return typeof Object.values(binField)[0] === 'string' ? Object.values(binField)[0] : null;
-}
-
-function defaultResolvePackageJson(request) {
-  return moduleRequire.resolve(request);
 }
 
 export function parseKeyValuePairs(entries, fieldName) {

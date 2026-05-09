@@ -37,7 +37,7 @@ test('buildSystemdUnit emits a complete user unit invoking node explicitly', () 
   assert.match(unit, /^Environment=HOME=\/home\/test$/mu);
   assert.match(
     unit,
-    /^Environment=PATH=\/usr\/local\/bin:\/opt\/bin:\/home\/test\/hkclaw-lite\/\.hkclaw-lite\/bundled-clis\/bin:\/usr\/local\/sbin/mu,
+    /^Environment=PATH=\/usr\/local\/bin:\/opt\/bin:\/usr\/local\/sbin/mu,
   );
   assert.match(unit, /^\[Install\]$/mu);
   assert.match(unit, /^WantedBy=default\.target$/mu);

@@ -336,14 +336,6 @@ test('AI auth manager keeps Claude and browser login controls compact', () => {
   assert.doesNotMatch(styles, /auth-overview-card/u);
 });
 
-test('AI auth manager exposes bundled CLI update controls', () => {
-  const appSource = readRepoFile('src/admin-ui/app.js');
-
-  assert.match(appSource, /api\/bundled-cli-update/u);
-  assert.match(appSource, /번들 업데이트/u);
-  assert.match(appSource, /supportsBundledCliUpdate/u);
-});
-
 test('agent wizard keeps reasoning effort with model selection', () => {
   const appSource = readRepoFile('src/admin-ui/app.js');
 

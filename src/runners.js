@@ -1,19 +1,14 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 
-import {
-  buildBundledCliOverlayEnv,
-  MANAGED_AGENT_RUNTIMES,
-} from './bundled-cli.js';
 import {
   DEFAULT_CLAUDE_PERMISSION_MODE,
   DEFAULT_CODEX_SANDBOX,
   DEFAULT_LOCAL_LLM_BASE_URL,
+  MANAGED_AGENT_RUNTIMES,
 } from './constants.js';
 import {
   loadConfig,
@@ -23,40 +18,13 @@ import {
 import {
   assert,
   resolveExecutable,
-  resolveBundledNodeCli,
   toErrorMessage,
   trimTrailingWhitespace,
 } from './utils.js';
 
-const moduleRequire = createRequire(import.meta.url);
-
-const CODEX_PLATFORM_BUNDLES = {
-  'linux:x64': {
-    packageName: '@openai/codex-linux-x64',
-    targetTriple: 'x86_64-unknown-linux-musl',
-  },
-  'linux:arm64': {
-    packageName: '@openai/codex-linux-arm64',
-    targetTriple: 'aarch64-unknown-linux-musl',
-  },
-  'darwin:x64': {
-    packageName: '@openai/codex-darwin-x64',
-    targetTriple: 'x86_64-apple-darwin',
-  },
-  'darwin:arm64': {
-    packageName: '@openai/codex-darwin-arm64',
-    targetTriple: 'aarch64-apple-darwin',
-  },
-  'win32:x64': {
-    packageName: '@openai/codex-win32-x64',
-    targetTriple: 'x86_64-pc-windows-msvc',
-  },
-  'win32:arm64': {
-    packageName: '@openai/codex-win32-arm64',
-    targetTriple: 'aarch64-pc-windows-msvc',
-  },
-};
 const CLAUDE_EXTERNAL_CLI_ENV = 'HKCLAW_LITE_CLAUDE_CLI';
+const CODEX_EXTERNAL_CLI_ENV = 'HKCLAW_LITE_CODEX_CLI';
+const GEMINI_EXTERNAL_CLI_ENV = 'HKCLAW_LITE_GEMINI_CLI';
 export const CLAUDE_ACP_DISABLED_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_BASE_URL',
@@ -70,25 +38,6 @@ export const GEMINI_CLI_DISABLED_ENV_KEYS = [
   'GOOGLE_CLOUD_ACCESS_TOKEN',
   'GOOGLE_GENAI_USE_GCA',
 ];
-const GEMINI_DEFAULT_SANDBOX_POLICY_TOML = `# hkclaw-lite fallback for missing bundled Gemini sandbox policy
-[modes.plan]
-network = false
-readonly = true
-approvedTools = []
-allowOverrides = false
-
-[modes.default]
-network = false
-readonly = true
-approvedTools = []
-allowOverrides = true
-
-[modes.accepting_edits]
-network = false
-readonly = false
-approvedTools = ["sed", "grep", "awk", "perl", "cat", "echo"]
-allowOverrides = true
-`;
 
 export async function runAgentTurn({
   projectRoot,
@@ -164,11 +113,11 @@ export function inspectAgentRuntime(projectRoot, agent, workdirOverride = null) 
   const workdir = resolveExecutionWorkdir(projectRoot, agent, workdirOverride);
   switch (agent.agent) {
     case 'codex':
-      return buildManagedAgentRuntimeStatus('codex', workdir, projectRoot);
+      return buildManagedAgentRuntimeStatus('codex', workdir);
     case 'claude-code':
-      return buildManagedAgentRuntimeStatus('claude-code', workdir, projectRoot);
+      return buildManagedAgentRuntimeStatus('claude-code', workdir);
     case 'gemini-cli':
-      return buildManagedAgentRuntimeStatus('gemini-cli', workdir, projectRoot);
+      return buildManagedAgentRuntimeStatus('gemini-cli', workdir);
     case 'local-llm':
       {
         const config = loadConfig(projectRoot);
@@ -227,8 +176,7 @@ async function runCodex({
   rawPrompt,
   workdir,
 }) {
-  const runtimeEnv = buildBundledCliOverlayEnv(projectRoot);
-  const cli = requireManagedAgentCli('codex', runtimeEnv);
+  const cli = requireManagedAgentCli('codex', process.env);
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-codex-'));
   const lastMessageFile = path.join(tempDir, 'last-message.txt');
@@ -383,9 +331,7 @@ async function runGeminiCli({
   rawPrompt,
   workdir,
 }) {
-  const runtimeEnv = buildBundledCliOverlayEnv(projectRoot);
-  const cli = requireManagedAgentCli('gemini-cli', runtimeEnv);
-  ensureGeminiCliRuntimeFiles(cli);
+  const cli = requireManagedAgentCli('gemini-cli', process.env);
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
   const args = [...cli.argsPrefix, '-p', prompt, '--output-format', 'json'];
   if (service.model) {
@@ -600,7 +546,7 @@ function buildChildEnv({
     service.permissionMode === 'bypassPermissions' ||
     Boolean(service.dangerous);
   return {
-    ...buildBundledCliOverlayEnv(projectRoot),
+    ...process.env,
     HKCLAW_LITE_PROJECT_ROOT: projectRoot,
     HKCLAW_LITE_AGENT_NAME: service.name,
     HKCLAW_LITE_SERVICE_NAME: service.name,
@@ -1177,53 +1123,46 @@ function normalizeUsageNumber(value) {
 
 export function resolveManagedAgentCli(agentType, env = process.env) {
   const spec = MANAGED_AGENT_RUNTIMES[agentType];
-  if (!spec || spec.kind !== 'cli') {
+  if (!spec) {
     return null;
   }
 
   if (agentType === 'codex') {
-    const nativeBundle = resolveCodexNativeBundle(spec, env);
-    if (nativeBundle) {
-      return nativeBundle;
+    const explicit = resolveExplicitCodexCli(env);
+    if (explicit) {
+      return explicit;
+    }
+  }
+  if (agentType === 'gemini-cli') {
+    const explicit = resolveExplicitGeminiCli(env);
+    if (explicit) {
+      return explicit;
+    }
+  }
+  if (agentType === 'claude-code') {
+    const explicit = resolveExplicitClaudeCli(env);
+    if (explicit) {
+      return explicit;
     }
   }
 
-  const packageJsonOverride = String(env[spec.packageJsonEnv] || '').trim();
-  const bundled = resolveBundledNodeCli(spec.packageName, spec.binaryName, {
-    resolvePackageJson: packageJsonOverride
-      ? () => packageJsonOverride
-      : undefined,
+  const resolvedCommand = resolveExecutable(spec.binaryName, {
+    pathValue: env.PATH || process.env.PATH || '',
+    pathext: env.PATHEXT || process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
   });
-  if (!bundled) {
+  if (!resolvedCommand) {
     return null;
   }
 
   return {
-    source: 'bundled',
-    command: process.execPath,
-    argsPrefix: [bundled.scriptPath],
+    source: 'system',
+    command: resolvedCommand,
+    argsPrefix: [],
     packageName: spec.packageName,
-    packageVersion: bundled.packageVersion || '',
-    scriptPath: bundled.scriptPath,
-    detail: formatRuntimeDetail(spec.packageName, bundled.packageVersion, bundled.scriptPath),
+    packageVersion: '',
+    detail: `${spec.binaryName} (${resolvedCommand})`,
     envPatch: {},
   };
-}
-
-function ensureGeminiCliRuntimeFiles(cli) {
-  const scriptPath = String(cli?.scriptPath || cli?.argsPrefix?.[0] || '').trim();
-  if (!scriptPath) {
-    return;
-  }
-
-  const bundleDir = path.dirname(scriptPath);
-  const policyPath = path.join(bundleDir, 'policies', 'sandbox-default.toml');
-  if (fs.existsSync(policyPath)) {
-    return;
-  }
-
-  fs.mkdirSync(path.dirname(policyPath), { recursive: true });
-  fs.writeFileSync(policyPath, GEMINI_DEFAULT_SANDBOX_POLICY_TOML, 'utf8');
 }
 
 function requireManagedAgentCli(agentType, env = process.env) {
@@ -1231,72 +1170,21 @@ function requireManagedAgentCli(agentType, env = process.env) {
   const cli = resolveManagedAgentCli(agentType, env);
   assert(
     cli,
-    `${spec.binaryName} is unavailable. Bundled dependency ${spec.packageName} is required; reinstall hkclaw-lite without omitting optional dependencies.`,
+    `${spec.binaryName} CLI not found on PATH. Install it first (e.g. \`npm install -g ${spec.packageName}\`) or set HKCLAW_LITE_${spec.binaryName.toUpperCase()}_CLI to an absolute path.`,
   );
   return cli;
 }
 
 export function resolveClaudeCli(env = process.env) {
-  const externalCli = resolveExplicitClaudeCli(env);
-  if (externalCli) {
-    return externalCli;
-  }
-
-  const spec = MANAGED_AGENT_RUNTIMES['claude-code'];
-  const packageJsonOverride = String(env[spec.packageJsonEnv] || '').trim();
-  let packageJsonPath = packageJsonOverride;
-  let packageJson = null;
-  if (!packageJsonPath) {
-    try {
-      packageJsonPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk/package.json');
-    } catch {
-      try {
-        const entryPath = moduleRequire.resolve('@anthropic-ai/claude-agent-sdk');
-        const candidate = path.join(path.dirname(entryPath), 'package.json');
-        if (!fs.existsSync(candidate)) {
-          return null;
-        }
-        packageJsonPath = candidate;
-      } catch {
-        return null;
-      }
-    }
-  }
-
-  try {
-    packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-  } catch {
-    packageJson = null;
-  }
-
-  const cliPath = path.resolve(path.dirname(packageJsonPath), 'cli.js');
-  if (!fs.existsSync(cliPath)) {
-    return null;
-  }
-
-  return {
-    source: 'bundled',
-    command: process.execPath,
-    argsPrefix: [cliPath],
-    packageName: spec.packageName,
-    packageVersion: typeof packageJson?.version === 'string' ? packageJson.version : '',
-    detail: formatRuntimeDetail(spec.packageName, packageJson?.version, cliPath),
-    envPatch: {},
-  };
+  return resolveManagedAgentCli('claude-code', env);
 }
 
 function requireClaudeCli(env = process.env) {
-  const spec = MANAGED_AGENT_RUNTIMES['claude-code'];
-  const cli = resolveClaudeCli(env);
-  assert(
-    cli,
-    `${spec.binaryName} is unavailable. Install bundled dependency ${spec.packageName} or set ${CLAUDE_EXTERNAL_CLI_ENV} to an external Claude CLI command.`,
-  );
-  return cli;
+  return requireManagedAgentCli('claude-code', env);
 }
 
-function resolveExplicitClaudeCli(env = process.env) {
-  const configuredCommand = String(env[CLAUDE_EXTERNAL_CLI_ENV] || '').trim();
+function resolveExplicitCliFromEnv(envValue, env, sourceLabel) {
+  const configuredCommand = String(envValue || '').trim();
   if (!configuredCommand) {
     return null;
   }
@@ -1316,14 +1204,25 @@ function resolveExplicitClaudeCli(env = process.env) {
     argsPrefix: [],
     packageName: '',
     packageVersion: '',
-    detail: `external Claude CLI (${resolvedCommand})`,
+    detail: `${sourceLabel} (${resolvedCommand})`,
     envPatch: {},
   };
 }
 
-function buildManagedAgentRuntimeStatus(agentType, workdir, projectRoot) {
-  const env = projectRoot ? buildBundledCliOverlayEnv(projectRoot) : process.env;
-  const runtime = resolveManagedAgentRuntime(agentType, env);
+function resolveExplicitClaudeCli(env = process.env) {
+  return resolveExplicitCliFromEnv(env[CLAUDE_EXTERNAL_CLI_ENV], env, 'external Claude CLI');
+}
+
+function resolveExplicitCodexCli(env = process.env) {
+  return resolveExplicitCliFromEnv(env[CODEX_EXTERNAL_CLI_ENV], env, 'external Codex CLI');
+}
+
+function resolveExplicitGeminiCli(env = process.env) {
+  return resolveExplicitCliFromEnv(env[GEMINI_EXTERNAL_CLI_ENV], env, 'external Gemini CLI');
+}
+
+function buildManagedAgentRuntimeStatus(agentType, workdir) {
+  const runtime = resolveManagedAgentCli(agentType, process.env);
   const spec = MANAGED_AGENT_RUNTIMES[agentType];
   return {
     ready: Boolean(runtime),
@@ -1332,46 +1231,54 @@ function buildManagedAgentRuntimeStatus(agentType, workdir, projectRoot) {
     packageVersion: runtime?.packageVersion || '',
     detail:
       runtime?.detail ||
-      `bundled dependency ${spec.packageName} is not installed`,
+      `${spec.binaryName} CLI not found on PATH (install ${spec.packageName})`,
     workdir,
   };
 }
 
-function resolveManagedAgentRuntime(agentType, env = process.env) {
-  if (agentType === 'claude-code') {
-    return resolveClaudeCli(env);
-  }
-  return resolveManagedAgentCli(agentType, env);
+function spawnResolved(command, args, options) {
+  const env = options?.env || process.env;
+  const resolvedCommand =
+    resolveExecutable(command, {
+      pathValue: env.PATH || process.env.PATH || '',
+      pathext: env.PATHEXT || process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
+    }) || command;
+
+  return spawn(resolvedCommand, args, {
+    ...options,
+    shell: shouldUseWindowsCommandShim(resolvedCommand),
+  });
 }
 
-function resolveClaudeAgentSdk(env = process.env) {
-  const spec = MANAGED_AGENT_RUNTIMES['claude-code'];
-  const packageJsonOverride = String(env[spec.packageJsonEnv] || '').trim();
-  if (packageJsonOverride) {
-    return resolveClaudeAgentSdkFromPackageJson(packageJsonOverride);
-  }
+function shouldUseWindowsCommandShim(command) {
+  return process.platform === 'win32' && /\.(cmd|bat)$/iu.test(command);
+}
 
-  try {
-    const modulePath = moduleRequire.resolve(spec.packageName);
-    return {
-      source: 'bundled',
-      importPath: pathToFileURL(modulePath).href,
-      detail: `${spec.packageName} (${modulePath})`,
-    };
-  } catch {
-    return null;
+function applyEnvPatch(baseEnv, envPatch) {
+  if (!envPatch) {
+    return baseEnv;
   }
+  return {
+    ...baseEnv,
+    ...envPatch,
+  };
 }
 
 export async function loadClaudeAgentSdk(env = process.env) {
   const spec = MANAGED_AGENT_RUNTIMES['claude-code'];
-  const runtime = resolveClaudeAgentSdk(env);
+  const cli = resolveManagedAgentCli('claude-code', env);
   assert(
-    runtime,
-    `${spec.binaryName} is unavailable. Bundled dependency ${spec.packageName} is required; reinstall hkclaw-lite without omitting optional dependencies.`,
+    cli,
+    `${spec.binaryName} CLI not found on PATH. Install it first (e.g. \`npm install -g ${spec.packageName}\`) or set HKCLAW_LITE_CLAUDE_CLI to an absolute path.`,
   );
 
-  const module = await import(runtime.importPath);
+  const importPath = resolveClaudeAgentSdkImportPath(cli.command);
+  assert(
+    importPath,
+    `${spec.packageName} is not reachable from the resolved Claude CLI path.`,
+  );
+
+  const module = await import(importPath);
   assert(
     typeof module.query === 'function',
     `${spec.packageName} is missing the query() export.`,
@@ -1379,27 +1286,45 @@ export async function loadClaudeAgentSdk(env = process.env) {
   return module;
 }
 
-function resolveClaudeAgentSdkFromPackageJson(packageJsonPath) {
+function resolveClaudeAgentSdkImportPath(claudeCommand) {
+  let realCommand = claudeCommand;
   try {
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    const relativeModulePath = resolvePackageModulePath(packageJson);
-    if (!relativeModulePath) {
-      return null;
-    }
-
-    const modulePath = path.resolve(path.dirname(packageJsonPath), relativeModulePath);
-    if (!fs.statSync(modulePath).isFile()) {
-      return null;
-    }
-
-    return {
-      source: 'bundled',
-      importPath: pathToFileURL(modulePath).href,
-      detail: `${packageJson.name || '@anthropic-ai/claude-agent-sdk'} (${modulePath})`,
-    };
+    realCommand = fs.realpathSync(claudeCommand);
   } catch {
-    return null;
+    // ignore — fall through with the original path
   }
+
+  const candidates = [];
+  let directory = path.dirname(realCommand);
+  for (let depth = 0; depth < 6; depth += 1) {
+    candidates.push(path.join(directory, 'package.json'));
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      break;
+    }
+    directory = parent;
+  }
+
+  for (const packageJsonPath of candidates) {
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      if (packageJson?.name !== '@anthropic-ai/claude-agent-sdk') {
+        continue;
+      }
+      const relativeModulePath = resolvePackageModulePath(packageJson);
+      if (!relativeModulePath) {
+        continue;
+      }
+      const modulePath = path.resolve(path.dirname(packageJsonPath), relativeModulePath);
+      if (!fs.existsSync(modulePath)) {
+        continue;
+      }
+      return new URL(`file://${modulePath}`).href;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 function resolvePackageModulePath(packageJson) {
@@ -1434,141 +1359,4 @@ function resolvePackageTargetPath(value) {
     }
   }
   return null;
-}
-
-function spawnResolved(command, args, options) {
-  const env = options?.env || process.env;
-  const resolvedCommand =
-    resolveExecutable(command, {
-      pathValue: env.PATH || process.env.PATH || '',
-      pathext: env.PATHEXT || process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD',
-    }) || command;
-
-  return spawn(resolvedCommand, args, {
-    ...options,
-    shell: shouldUseWindowsCommandShim(resolvedCommand),
-  });
-}
-
-function shouldUseWindowsCommandShim(command) {
-  return process.platform === 'win32' && /\.(cmd|bat)$/iu.test(command);
-}
-
-function resolveCodexNativeBundle(spec, env = process.env) {
-  const bundleSpec = CODEX_PLATFORM_BUNDLES[`${process.platform}:${process.arch}`];
-  if (!bundleSpec) {
-    return null;
-  }
-
-  const codexPackageJsonPath = resolveManagedPackageJson(
-    spec.packageName,
-    env[spec.packageJsonEnv],
-  );
-  if (!codexPackageJsonPath) {
-    return null;
-  }
-
-  const codexPackageDir = path.dirname(codexPackageJsonPath);
-  const codexPackageVersion = readPackageJsonVersion(codexPackageJsonPath);
-  const bundleDirCandidates = [
-    path.join(path.dirname(codexPackageDir), bundleSpec.packageName.split('/')[1]),
-    codexPackageDir,
-  ];
-  const executableName = process.platform === 'win32' ? 'codex.exe' : 'codex';
-
-  for (const bundleDir of bundleDirCandidates) {
-    const vendorRoot = path.join(bundleDir, 'vendor');
-    const binaryPath = path.join(
-      vendorRoot,
-      bundleSpec.targetTriple,
-      'codex',
-      executableName,
-    );
-    if (!isRegularFile(binaryPath)) {
-      continue;
-    }
-
-    const rgDir = path.join(vendorRoot, bundleSpec.targetTriple, 'path');
-    return {
-      source: 'bundled',
-      command: binaryPath,
-      argsPrefix: [],
-      packageName: spec.packageName,
-      packageVersion: codexPackageVersion,
-      detail: formatRuntimeDetail(spec.packageName, codexPackageVersion, binaryPath),
-      envPatch: {
-        CODEX_MANAGED_BY_NPM: '1',
-        PATH: prependPathSegment(env.PATH || process.env.PATH || '', rgDir),
-      },
-    };
-  }
-
-  return null;
-}
-
-function readPackageJsonVersion(packageJsonPath) {
-  try {
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    return typeof packageJson.version === 'string' ? packageJson.version : '';
-  } catch {
-    return '';
-  }
-}
-
-function formatRuntimeDetail(packageName, version, pathText) {
-  const normalizedVersion = String(version || '').trim();
-  return `${packageName}${normalizedVersion ? `@${normalizedVersion}` : ''} (${pathText})`;
-}
-
-function resolveManagedPackageJson(packageName, overridePath) {
-  const candidate = String(overridePath || '').trim();
-  if (candidate) {
-    return isRegularFile(candidate) ? candidate : null;
-  }
-
-  try {
-    return moduleRequire.resolve(`${packageName}/package.json`);
-  } catch {
-    return null;
-  }
-}
-
-function applyEnvPatch(baseEnv, envPatch) {
-  if (!envPatch) {
-    return baseEnv;
-  }
-  return {
-    ...baseEnv,
-    ...envPatch,
-  };
-}
-
-function prependPathSegment(pathValue, segment) {
-  if (!segment || !isDirectory(segment)) {
-    return pathValue;
-  }
-
-  const entries = String(pathValue || '')
-    .split(path.delimiter)
-    .filter(Boolean);
-  if (entries.includes(segment)) {
-    return entries.join(path.delimiter);
-  }
-  return [segment, ...entries].join(path.delimiter);
-}
-
-function isRegularFile(filePath) {
-  try {
-    return fs.statSync(filePath).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function isDirectory(dirPath) {
-  try {
-    return fs.statSync(dirPath).isDirectory();
-  } catch {
-    return false;
-  }
 }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.0 - 2026-05-09
+
+### Removed (breaking)
+- hkclaw-lite no longer bundles the `@openai/codex`, `@anthropic-ai/claude-agent-sdk`, and `@google/gemini-cli` packages. The `optionalDependencies` block in `package.json` is gone, the `<root>/.hkclaw-lite/bundled-clis/` overlay is gone, the `hkclaw-lite bundles status|update` CLI subcommands are gone, the `/api/bundles/*` admin endpoints are gone, the `AI 관리 → 번들 업데이트` web UI is gone, and `src/bundled-cli.js` is deleted.
+- The systemd user unit no longer prepends `<root>/.hkclaw-lite/bundled-clis/bin` to `Environment=PATH`; the host operator's PATH carries the CLI binaries.
+
+### Changed
+- `MANAGED_AGENT_RUNTIMES` agent metadata moved from `src/bundled-cli.js` to `src/constants.js`.
+- `resolveManagedAgentCli` (in `src/runners.js`) now resolves `codex` / `claude` / `gemini` via the same PATH lookup the `command` agent type already uses, returning `{ source: 'system', command: <abs path>, … }`. The first-priority override is still the explicit env var (`HKCLAW_LITE_CODEX_CLI` / `HKCLAW_LITE_CLAUDE_CLI` / `HKCLAW_LITE_GEMINI_CLI`) pointing at an absolute binary path.
+
+### Migration
+- After upgrading to 2.3.0, install the CLIs you actually use on the host: `npm install -g @openai/codex @anthropic-ai/claude-agent-sdk @google/gemini-cli` (or each individually). The admin UI's AI 상태 확인 will report "not found" until the binary is on PATH (or `HKCLAW_LITE_*_CLI` is set).
+
 ## 2.2.0 - 2026-05-09
 
 ### Added

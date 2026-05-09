@@ -604,6 +604,34 @@ process.stdout.write('admin fake npm complete\\n');
   return scriptPath;
 }
 
+function resolveFakeCodexCliPath(packageJsonPath) {
+  return path.join(path.dirname(packageJsonPath), 'bin', 'codex.js');
+}
+
+function resolveFakeGeminiCliPath(packageJsonPath) {
+  return path.join(path.dirname(packageJsonPath), 'bundle', 'gemini.js');
+}
+
+async function withFakeManagedCliBinaries(binaries, callback) {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-fake-bin-'));
+  for (const [name, target] of Object.entries(binaries)) {
+    const linkPath = path.join(binDir, name);
+    fs.symlinkSync(target, linkPath);
+  }
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath || ''}`;
+  try {
+    await callback(binDir);
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+}
+
 async function withEnv(entries, callback) {
   const keys = Object.keys(entries);
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
@@ -3365,10 +3393,8 @@ test('admin server supports agent auth status, login, and test call', async () =
   initProject(projectRoot);
 
   const fakePackageJson = createFakeCodexBundle();
-  await withEnv(
-    {
-      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakePackageJson,
-    },
+  await withFakeManagedCliBinaries(
+    { codex: resolveFakeCodexCliPath(fakePackageJson) },
     async () => {
       await withAdminServer(projectRoot, async ({ url }) => {
         const status = await requestJson(`${url}/api/agent-auth`, {
@@ -3431,12 +3457,14 @@ test('admin server strips benign Codex status warnings and detects not logged in
   const fakePackageJson = createFakeCodexBundle();
   await withEnv(
     {
-      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakePackageJson,
       HKCLAW_LITE_TEST_CODEX_STATUS_OUTPUT: 'Not logged in',
       HKCLAW_LITE_TEST_CODEX_STATUS_WARNING:
         'WARNING: failed to clean up stale arg0 temp dirs: Directory not empty (os error 39)',
     },
     async () => {
+      await withFakeManagedCliBinaries(
+        { codex: resolveFakeCodexCliPath(fakePackageJson) },
+        async () => {
       await withAdminServer(projectRoot, async ({ url }) => {
         const status = await requestJson(`${url}/api/agent-auth`, {
           method: 'POST',
@@ -3460,6 +3488,8 @@ test('admin server strips benign Codex status warnings and detects not logged in
           /failed to clean up stale arg0 temp dirs/u,
         );
       });
+        },
+      );
     },
   );
 });
@@ -3484,12 +3514,16 @@ test('admin server reports codex, Claude ACP, Gemini, and local LLM status detai
   const fakeGeminiBundle = createFakeGeminiBundle();
   await withEnv(
     {
-      HKCLAW_LITE_CODEX_CLI_PACKAGE_JSON: fakeCodexPackageJson,
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakeClaudePackageJson,
-      HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakeGeminiBundle.packageJsonPath,
       HKCLAW_LITE_TEST_GEMINI_HOME: fakeGeminiBundle.homeDir,
     },
     async () => {
+      await withFakeManagedCliBinaries(
+        {
+          codex: resolveFakeCodexCliPath(fakeCodexPackageJson),
+          claude: resolveFakeClaudeCliPath(fakeClaudePackageJson),
+          gemini: resolveFakeGeminiCliPath(fakeGeminiBundle.packageJsonPath),
+        },
+        async () => {
       const geminiStateDir = path.join(fakeGeminiBundle.homeDir, '.gemini');
       fs.mkdirSync(geminiStateDir, { recursive: true });
       fs.writeFileSync(
@@ -3504,24 +3538,19 @@ test('admin server reports codex, Claude ACP, Gemini, and local LLM status detai
         const snapshot = await requestJson(`${url}/api/ai-statuses`);
         assert.equal(snapshot.response.status, 200, JSON.stringify(snapshot.payload));
         assert.equal(snapshot.payload.statuses.codex.authResult.details.loggedIn, true);
+        assert.equal(snapshot.payload.statuses.codex.authResult.details.runtimeSource, 'system');
         assert.equal(snapshot.payload.statuses.codex.authResult.details.runtimePackageName, '@openai/codex');
-        assert.equal(snapshot.payload.statuses.codex.authResult.details.runtimePackageVersion, '0.0.0-test');
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.ready, true);
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.loggedIn, true);
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.authMethod, 'claudeai');
-        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.runtimeSource, 'bundled');
+        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.runtimeSource, 'system');
         assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.runtimePackageName, '@anthropic-ai/claude-agent-sdk');
-        assert.equal(snapshot.payload.statuses['claude-code'].authResult.details.runtimePackageVersion, '0.0.0-test');
-        assert.match(
-          snapshot.payload.statuses['claude-code'].authResult.details.runtimeDetail,
-          /@anthropic-ai\/claude-agent-sdk@0\.0\.0-test/u,
-        );
         assert.equal('credentialKey' in snapshot.payload.statuses['claude-code'].authResult.details, false);
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.ready, true);
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.loggedIn, true);
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.authMethod, 'google');
+        assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.runtimeSource, 'system');
         assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.runtimePackageName, '@google/gemini-cli');
-        assert.equal(snapshot.payload.statuses['gemini-cli'].authResult.details.runtimePackageVersion, '0.0.0-test');
         assert.equal('credentialKey' in snapshot.payload.statuses['gemini-cli'].authResult.details, false);
         assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.baseUrl, 'http://127.0.0.1:11434/v1');
         assert.equal(snapshot.payload.statuses['local-llm'].authResult.details.primaryConnection, 'LLM1');
@@ -3546,34 +3575,10 @@ test('admin server reports codex, Claude ACP, Gemini, and local LLM status detai
           ],
         );
       });
+        },
+      );
     },
   );
-});
-
-test('admin server updates project-local bundled CLI overlays', async () => {
-  const projectRoot = createProject();
-  initProject(projectRoot);
-  const fakeNpm = createFakeNpmForBundledCliUpdate();
-
-  await withEnv({ HKCLAW_LITE_NPM_COMMAND: fakeNpm }, async () => {
-    await withAdminServer(projectRoot, async ({ url }) => {
-      const update = await requestJson(`${url}/api/bundled-cli-update`, {
-        method: 'POST',
-        body: {
-          agentType: 'codex',
-        },
-      });
-
-      assert.equal(update.response.status, 200, JSON.stringify(update.payload));
-      assert.equal(update.payload.result.packages[0].packageName, '@openai/codex');
-      assert.equal(update.payload.result.packages[0].installedVersion, '9.9.9-admin-test');
-      assert.match(update.payload.result.overlayRoot, /\.hkclaw-lite\/bundled-clis/u);
-      assert.equal(
-        update.payload.statuses.codex.authResult.details.runtimePackageVersion,
-        '9.9.9-admin-test',
-      );
-    });
-  });
 });
 
 test('admin server keeps the Codex device login helper alive until browser auth completes', async () => {
@@ -3658,13 +3663,15 @@ test('admin server starts and completes Gemini CLI Google login flow through the
   }, async (oauthUrl) => {
     await withEnv(
       {
-        HKCLAW_LITE_GEMINI_CLI_PACKAGE_JSON: fakeGeminiBundle.packageJsonPath,
         HKCLAW_LITE_TEST_GEMINI_HOME: fakeGeminiBundle.homeDir,
         HKCLAW_LITE_GEMINI_OAUTH_AUTH_URL: `${oauthUrl}/oauth/authorize`,
         HKCLAW_LITE_GEMINI_OAUTH_TOKEN_URL: `${oauthUrl}/oauth/token`,
         HKCLAW_LITE_GEMINI_OAUTH_USERINFO_URL: `${oauthUrl}/userinfo`,
       },
       async () => {
+        await withFakeManagedCliBinaries(
+          { gemini: resolveFakeGeminiCliPath(fakeGeminiBundle.packageJsonPath) },
+          async () => {
         await withAdminServer(projectRoot, async ({ url }) => {
           const statusBefore = await requestJson(`${url}/api/agent-auth`, {
             method: 'POST',
@@ -3783,20 +3790,20 @@ test('admin server starts and completes Gemini CLI Google login flow through the
           assert.equal(statusAfterLogout.payload.result.details.loggedIn, false);
           assert.equal(statusAfterLogout.payload.result.details.ready, false);
         });
+          },
+        );
       },
     );
   });
 });
 
-test('admin server starts and completes Claude ACP login flow through the bundled sdk', async () => {
+test('admin server starts and completes Claude ACP login flow through the system CLI', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);
   const fakePackageJson = createFakeClaudeAgentSdkBundle();
 
-  await withEnv(
-    {
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
-    },
+  await withFakeManagedCliBinaries(
+    { claude: resolveFakeClaudeCliPath(fakePackageJson) },
     async () => {
       await withAdminServer(projectRoot, async ({ url }) => {
         const login = await requestJson(`${url}/api/agent-auth`, {
@@ -3839,10 +3846,8 @@ test('admin server accepts a Claude callback URL pasted into the callbackUrl fie
   initProject(projectRoot);
   const fakePackageJson = createFakeClaudeAgentSdkBundle();
 
-  await withEnv(
-    {
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
-    },
+  await withFakeManagedCliBinaries(
+    { claude: resolveFakeClaudeCliPath(fakePackageJson) },
     async () => {
       await withAdminServer(projectRoot, async ({ url }) => {
         const login = await requestJson(`${url}/api/agent-auth`, {
@@ -3938,16 +3943,14 @@ test('admin server reports external Claude CLI status and terminal-login guidanc
   );
 });
 
-test('admin server runs claude test calls through the bundled cli stream-json runtime', async () => {
+test('admin server runs claude test calls through the system cli stream-json runtime', async () => {
   const projectRoot = createProject();
   fs.mkdirSync(path.join(projectRoot, 'workspace'), { recursive: true });
   initProject(projectRoot);
 
   const fakePackageJson = createFakeClaudeAgentSdkBundle();
-  await withEnv(
-    {
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
-    },
+  await withFakeManagedCliBinaries(
+    { claude: resolveFakeClaudeCliPath(fakePackageJson) },
     async () => {
       await withAdminServer(projectRoot, async ({ url }) => {
         const testCall = await requestJson(`${url}/api/agent-auth`, {

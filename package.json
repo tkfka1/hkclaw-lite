@@ -1,6 +1,6 @@
 {
   "name": "hkclaw-lite",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Local Discord/Telegram/KakaoTalk AI agent runtime with a web admin, installed via npm",
   "license": "MIT",
   "author": "hankyo",
@@ -44,10 +44,5 @@
   },
   "dependencies": {
     "discord.js": "^14.26.2"
-  },
-  "optionalDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.119",
-    "@google/gemini-cli": "0.39.1",
-    "@openai/codex": "0.125.0"
   }
 }

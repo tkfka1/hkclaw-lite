@@ -80,11 +80,6 @@ import {
 } from './kakao-runtime-state.js';
 import { handleKakaoRelayRequest, isKakaoRelayRequest } from './kakao-relay.js';
 import { listAgentModels } from './model-catalog.js';
-import {
-  buildBundledCliOverlayEnv,
-  readBundledCliOverlayStatus,
-  updateBundledClis,
-} from './bundled-cli.js';
 import { buildAgentDefinition, listLocalLlmConnections, loadConfig } from './store.js';
 import {
   deleteSchedule,
@@ -361,27 +356,6 @@ async function handleAdminRequest(projectRoot, auth, request, response) {
     writeJson(response, 200, {
       ok: true,
       statuses: await readAiStatuses(projectRoot),
-      bundledCli: readBundledCliOverlayStatus(projectRoot),
-    });
-    return;
-  }
-
-  if (request.method === 'POST' && pathname === '/api/bundled-cli-update') {
-    const payload = await readJsonBody(request);
-    const result = await updateBundledClis(projectRoot, {
-      agentTypes:
-        payload.agentTypes ||
-        payload.agents ||
-        payload.agentType ||
-        payload.agent ||
-        ['all'],
-      version: payload.version || 'latest',
-    });
-    writeJson(response, 200, {
-      ok: true,
-      result,
-      statuses: await readAiStatuses(projectRoot),
-      bundledCli: readBundledCliOverlayStatus(projectRoot),
     });
     return;
   }
@@ -3273,11 +3247,11 @@ async function loadGeminiAuthRuntime(projectRoot) {
   const cli = resolveManagedAgentCli('gemini-cli', env);
   assert(
     cli,
-    'gemini is unavailable. Bundled dependency @google/gemini-cli is required; reinstall hkclaw-lite without omitting optional dependencies.',
+    'gemini CLI not found on PATH. Install it first (e.g. `npm install -g @google/gemini-cli`) or set HKCLAW_LITE_GEMINI_CLI to an absolute path.',
   );
 
-  const scriptPath = String(cli.argsPrefix?.[0] || '').trim();
-  assert(scriptPath, 'Bundled Gemini CLI entrypoint is unavailable.');
+  const scriptPath = resolveGeminiBundleScriptPath(cli.command);
+  assert(scriptPath, 'Gemini CLI script entrypoint could not be resolved from the binary on PATH.');
 
   const bundleDir = path.dirname(scriptPath);
   const geminiSource = fs.readFileSync(scriptPath, 'utf8');
@@ -3314,6 +3288,24 @@ async function loadGeminiAuthRuntime(projectRoot) {
     supportModule,
     coreModule,
   };
+}
+
+function resolveGeminiBundleScriptPath(command) {
+  const candidate = String(command || '').trim();
+  if (!candidate) {
+    return '';
+  }
+  const realPath = (() => {
+    try {
+      return fs.realpathSync(candidate);
+    } catch {
+      return candidate;
+    }
+  })();
+  if (/\.js$/iu.test(realPath) || /\.mjs$/iu.test(realPath)) {
+    return realPath;
+  }
+  return '';
 }
 
 function resolveGeminiBundleChunkPath(bundleDir, geminiSource, exportedName) {
@@ -4058,8 +4050,8 @@ function parseCodexLoggedInStatus(output) {
   return /logged in/iu.test(text);
 }
 
-function buildManagedAgentEnv(projectRoot, agentType = '') {
-  const env = buildBundledCliOverlayEnv(projectRoot);
+function buildManagedAgentEnv(_projectRoot, agentType = '') {
+  const env = { ...process.env };
   if (agentType === 'claude-code') {
     return stripClaudeAcpEnv(env);
   }

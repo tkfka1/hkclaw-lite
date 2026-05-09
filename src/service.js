@@ -13,11 +13,9 @@ export function getUnitPath(homeDir = os.homedir()) {
 export function buildSystemdUnit({ binPath, projectRoot, host, port, envFile, homeDir, nodePath }) {
   const home = homeDir || os.homedir();
   const node = nodePath || process.execPath;
-  const bundledClisBin = path.join(projectRoot, '.hkclaw-lite', 'bundled-clis', 'bin');
   const pathSegments = [
     path.dirname(node),
     path.dirname(binPath),
-    bundledClisBin,
     '/usr/local/sbin',
     '/usr/local/bin',
     '/usr/sbin',

@@ -526,11 +526,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === 'ai-bundle-update') {
-    void updateAiManagerBundle(button.dataset.agentType || '');
-    return;
-  }
-
   if (action === 'ai-save-credentials') {
     void saveAiCredentials();
     return;
@@ -3412,7 +3407,6 @@ function renderAiModal() {
   const statusSupported = isAiStatusSupported(entry.value);
   const credentialEditingSupported = supportsAiCredentialEditing(entry.value);
   const testSupported = isAiTestSupported(entry.value);
-  const bundledCliUpdateSupported = supportsBundledCliUpdate(entry.value);
   const authResult = state.aiManager?.authResult;
   const testResult = state.aiManager?.testResult;
   const usageSummary =
@@ -3487,19 +3481,6 @@ function renderAiModal() {
                     </button>
                   </div>
                   <div class="wizard-auth-actions wizard-auth-actions--secondary">
-                    ${
-                      bundledCliUpdateSupported
-                        ? `<button
-                            type="button"
-                            class="btn-secondary"
-                            data-action="ai-bundle-update"
-                            data-agent-type="${escapeAttr(entry.value)}"
-                            ${state.busy ? 'disabled' : ''}
-                          >
-                            ${renderButtonLabel('refresh', '번들 업데이트')}
-                          </button>`
-                        : ''
-                    }
                     <button type="button" class="btn-secondary" data-action="ai-auth-logout" ${state.busy ? 'disabled' : ''}>${renderButtonLabel('stop', '로그아웃')}</button>
                     ${
                       credentialEditingSupported && entry.value !== 'local-llm'
@@ -3557,7 +3538,6 @@ function renderAiModal() {
           }
           ${renderAgentWizardResult(authResult)}
           ${renderAgentWizardResult(testResult)}
-          ${renderBundledCliUpdateResult(state.aiManager?.bundleUpdateResult)}
         </div>
       </div>
     </section>
@@ -3675,14 +3655,14 @@ function getAiRuntimeSourceBadge(agentType, details = {}) {
   if (agentType === 'codex') {
     return {
       ok: details.runtimeReady !== false,
-      label: details.runtimeSource === 'bundled' ? '번들 Codex CLI' : 'Codex CLI',
+      label: 'Codex CLI',
       title: details.runtimeDetail || '',
     };
   }
   if (agentType === 'gemini-cli') {
     return {
       ok: details.runtimeReady !== false,
-      label: details.runtimeSource === 'bundled' ? '번들 Gemini CLI' : 'Gemini CLI',
+      label: 'Gemini CLI',
       title: details.runtimeDetail || '',
     };
   }
@@ -4814,29 +4794,6 @@ function renderAgentWizardResult(result) {
   `;
 }
 
-function renderBundledCliUpdateResult(result) {
-  if (!result) {
-    return '';
-  }
-  const packages = Array.isArray(result.packages) ? result.packages : [];
-  const summary = packages.length
-    ? packages
-        .map((entry) => `${entry.packageName}@${entry.installedVersion || entry.requestedVersion || ''}`)
-        .join(', ')
-    : '번들 CLI 업데이트 완료';
-  return `
-    <div class="wizard-result">
-      <strong>${escapeHtml(summary)}</strong>
-      ${result.overlayRoot ? `<div class="field-hint">설치 위치: ${escapeHtml(result.overlayRoot)}</div>` : ''}
-      ${
-        result.output
-          ? `<pre class="result-output">${escapeHtml(String(result.output).trim())}</pre>`
-          : ''
-      }
-    </div>
-  `;
-}
-
 function validateAgentWizardStep() {
   if (!state.agentWizard) {
     return true;
@@ -5383,7 +5340,6 @@ function createAiManager(agentType, options = {}) {
     localLlmConnection: agentType === 'local-llm' ? defaultLocalLlmConnection : '',
     authResult: cached.authResult || null,
     testResult: cached.testResult || null,
-    bundleUpdateResult: cached.bundleUpdateResult || null,
     usageSummary: cached.usageSummary || null,
     modelCatalog: null,
     authConfig: buildAiAuthDraft(agentType),
@@ -5469,41 +5425,6 @@ async function runAiManagerAction(action, options = {}) {
     if (!(action === 'login' && response.result?.details?.url)) {
       state.notice = null;
     }
-    render();
-  } catch (error) {
-    setNotice('error', localizeErrorMessage(error.message));
-    render();
-  }
-}
-
-async function updateAiManagerBundle(agentTypeInput = '') {
-  if (!state.aiManager) {
-    return;
-  }
-  const agentType = optionalDraftText(agentTypeInput) || optionalDraftText(state.aiManager.type);
-  if (!supportsBundledCliUpdate(agentType)) {
-    throw new Error('이 AI 유형은 번들 업데이트를 지원하지 않습니다.');
-  }
-
-  try {
-    const response = await mutateJson('/api/bundled-cli-update', {
-      method: 'POST',
-      body: {
-        agentType,
-        version: 'latest',
-      },
-    });
-
-    if (!state.aiManager || state.aiManager.type !== agentType) {
-      return;
-    }
-    state.aiManager.bundleUpdateResult = response.result || null;
-    state.aiStatuses = mergeAiStatuses(state.aiStatuses, response.statuses || {});
-    const nextStatus = state.aiStatuses[agentType];
-    if (nextStatus?.authResult) {
-      state.aiManager.authResult = nextStatus.authResult;
-    }
-    setNotice('info', `${localizeAgentTypeValue(agentType)} 번들을 업데이트했습니다.`);
     render();
   } catch (error) {
     setNotice('error', localizeErrorMessage(error.message));
@@ -6631,10 +6552,6 @@ function isAiTestSupported(agentType) {
   return ['codex', 'claude-code', 'gemini-cli', 'local-llm'].includes(agentType);
 }
 
-function supportsBundledCliUpdate(agentType) {
-  return ['codex', 'claude-code', 'gemini-cli'].includes(agentType);
-}
-
 function defaultModelModeForAgent(agentType) {
   return supportsDefaultModelMode(agentType) ? 'default' : 'custom';
 }
@@ -7131,38 +7048,17 @@ function localizeErrorMessage(message) {
   if (text === '이 AI 유형은 상태 확인을 지원하지 않습니다.') {
     return text;
   }
-  if (text === '이 AI 유형은 번들 업데이트를 지원하지 않습니다.') {
-    return text;
+  if (/^codex CLI not found on PATH\./u.test(text)) {
+    return 'codex CLI가 PATH에 없습니다. `npm install -g @openai/codex` 후 다시 시도하세요.';
   }
-  if (text === 'Bundled CLI update is already running.') {
-    return '번들 CLI 업데이트가 이미 진행 중입니다.';
+  if (/^claude CLI not found on PATH\./u.test(text)) {
+    return 'claude CLI가 PATH에 없습니다. `npm install -g @anthropic-ai/claude-agent-sdk` 후 다시 시도하세요.';
   }
-  if (/^Unsupported bundled CLI agent type /u.test(text)) {
-    return '지원하지 않는 번들 CLI입니다.';
+  if (/^gemini CLI not found on PATH\./u.test(text)) {
+    return 'gemini CLI가 PATH에 없습니다. `npm install -g @google/gemini-cli` 후 다시 시도하세요.';
   }
-  if (text === 'Bundled CLI version must be an npm dist-tag or exact version.') {
-    return '번들 CLI 버전은 npm dist-tag 또는 정확한 버전이어야 합니다.';
-  }
-  if (/^codex is unavailable\. Bundled dependency @openai\/codex is required/u.test(text)) {
-    return 'codex 번들이 설치되어 있지 않습니다.';
-  }
-  if (/^claude is unavailable\. Bundled dependency @anthropic-ai\/claude-agent-sdk is required/u.test(text)) {
-    return 'Claude Code CLI 런타임이 없습니다. 번들을 설치하거나 HKCLAW_LITE_CLAUDE_CLI 를 설정하세요.';
-  }
-  if (/^gemini is unavailable\. Bundled dependency @google\/gemini-cli is required/u.test(text)) {
-    return 'gemini 번들이 설치되어 있지 않습니다.';
-  }
-  if (/^Bundled runtime for agent type "codex" is not installed\.$/u.test(text)) {
-    return 'codex 번들이 설치되어 있지 않습니다.';
-  }
-  if (/^Bundled runtime for agent type "claude-code" is not installed\.$/u.test(text)) {
-    return 'Claude Code CLI 런타임이 없습니다. 번들을 설치하거나 HKCLAW_LITE_CLAUDE_CLI 를 설정하세요.';
-  }
-  if (text === 'Claude CLI runtime is unavailable.') {
-    return 'Claude Code CLI 런타임이 없습니다. 번들을 설치하거나 HKCLAW_LITE_CLAUDE_CLI 를 설정하세요.';
-  }
-  if (/^Bundled runtime for agent type "gemini-cli" is not installed\.$/u.test(text)) {
-    return 'gemini 번들이 설치되어 있지 않습니다.';
+  if (/^Gemini CLI script entrypoint could not be resolved /u.test(text)) {
+    return 'Gemini CLI 스크립트 경로를 PATH 의 바이너리에서 찾을 수 없습니다.';
   }
   if (
     text === 'Claude Code ACP 로그인 세션이 없습니다. 먼저 로그인 버튼을 누르세요.' ||

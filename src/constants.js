@@ -14,6 +14,26 @@ export const SUPPORTED_AGENTS = [
   'local-llm',
   'command',
 ];
+export const MANAGED_AGENT_RUNTIMES = {
+  codex: {
+    kind: 'cli',
+    binaryName: 'codex',
+    packageName: '@openai/codex',
+    label: 'Codex CLI',
+  },
+  'claude-code': {
+    kind: 'cli',
+    binaryName: 'claude',
+    packageName: '@anthropic-ai/claude-agent-sdk',
+    label: 'Claude Code CLI',
+  },
+  'gemini-cli': {
+    kind: 'cli',
+    binaryName: 'gemini',
+    packageName: '@google/gemini-cli',
+    label: 'Gemini CLI',
+  },
+};
 export const AGENT_TYPE_CHOICES = [
   {
     value: 'codex',

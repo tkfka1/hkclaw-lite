@@ -561,9 +561,10 @@ test('single channel reuses Claude CLI sessions per channel role', async () => {
   saveConfig(projectRoot, config);
 
   const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const fakeCliPath = resolveFakeClaudeCliPath(fakePackageJson);
   await withEnv(
     {
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_CLAUDE_CLI: fakeCliPath,
     },
     async () => {
       const loaded = loadConfig(projectRoot);
@@ -696,10 +697,11 @@ test('single channel forwards Claude stream events with role metadata', async ()
   saveConfig(projectRoot, config);
 
   const fakePackageJson = createFakeClaudeAgentSdkBundle();
+  const fakeCliPath = resolveFakeClaudeCliPath(fakePackageJson);
   const streamEvents = [];
   await withEnv(
     {
-      HKCLAW_LITE_CLAUDE_AGENT_SDK_PACKAGE_JSON: fakePackageJson,
+      HKCLAW_LITE_CLAUDE_CLI: fakeCliPath,
     },
     async () => {
       const loaded = loadConfig(projectRoot);

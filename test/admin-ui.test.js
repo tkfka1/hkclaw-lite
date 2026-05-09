@@ -36,16 +36,16 @@ test('ai manager status polling backs off after the first fast retry', () => {
   assert.equal(getAiManagerStatusPollDelay(20), 60_000);
 });
 
-test('Claude runtime UI helpers distinguish bundled and external CLI labels', () => {
+test('Claude runtime UI helpers distinguish system and external CLI labels', () => {
   assert.deepEqual(
     getClaudeRuntimeSourceBadge({
-      runtimeSource: 'bundled',
-      runtimeDetail: 'bundled Claude CLI (/app/vendor/claude)',
+      runtimeSource: 'system',
+      runtimeDetail: 'claude (/usr/local/bin/claude)',
     }),
     {
-      label: '번들 Claude CLI',
+      label: 'Claude CLI',
       ok: true,
-      title: 'bundled Claude CLI (/app/vendor/claude)',
+      title: 'claude (/usr/local/bin/claude)',
     },
   );
   assert.deepEqual(
@@ -54,7 +54,7 @@ test('Claude runtime UI helpers distinguish bundled and external CLI labels', ()
       runtimeDetail: 'external Claude CLI (/usr/bin/claude)',
     }),
     {
-      label: '로컬 Claude CLI',
+      label: '외부 Claude CLI',
       ok: true,
       title: 'external Claude CLI (/usr/bin/claude)',
     },
@@ -63,13 +63,13 @@ test('Claude runtime UI helpers distinguish bundled and external CLI labels', ()
   assert.deepEqual(
     getClaudeRuntimeSourceHintLines({
       runtimeSource: 'external',
-      runtimePackageName: '@anthropic-ai/claude-agent-sdk',
-      runtimePackageVersion: '0.2.119',
+      runtimePackageName: '',
+      runtimePackageVersion: '',
       runtimeDetail: 'external Claude CLI (/usr/bin/claude)',
     }),
     [
-      '런타임: 로컬 Claude CLI · @anthropic-ai/claude-agent-sdk v0.2.119',
-      '로컬 터미널의 Claude 로그인 상태를 공유합니다. 웹에서는 상태 확인과 테스트만 실행합니다.',
+      '런타임: 외부 Claude CLI',
+      'HKCLAW_LITE_CLAUDE_CLI 가 가리키는 외부 Claude CLI 를 사용 중입니다.',
       '경로: external Claude CLI (/usr/bin/claude)',
     ],
   );
