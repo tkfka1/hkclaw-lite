@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.2.0 - 2026-05-09
+
+### Added
+- `hkclaw-lite onboard` — interactive first-run setup wizard. Walks the operator through (1) picking a project root and initializing `.hkclaw-lite/`, (2) setting the admin password (or disabling login), (3) recording an external admin URL as the Kakao relay base in `<root>/.hkclaw-lite/service.env` (or falling back to the local instance), and (4) installing + enabling the systemd user service on Linux. Prints the access URL and the next admin-UI steps when done.
+
+### Changed (breaking-ish)
+- `DEFAULT_KAKAO_RELAY_URL` fallback flipped from the external `https://k.tess.dev/` to the local-self `http://127.0.0.1:5687/` so a fresh `npm install -g hkclaw-lite` does not silently route Kakao traffic through a third-party domain. Operators using an external admin URL should set `OPENCLAW_TALKCHANNEL_RELAY_URL` (or `KAKAO_TALKCHANNEL_RELAY_URL`) in `service.env` — `hkclaw-lite onboard` does this for you.
+
+### Removed
+- Dropped the dead `FALLBACK_KAKAO_RELAY_URL` constant in `src/admin-ui/app.js`.
+
 ## 2.1.0 - 2026-05-09
 
 ### Removed

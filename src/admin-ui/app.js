@@ -28,7 +28,6 @@ import {
 
 const app = document.getElementById('app');
 const DEFAULT_CHANNEL_WORKSPACE = '~';
-const FALLBACK_KAKAO_RELAY_URL = 'https://k.tess.dev/';
 const NOTICE_AUTO_DISMISS_MS = 4_500;
 const STATE_REFRESH_INTERVAL_MS = 5_000;
 const VIEW_NAMES = new Set(['agents', 'channels', 'schedules', 'ai', 'tokens', 'all']);

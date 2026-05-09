@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +47,7 @@ import {
 } from './constants.js';
 import { withPrompter } from './interactive.js';
 import { getDefaultKakaoRelayUrl } from './kakao-service.js';
+import { setAdminPassword } from './runtime-db.js';
 import { inspectAgentRuntime } from './runners.js';
 import {
   deleteSchedule,
@@ -149,6 +151,15 @@ export async function main(argv) {
 
     if (command === 'admin') {
       await handleAdminCommand({
+        cwd: process.cwd(),
+        rootOverride,
+        argv: tail,
+      });
+      return;
+    }
+
+    if (command === 'onboard') {
+      await handleOnboardCommand({
         cwd: process.cwd(),
         rootOverride,
         argv: tail,
@@ -1063,6 +1074,102 @@ async function handleAdminCommand({ cwd, rootOverride, argv }) {
     host,
     port,
   });
+}
+
+async function handleOnboardCommand({ cwd, rootOverride, argv }) {
+  const { positionals } = parseArgs(argv);
+  assert(positionals.length === 0, 'Usage: hkclaw-lite onboard');
+
+  console.log('hkclaw-lite onboard — interactive first-run setup\n');
+
+  const result = await withPrompter(async (prompter) => {
+    // Step 1: project root
+    const defaultRoot = rootOverride
+      ? path.resolve(rootOverride)
+      : path.join(os.homedir(), 'hkclaw-lite');
+    const candidateRoot = await prompter.askText('1) 프로젝트 루트', {
+      defaultValue: defaultRoot,
+    });
+    const projectRoot = path.resolve(candidateRoot);
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const layout = getProjectLayout(projectRoot);
+    if (!fs.existsSync(layout.configPath)) {
+      initProject(projectRoot, { force: false });
+      console.log(`   ${layout.toolRoot} 초기화 완료.`);
+    } else {
+      console.log(`   기존 프로젝트 사용: ${projectRoot}`);
+    }
+
+    // Step 2: admin password
+    const enablePassword = await prompter.askConfirm(
+      '2) 관리자 비밀번호 설정 (비활성화하면 누구나 admin 접근 가능)',
+      { defaultValue: true },
+    );
+    if (enablePassword) {
+      const password = await prompter.askText('   새 비밀번호', {
+        validate: (value) =>
+          String(value).trim().length >= 6 || '비밀번호는 6자 이상이어야 합니다.',
+      });
+      await setAdminPassword(projectRoot, password.trim());
+      console.log('   비밀번호 저장 완료.');
+    } else {
+      console.log('   비밀번호 미설정 — 로그인 disabled.');
+    }
+
+    // Step 3: external admin URL / Kakao relay base
+    const relayUrl = (
+      await prompter.askText(
+        '3) 외부 admin URL (Kakao relay base)\n   비우면 로컬 fallback 사용',
+        { defaultValue: '', allowEmpty: true },
+      )
+    ).trim();
+    const envFile = path.join(layout.toolRoot, 'service.env');
+    if (relayUrl) {
+      const normalized = relayUrl.endsWith('/') ? relayUrl : `${relayUrl}/`;
+      fs.writeFileSync(envFile, `OPENCLAW_TALKCHANNEL_RELAY_URL=${normalized}\n`);
+      console.log(`   ${envFile} 에 relay URL 저장.`);
+    } else {
+      console.log('   로컬 fallback 사용: http://127.0.0.1:5687/');
+    }
+
+    // Step 4: systemd service
+    let serviceInstalled = false;
+    if (process.platform === 'linux') {
+      const installService = await prompter.askConfirm(
+        '4) systemd user service 등록 + 시작?',
+        { defaultValue: true },
+      );
+      if (installService) {
+        const binPath = readBinPath();
+        assert(binPath, '바이너리 경로 해석 실패. npm install -g hkclaw-lite 다시 시도.');
+        const { unitPath } = installSystemdUnit({
+          binPath,
+          projectRoot,
+          host: '0.0.0.0',
+          port: String(DEFAULT_ADMIN_PORT),
+        });
+        console.log(`   ${unitPath} 작성 + daemon-reload.`);
+        startService();
+        console.log('   서비스 시작 완료.');
+        serviceInstalled = true;
+      } else {
+        console.log('   systemd 등록 건너뜀. "hkclaw-lite start" 로 나중에 등록 가능.');
+      }
+    } else {
+      console.log('4) systemd 등록은 Linux 에서만 지원. "hkclaw-lite admin" 으로 직접 실행.');
+    }
+
+    return { projectRoot, serviceInstalled };
+  });
+
+  console.log('\n완료. 다음 단계:');
+  console.log(`   웹 어드민: http://127.0.0.1:${DEFAULT_ADMIN_PORT}`);
+  console.log('   브라우저에서 AI 로그인 → 에이전트 추가 → 채널 추가 순으로 진행.');
+  if (result.serviceInstalled) {
+    console.log('   서비스 명령: hkclaw-lite status / restart / service logs -f');
+  } else {
+    console.log(`   직접 실행: cd ${result.projectRoot} && hkclaw-lite admin`);
+  }
 }
 
 async function handleServiceCommand({ cwd, rootOverride, command, argv }) {
@@ -2631,6 +2738,7 @@ Installing the package never starts a process by itself.
 
 Execution model:
   hkclaw-lite / --help      Show help only
+  hkclaw-lite onboard       Interactive first-run setup wizard
   hkclaw-lite admin         Start the web admin server (foreground)
   hkclaw-lite start         Install + enable the systemd user service
   hkclaw-lite stop          Stop the systemd user service
@@ -2644,6 +2752,7 @@ Execution model:
   hkclaw-lite kakao serve   Start the long-running Kakao TalkChannel worker
 
 Usage:
+  hkclaw-lite onboard [--root DIR]
   hkclaw-lite init [--root DIR] [--force]
   hkclaw-lite admin [--root DIR] [--host 127.0.0.1] [--port ${DEFAULT_ADMIN_PORT}]
   hkclaw-lite start [--root DIR] [--host 0.0.0.0] [--port ${DEFAULT_ADMIN_PORT}]

@@ -43,6 +43,19 @@ hkclaw-lite admin
 
 ```bash
 npm install -g hkclaw-lite
+hkclaw-lite onboard      # 첫 실행 마법사: 프로젝트 init + 관리자 비밀번호 + relay URL + systemd 등록
+```
+
+`hkclaw-lite onboard` 는 다음을 한 번에 처리한다.
+
+1. 프로젝트 루트 (기본 `~/hkclaw-lite`) 의 `.hkclaw-lite/` 초기화
+2. 관리자 비밀번호 설정 (비활성화하면 로그인 disabled)
+3. 외부 admin URL → `<root>/.hkclaw-lite/service.env` 의 `OPENCLAW_TALKCHANNEL_RELAY_URL` 로 저장. 비우면 로컬 fallback `http://127.0.0.1:5687/`.
+4. (Linux) systemd user unit 등록 + 시작
+
+수동 진행을 원하면 onboard 대신:
+
+```bash
 hkclaw-lite admin
 ```
 

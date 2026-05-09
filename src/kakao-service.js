@@ -17,7 +17,7 @@ import {
 } from './kakao-runtime-state.js';
 import { assert, timestamp, toErrorMessage } from './utils.js';
 
-export const DEFAULT_KAKAO_RELAY_URL = 'https://k.tess.dev/';
+export const DEFAULT_KAKAO_RELAY_URL = 'http://127.0.0.1:5687/';
 
 const KAKAO_RELAY_URL_ENV_KEYS = [
   'OPENCLAW_TALKCHANNEL_RELAY_URL',
