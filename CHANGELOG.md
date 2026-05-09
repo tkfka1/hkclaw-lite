@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.1 - 2026-05-09
+
+### Fixed
+- Systemd `Environment=PATH` now also includes `~/.local/bin` and `~/.npm-global/bin`. Without this, `claude` (commonly installed at `~/.local/bin/claude`) was not visible to the admin process spawned by systemd, so `claude auth status --json` always failed and the AI 관리 view kept reporting "Claude Code CLI 로그인이 필요합니다" even after a successful host-level `claude auth login`.
+
+### Migration
+- After upgrading, run `hkclaw-lite start` (or `service install`) once to rewrite the existing user unit with the broader PATH, then `systemctl --user restart hkclaw-lite` (or `hkclaw-lite restart`).
+
 ## 2.3.0 - 2026-05-09
 
 ### Removed (breaking)

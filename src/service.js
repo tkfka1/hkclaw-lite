@@ -16,6 +16,8 @@ export function buildSystemdUnit({ binPath, projectRoot, host, port, envFile, ho
   const pathSegments = [
     path.dirname(node),
     path.dirname(binPath),
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.npm-global', 'bin'),
     '/usr/local/sbin',
     '/usr/local/bin',
     '/usr/sbin',
