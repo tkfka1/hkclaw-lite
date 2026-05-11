@@ -641,7 +641,7 @@ export function createDiscordIntermediatePublisher(discordChannel) {
 
   return {
     async push(event) {
-      if (!event || event.source !== 'claude-cli') {
+      if (!event || !['claude-cli', 'codex-cli'].includes(event.source)) {
         return;
       }
 
@@ -677,6 +677,12 @@ export function createDiscordIntermediatePublisher(discordChannel) {
           return;
         }
         if (event.phase === 'stop') {
+          if (!activeTool) {
+            activeTool = {
+              name: String(event.toolName || 'unknown').trim() || 'unknown',
+              inputText: String(event.text || ''),
+            };
+          }
           await flushTool();
         }
       }

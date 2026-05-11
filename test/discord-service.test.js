@@ -141,6 +141,42 @@ test('discord intermediate publisher edits one compact status message', async ()
   assert.match(edits.at(-1), /working on it/u);
 });
 
+test('discord intermediate publisher accepts Codex stream events', async () => {
+  const sent = [];
+  const edits = [];
+  const channel = {
+    async send(text) {
+      sent.push(text);
+      return {
+        async edit(nextText) {
+          edits.push(nextText);
+          return this;
+        },
+      };
+    },
+  };
+
+  const publisher = createDiscordIntermediatePublisher(channel);
+  await publisher.push({
+    source: 'codex-cli',
+    kind: 'thinking',
+    text: 'checking files',
+  });
+  await publisher.push({
+    source: 'codex-cli',
+    kind: 'tool',
+    phase: 'stop',
+    toolName: 'exec_command',
+    text: '{"cmd":"pwd"}',
+  });
+  await publisher.finish();
+
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /checking files/u);
+  assert.match(edits.at(-1), /도구 실행 중: exec_command/u);
+  assert.doesNotMatch(edits.join('\n'), /"cmd":"pwd"/u);
+});
+
 test('discord service flushes queued runtime outbox events', async () => {
   const projectRoot = createProject();
   initProject(projectRoot);

@@ -2408,7 +2408,7 @@ function setDiscordAgentDesiredRunning(projectRoot, agentName, desiredRunning) {
     startedAt: rawStatus?.startedAt || null,
     stoppedAt: rawStatus?.stoppedAt || null,
     heartbeatAt: rawStatus?.heartbeatAt || null,
-    lastError: rawStatus?.lastError || null,
+    lastError: getManagedServiceLastErrorForDesiredState(rawStatus, desiredRunning),
     agents: rawStatus?.agents || rawStatus?.bots || {},
   });
 }
@@ -2425,7 +2425,7 @@ function setTelegramAgentDesiredRunning(projectRoot, agentName, desiredRunning) 
     startedAt: rawStatus?.startedAt || null,
     stoppedAt: rawStatus?.stoppedAt || null,
     heartbeatAt: rawStatus?.heartbeatAt || null,
-    lastError: rawStatus?.lastError || null,
+    lastError: getManagedServiceLastErrorForDesiredState(rawStatus, desiredRunning),
     agents: rawStatus?.agents || rawStatus?.bots || {},
   });
 }
@@ -2442,7 +2442,7 @@ function setKakaoAgentDesiredRunning(projectRoot, agentName, desiredRunning) {
     startedAt: rawStatus?.startedAt || null,
     stoppedAt: rawStatus?.stoppedAt || null,
     heartbeatAt: rawStatus?.heartbeatAt || null,
-    lastError: rawStatus?.lastError || null,
+    lastError: getManagedServiceLastErrorForDesiredState(rawStatus, desiredRunning),
     agents: rawStatus?.agents || rawStatus?.accounts || {},
   });
 }
@@ -2459,9 +2459,13 @@ function setKakaoServiceDesiredRunning(projectRoot, desiredRunning) {
     startedAt: rawStatus?.startedAt || null,
     stoppedAt: rawStatus?.stoppedAt || null,
     heartbeatAt: rawStatus?.heartbeatAt || null,
-    lastError: rawStatus?.lastError || null,
+    lastError: getManagedServiceLastErrorForDesiredState(rawStatus, desiredRunning),
     agents: rawStatus?.agents || rawStatus?.accounts || {},
   });
+}
+
+function getManagedServiceLastErrorForDesiredState(rawStatus, desiredRunning) {
+  return desiredRunning ? null : rawStatus?.lastError || null;
 }
 
 function buildDiscordServiceStartArgs(projectRoot, { agentName = null } = {}) {

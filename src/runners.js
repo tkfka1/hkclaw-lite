@@ -60,6 +60,7 @@ export async function runAgentTurn({
         prompt,
         rawPrompt,
         workdir,
+        onStreamEvent,
       });
       break;
     case 'claude-code':
@@ -175,6 +176,7 @@ async function runCodex({
   prompt,
   rawPrompt,
   workdir,
+  onStreamEvent,
 }) {
   const cli = requireManagedAgentCli('codex', process.env);
   const executionWorkdir = requireExecutionWorkdir(projectRoot, service, workdir);
@@ -228,6 +230,15 @@ async function runCodex({
       env,
       input: prompt,
       timeoutMs: service.timeoutMs,
+      onStdoutLine:
+        typeof onStreamEvent === 'function'
+          ? async (line) => {
+              const event = extractCodexExecStreamEvent(parseCodexExecJsonLine(line));
+              if (event) {
+                await onStreamEvent(event);
+              }
+            }
+          : null,
     });
     const finalText = fs.existsSync(lastMessageFile)
       ? fs.readFileSync(lastMessageFile, 'utf8')
@@ -760,11 +771,8 @@ function parseCodexExecJsonOutput(stdout) {
     .map((line) => line.trim())
     .filter(Boolean)
     .flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
+      const event = parseCodexExecJsonLine(line);
+      return event ? [event] : [];
     });
 
   let text = '';
@@ -802,6 +810,100 @@ function parseCodexExecJsonOutput(stdout) {
         }
       : null,
   };
+}
+
+function parseCodexExecJsonLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
+function extractCodexExecStreamEvent(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  const item = event.item && typeof event.item === 'object' ? event.item : null;
+  const itemType = String(item?.type || '').trim();
+  const eventType = String(event.type || '').trim();
+
+  if (itemType === 'reasoning') {
+    const text = extractCodexItemText(item);
+    return text
+      ? {
+          source: 'codex-cli',
+          kind: 'thinking',
+          text,
+        }
+      : null;
+  }
+
+  if (itemType === 'function_call' || itemType === 'tool_call') {
+    const toolName =
+      String(item.name || item.tool_name || item.toolName || '').trim() ||
+      (itemType === 'function_call' ? 'function_call' : 'tool_call');
+    const text = formatCodexToolInput(item.arguments ?? item.input ?? item.parameters);
+    return {
+      source: 'codex-cli',
+      kind: 'tool',
+      phase: eventType.endsWith('.started') ? 'start' : 'stop',
+      toolName,
+      toolUseId: String(item.call_id || item.id || '').trim() || null,
+      text,
+    };
+  }
+
+  return null;
+}
+
+function extractCodexItemText(item) {
+  if (typeof item.text === 'string') {
+    return item.text;
+  }
+  if (typeof item.summary === 'string') {
+    return item.summary;
+  }
+  if (Array.isArray(item.summary)) {
+    return item.summary
+      .map((entry) =>
+        typeof entry === 'string'
+          ? entry
+          : typeof entry?.text === 'string'
+            ? entry.text
+            : '',
+      )
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (Array.isArray(item.content)) {
+    return item.content
+      .map((entry) =>
+        typeof entry === 'string'
+          ? entry
+          : typeof entry?.text === 'string'
+            ? entry.text
+            : '',
+      )
+      .filter(Boolean)
+      .join('\n');
+  }
+  return '';
+}
+
+function formatCodexToolInput(value) {
+  if (value === undefined || value === null || value === '') {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function buildClaudeCliSessionSpec({ channel, role, runtimeSession }) {

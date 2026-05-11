@@ -190,6 +190,26 @@ process.stdin.on('end', () => {
   process.stdout.write(JSON.stringify({
     type: 'item.completed',
     item: {
+      type: 'reasoning',
+      summary: [
+        {
+          type: 'summary_text',
+          text: 'inspect repo ',
+        },
+      ],
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'item.completed',
+    item: {
+      type: 'function_call',
+      name: 'exec_command',
+      arguments: '{"cmd":"pwd"}',
+    },
+  }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    type: 'item.completed',
+    item: {
       type: 'agent_message',
       text: 'OK',
     },
@@ -380,6 +400,64 @@ test('runAgentTurn returns Codex CLI usage metadata when captureRuntimeMetadata 
         runtimeSessionId: 'codex-thread-test',
       });
     },
+  );
+});
+
+test('runAgentTurn forwards Codex stream events while preserving the final result', async () => {
+  const projectRoot = createTempDir();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  const fakeCliPath = createFakeCodexCli();
+  const events = [];
+
+  await withEnv(
+    {
+      HKCLAW_LITE_CODEX_CLI: fakeCliPath,
+    },
+    async () => {
+      const output = await runAgentTurn({
+        projectRoot,
+        agent: {
+          name: 'codex-agent',
+          agent: 'codex',
+          sandbox: 'read-only',
+        },
+        prompt: 'Return exactly OK.',
+        rawPrompt: 'Return exactly OK.',
+        workdir: 'workspace',
+        onStreamEvent: async (event) => {
+          events.push(event);
+        },
+      });
+
+      assert.equal(output, 'OK');
+    },
+  );
+
+  assert.deepEqual(
+    events.map((event) => ({
+      source: event.source,
+      kind: event.kind,
+      phase: event.phase || null,
+      toolName: event.toolName || null,
+      text: event.text || '',
+    })),
+    [
+      {
+        source: 'codex-cli',
+        kind: 'thinking',
+        phase: null,
+        toolName: null,
+        text: 'inspect repo ',
+      },
+      {
+        source: 'codex-cli',
+        kind: 'tool',
+        phase: 'stop',
+        toolName: 'exec_command',
+        text: '{"cmd":"pwd"}',
+      },
+    ],
   );
 });
 

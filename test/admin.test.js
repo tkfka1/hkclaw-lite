@@ -78,8 +78,14 @@ const fakeKakaoServicePath = path.join(
 );
 const previousChannelAutostart = process.env.HKCLAW_LITE_CHANNEL_AUTOSTART;
 process.env.HKCLAW_LITE_CHANNEL_AUTOSTART = '0';
+const adminTestProjectRoots = new Set();
 
-test.after(() => {
+test.afterEach(async () => {
+  await stopTrackedManagedFixtureProcesses();
+});
+
+test.after(async () => {
+  await stopTrackedManagedFixtureProcesses();
   if (previousChannelAutostart === undefined) {
     delete process.env.HKCLAW_LITE_CHANNEL_AUTOSTART;
   } else {
@@ -88,7 +94,9 @@ test.after(() => {
 });
 
 function createProject() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-test-'));
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hkclaw-lite-admin-test-'));
+  adminTestProjectRoots.add(projectRoot);
+  return projectRoot;
 }
 
 function createFakeManagedCliBundle({ packageName, binaryName, script }) {
@@ -689,7 +697,111 @@ async function withAdminServer(projectRoot, callback, options = {}) {
   try {
     await callback(started);
   } finally {
-    await started.close();
+    try {
+      await started.close();
+    } finally {
+      await stopManagedFixtureProcesses(projectRoot);
+    }
+  }
+}
+
+async function stopManagedFixtureProcesses(projectRoot) {
+  const pids = new Set();
+  for (const statusPath of listManagedServiceStatusPaths(projectRoot)) {
+    const status = readStatusFile(statusPath);
+    const pid = status?.pid;
+    if (Number.isInteger(pid) && isManagedFixtureProcess(pid, projectRoot)) {
+      pids.add(pid);
+    }
+  }
+
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      continue;
+    }
+  }
+
+  await Promise.all(
+    [...pids].map(async (pid) => {
+      const stopped = await waitFor(() => !isProcessAlive(pid), {
+        timeoutMs: 1_000,
+        intervalMs: 50,
+      });
+      if (stopped) {
+        return;
+      }
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // Process already exited.
+      }
+    }),
+  );
+}
+
+async function stopTrackedManagedFixtureProcesses() {
+  const projectRoots = [...adminTestProjectRoots];
+  await Promise.all(projectRoots.map((projectRoot) => stopManagedFixtureProcesses(projectRoot)));
+  for (const projectRoot of projectRoots) {
+    adminTestProjectRoots.delete(projectRoot);
+  }
+}
+
+function listManagedServiceStatusPaths(projectRoot) {
+  const toolRoot = path.join(projectRoot, '.hkclaw-lite');
+  const statusPaths = ['discord-status.json', 'telegram-status.json', 'kakao-status.json'].map(
+    (fileName) => path.join(toolRoot, fileName),
+  );
+  for (const dirName of [
+    'discord-agent-statuses',
+    'telegram-agent-statuses',
+    'kakao-agent-statuses',
+  ]) {
+    const statusDir = path.join(toolRoot, dirName);
+    if (!fs.existsSync(statusDir)) {
+      continue;
+    }
+    for (const fileName of fs.readdirSync(statusDir)) {
+      if (fileName.endsWith('.json')) {
+        statusPaths.push(path.join(statusDir, fileName));
+      }
+    }
+  }
+  return statusPaths.filter((statusPath) => fs.existsSync(statusPath));
+}
+
+function readStatusFile(statusPath) {
+  try {
+    return JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function isManagedFixtureProcess(pid, projectRoot) {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid || !isProcessAlive(pid)) {
+    return false;
+  }
+  const commandLine = readProcessCommandLine(pid);
+  return commandLine.includes('/test/fixtures/fake-') && commandLine.includes(projectRoot);
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readProcessCommandLine(pid) {
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replaceAll('\0', ' ');
+  } catch {
+    return '';
   }
 }
 
@@ -2301,6 +2413,70 @@ test('admin server can start, restart, and stop Discord service', async () => {
       });
       assert.equal(stopped?.agentServices?.worker?.running, false);
       assert.equal(readDiscordAgentServiceStatus(projectRoot, 'worker')?.desiredRunning, false);
+    });
+  } finally {
+    if (previousEntry === undefined) {
+      delete process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+    } else {
+      process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = previousEntry;
+    }
+  }
+});
+
+test('admin server clears stale Discord start errors before a new start attempt', async () => {
+  const projectRoot = createProject();
+  initProject(projectRoot);
+  const previousEntry = process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY;
+  process.env.HKCLAW_LITE_DISCORD_SERVICE_ENTRY = fakeDiscordServicePath;
+  const config = loadConfig(projectRoot);
+  config.agents.worker = buildAgentDefinition(projectRoot, 'worker', {
+    name: 'worker',
+    agent: 'command',
+    command: `node ${fixturePath}`,
+    discordToken: 'owner-token',
+  });
+  saveConfig(projectRoot, config);
+  writeDiscordAgentServiceStatus(projectRoot, 'worker', {
+    version: 1,
+    projectRoot,
+    agentName: 'worker',
+    pid: 999999,
+    running: false,
+    desiredRunning: false,
+    startedAt: '2026-04-15T00:00:00.000Z',
+    heartbeatAt: '2026-04-15T00:00:00.000Z',
+    lastError: "Cannot find package 'discord.js'",
+    agents: {
+      worker: {
+        agent: 'command',
+        tokenConfigured: true,
+        connected: false,
+        tag: '',
+        userId: '',
+      },
+    },
+  });
+
+  try {
+    await withAdminServer(projectRoot, async ({ url }) => {
+      const startResponse = await requestJson(`${url}/api/agents/worker/start`, {
+        method: 'POST',
+      });
+      assert.equal(startResponse.response.status, 200, JSON.stringify(startResponse.payload));
+      assert.equal(startResponse.payload.result.action, 'start');
+      assert.equal(startResponse.payload.result.agentName, 'worker');
+
+      const running = await waitFor(() => {
+        const snapshot = buildDiscordServiceSnapshot(projectRoot);
+        return snapshot.agentServices?.worker?.running ? snapshot : null;
+      });
+      assert.equal(Boolean(running?.agentServices?.worker?.running), true);
+      assert.equal(running?.agentServices?.worker?.lastError, null);
+
+      const stopResponse = await requestJson(`${url}/api/agents/worker/stop`, {
+        method: 'POST',
+      });
+      assert.equal(stopResponse.response.status, 200, JSON.stringify(stopResponse.payload));
     });
   } finally {
     if (previousEntry === undefined) {
