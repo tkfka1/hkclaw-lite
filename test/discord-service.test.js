@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  createDiscordIntermediatePublisher,
   flushPendingDiscordOutbox,
   flushDiscordOutboxForRun,
   formatDiscordRoleMessage,
@@ -93,6 +94,51 @@ test('discord formatter keeps single channels concise', () => {
   );
 
   assert.equal(text, 'done');
+});
+
+test('discord intermediate publisher edits one compact status message', async () => {
+  const sent = [];
+  const edits = [];
+  const channel = {
+    async send(text) {
+      sent.push(text);
+      return {
+        async edit(nextText) {
+          edits.push(nextText);
+          return this;
+        },
+      };
+    },
+  };
+
+  const publisher = createDiscordIntermediatePublisher(channel);
+  await publisher.push({
+    source: 'claude-cli',
+    kind: 'tool',
+    phase: 'start',
+    toolName: 'exec_command',
+    text: 'cat very-large-file-with-sensitive-command-body',
+  });
+  await publisher.push({
+    source: 'claude-cli',
+    kind: 'tool',
+    phase: 'input',
+    toolName: 'exec_command',
+    text: '\n'.repeat(10) + 'full tool payload should stay hidden',
+  });
+  await publisher.push({
+    source: 'claude-cli',
+    kind: 'thinking',
+    text: 'working on it',
+  });
+  await publisher.finish();
+
+  assert.equal(sent.length, 1);
+  assert.ok(edits.length >= 1);
+  assert.match(sent[0], /도구 실행 중: exec_command/u);
+  assert.doesNotMatch(sent.join('\n'), /full tool payload/u);
+  assert.doesNotMatch(edits.join('\n'), /full tool payload/u);
+  assert.match(edits.at(-1), /working on it/u);
 });
 
 test('discord service flushes queued runtime outbox events', async () => {

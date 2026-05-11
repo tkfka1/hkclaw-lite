@@ -22,6 +22,7 @@ const DISCORD_COMMAND_POLL_INTERVAL_MS = 1_000;
 const DISCORD_TYPING_REFRESH_MS = 8_000;
 const DISCORD_STREAM_FLUSH_INTERVAL_MS = 2_000;
 const DISCORD_STREAM_THINKING_FLUSH_CHARS = 800;
+const DISCORD_INTERMEDIATE_MESSAGE_LIMIT = 1_200;
 
 export async function serveDiscord(projectRoot, { agentName = null } = {}) {
   const config = loadConfig(projectRoot);
@@ -595,10 +596,20 @@ function splitDiscordMessage(text) {
   return chunks.filter(Boolean);
 }
 
-function createDiscordIntermediatePublisher(discordChannel) {
+export function createDiscordIntermediatePublisher(discordChannel) {
   let thinkingBuffer = '';
   let activeTool = null;
   let lastThinkingFlushAt = 0;
+  let statusMessage = null;
+
+  const publishStatus = async (text) => {
+    const content = truncateDiscordIntermediateText(text);
+    if (statusMessage?.edit) {
+      statusMessage = await statusMessage.edit(content);
+      return;
+    }
+    statusMessage = await discordChannel.send(content);
+  };
 
   const flushThinking = async ({ force = false } = {}) => {
     const trimmed = thinkingBuffer.trim();
@@ -616,20 +627,16 @@ function createDiscordIntermediatePublisher(discordChannel) {
     }
     thinkingBuffer = '';
     lastThinkingFlushAt = now;
-    await sendDiscordText(discordChannel.client, discordChannel.id, `생각\n${trimmed}`);
+    await publishStatus(`처리 중\n${trimmed}`);
   };
 
   const flushTool = async () => {
     if (!activeTool) {
       return;
     }
-    const lines = [`도구: ${activeTool.name || 'unknown'}`];
-    const body = String(activeTool.inputText || '').trim();
-    if (body) {
-      lines.push(body);
-    }
+    const lines = [`도구 실행 중: ${activeTool.name || 'unknown'}`];
     activeTool = null;
-    await sendDiscordText(discordChannel.client, discordChannel.id, lines.join('\n'));
+    await publishStatus(lines.join('\n'));
   };
 
   return {
@@ -679,6 +686,14 @@ function createDiscordIntermediatePublisher(discordChannel) {
       await flushTool();
     },
   };
+}
+
+function truncateDiscordIntermediateText(text) {
+  const input = String(text || '').trim() || '처리 중';
+  if (input.length <= DISCORD_INTERMEDIATE_MESSAGE_LIMIT) {
+    return input;
+  }
+  return `${input.slice(0, DISCORD_INTERMEDIATE_MESSAGE_LIMIT - 1).trimEnd()}…`;
 }
 
 export function formatDiscordRoleMessage(channel, entry) {
