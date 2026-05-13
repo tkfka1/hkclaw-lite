@@ -11,31 +11,12 @@
 ## 요구 사항
 
 - Node.js 24+
-- 시스템 `PATH`에 있는 `codex`/`gemini`로 자동 fallback하지 않는다. 내부 번들만 사용한다.
-- Claude는 기본적으로 내부 번들을 쓰고, 필요하면 `HKCLAW_LITE_CLAUDE_CLI=claude` 같은 환경 변수로 외부 CLI를 명시적으로 지정할 수 있다.
+- 사용할 AI CLI는 호스트에 직접 설치되어 있어야 한다. `hkclaw-lite`는 Codex/Claude/Gemini CLI를 npm 패키지 안에 번들하지 않는다.
+- `codex`, `claude`, `gemini`가 systemd 환경의 `PATH`에서 보이지 않으면 `HKCLAW_LITE_CODEX_CLI`, `HKCLAW_LITE_CLAUDE_CLI`, `HKCLAW_LITE_GEMINI_CLI`에 실행 파일의 절대 경로를 지정한다.
 
-기본 번들 버전:
-
-- `@openai/codex@0.125.0`
-- `@anthropic-ai/claude-agent-sdk@0.2.119`
-- `@google/gemini-cli@0.39.1`
-
-웹 어드민의 **AI 관리 → 번들 업데이트** 또는 CLI 명령으로 프로젝트별 최신 번들을 받을 수 있다. 업데이트는 설치된 hkclaw-lite 패키지를 직접 고치지 않고 `.hkclaw-lite/bundled-clis` 아래에 overlay로 설치한다.
-
-```bash
-hkclaw-lite bundles status
-hkclaw-lite bundles update all
-hkclaw-lite bundles update codex --version latest
-```
+예: `HKCLAW_LITE_CLAUDE_CLI=/home/me/.local/bin/claude hkclaw-lite admin`
 
 에이전트별 접근 범위는 `read-only`, `workspace-write`, `danger-full-access` 중에서 고를 수 있다. Codex는 sandbox/approval 플래그로, Gemini CLI는 approval mode(`plan`/`auto_edit`/`yolo`)로, local LLM은 런타임 컨텍스트로, command 에이전트는 `HKCLAW_LITE_AGENT_ACCESS_MODE` 환경 변수로 전달된다. Claude Code는 `bypassPermissions` 권한 모드가 전체 권한에 해당한다.
-
-외부 Claude CLI를 쓰려면:
-
-```bash
-export HKCLAW_LITE_CLAUDE_CLI=claude
-hkclaw-lite admin
-```
 
 ## 설치 / 실행
 

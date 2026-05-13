@@ -2167,6 +2167,7 @@ async function getRuntimeDb(projectRoot) {
   ensureDir(path.dirname(dbPath));
   const db = new DatabaseSync(dbPath);
   db.exec(`
+    PRAGMA busy_timeout = 5000;
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS runtime_runs (

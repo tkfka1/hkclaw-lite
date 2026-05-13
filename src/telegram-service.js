@@ -932,6 +932,9 @@ function resolveRoleMessageTitle(channel, entry) {
     return 'owner 응답';
   }
   if (entry?.role === 'owner') {
+    if (entry?.final) {
+      return 'owner 최종';
+    }
     return 'owner 초안';
   }
   if (entry?.role === 'reviewer') {

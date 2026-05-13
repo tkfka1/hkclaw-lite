@@ -855,6 +855,17 @@ function extractCodexExecStreamEvent(event) {
     };
   }
 
+  if (itemType === 'agent_message') {
+    const text = extractCodexItemText(item);
+    return text
+      ? {
+          source: 'codex-cli',
+          kind: 'text',
+          text,
+        }
+      : null;
+  }
+
   return null;
 }
 

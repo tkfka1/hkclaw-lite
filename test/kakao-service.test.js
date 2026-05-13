@@ -445,6 +445,17 @@ test('kakao SSE parser returns complete events and keeps partial data', () => {
 
 test('kakao formatter strips markdown and preserves tribunal role labels', () => {
   const channel = { name: 'kakao-main', mode: 'tribunal' };
+  const ownerFinal = formatKakaoRoleMessage(channel, {
+    role: 'owner',
+    agent: { name: 'owner' },
+    content: 'done',
+    mode: 'tribunal',
+    round: 1,
+    maxRounds: 2,
+    final: true,
+  });
+  assert.match(ownerFinal, /owner 최종 · owner/u);
+
   const message = formatKakaoRoleMessage(channel, {
     role: 'reviewer',
     agent: { name: 'reviewer' },

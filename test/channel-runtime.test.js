@@ -24,6 +24,12 @@ import {
 
 const repoRoot = process.cwd();
 const ownerFixturePath = path.join(repoRoot, 'test', 'fixtures', 'echo-assistant.mjs');
+const approvingReviewerFixturePath = path.join(
+  repoRoot,
+  'test',
+  'fixtures',
+  'approving-reviewer.mjs',
+);
 const reviewerFixturePath = path.join(repoRoot, 'test', 'fixtures', 'blocking-reviewer.mjs');
 const arbiterFixturePath = path.join(repoRoot, 'test', 'fixtures', 'arbiter-agent.mjs');
 const inspectFixturePath = path.join(repoRoot, 'test', 'fixtures', 'inspect-agent.mjs');
@@ -469,6 +475,112 @@ test('tribunal channel emits owner, reviewer, and arbiter roles in order', async
         runCount: 1,
         sessionPolicy: 'sticky',
         lastVerdict: null,
+      },
+    ],
+  );
+});
+
+test('tribunal channel sends approved owner response as final outbox message', async () => {
+  const projectRoot = createProject();
+  const workspacePath = path.join(projectRoot, 'workspace');
+  fs.mkdirSync(workspacePath, { recursive: true });
+  initProject(projectRoot);
+
+  const config = createDefaultConfig();
+  config.agents.owner = buildAgentDefinition(projectRoot, 'owner', {
+    name: 'owner',
+    agent: 'command',
+    command: `node ${ownerFixturePath}`,
+  });
+  config.agents.reviewer = buildAgentDefinition(projectRoot, 'reviewer', {
+    name: 'reviewer',
+    agent: 'command',
+    command: `node ${approvingReviewerFixturePath}`,
+  });
+  config.agents.arbiter = buildAgentDefinition(projectRoot, 'arbiter', {
+    name: 'arbiter',
+    agent: 'command',
+    command: `node ${arbiterFixturePath}`,
+  });
+  config.channels.main = buildChannelDefinition(projectRoot, config, 'main', {
+    name: 'main',
+    mode: 'tribunal',
+    discordChannelId: '123',
+    workspace: 'workspace',
+    agent: 'owner',
+    reviewer: 'reviewer',
+    arbiter: 'arbiter',
+    reviewRounds: 2,
+  });
+  saveConfig(projectRoot, config);
+
+  const loaded = loadConfig(projectRoot);
+  const result = await executeChannelTurn({
+    projectRoot,
+    config: loaded,
+    channel: getChannel(loaded, 'main'),
+    prompt: 'ship it',
+    workdir: workspacePath,
+  });
+
+  assert.equal(result.role, 'owner');
+  assert.equal(result.reviewerVerdict, 'approved');
+  assert.match(result.content, /SHIP IT/u);
+
+  const runs = await listRecentRuntimeRuns(projectRoot, { limit: 5 });
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].finalDisposition, 'reviewer_approved');
+  assert.equal(runs[0].resultRole, 'owner');
+
+  const messages = await listRuntimeRoleMessages(projectRoot, runs[0].runId);
+  assert.deepEqual(
+    messages.map((entry) => ({
+      role: entry.role,
+      verdict: entry.verdict || null,
+      final: entry.final,
+    })),
+    [
+      {
+        role: 'owner',
+        verdict: null,
+        final: false,
+      },
+      {
+        role: 'reviewer',
+        verdict: 'approved',
+        final: false,
+      },
+      {
+        role: 'owner',
+        verdict: 'approved',
+        final: true,
+      },
+    ],
+  );
+
+  const outbox = await listPendingRuntimeOutboxEvents(projectRoot, {
+    runId: runs[0].runId,
+    limit: 10,
+  });
+  assert.deepEqual(
+    outbox.map((entry) => ({
+      role: entry.role,
+      verdict: entry.verdict || null,
+      final: entry.final,
+      content: entry.content,
+    })),
+    [
+      {
+        role: 'owner',
+        verdict: null,
+        final: false,
+        content: result.content,
+      },
+      {
+        role: 'owner',
+        verdict: 'approved',
+        final: true,
+        content: result.content,
       },
     ],
   );

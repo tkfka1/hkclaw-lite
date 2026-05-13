@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.13 - 2026-05-13
+
+### Fixed
+- Tribunal channels now publish the reviewer approval as a review event and then send the approved owner response again as the final owner message, so Discord/Telegram/Kakao outbox delivery shows an explicit `owner 최종` result instead of ending on a reviewer message.
+- Runtime SQLite connections now set a short `busy_timeout` to reduce transient lock failures during service/outbox activity.
+
+### Changed
+- Discord in-progress updates start with a visible compact status message, include bounded streamed answer snippets, and keep raw tool payloads out of the edited progress message.
+
 ## 2.3.1 - 2026-05-09
 
 ### Fixed

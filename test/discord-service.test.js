@@ -46,6 +46,19 @@ test('discord formatter labels tribunal roles clearly', () => {
   assert.match(ownerText, /\*\*owner 초안 · owner-agent\*\*/u);
   assert.match(ownerText, /tribunal-main · 1\/2/u);
 
+  const ownerFinalText = formatDiscordRoleMessage(channel, {
+    role: 'owner',
+    mode: 'tribunal',
+    round: 1,
+    maxRounds: 2,
+    final: true,
+    agent: {
+      name: 'owner-agent',
+    },
+    content: 'owner final',
+  });
+  assert.match(ownerFinalText, /\*\*owner 최종 · owner-agent\*\*/u);
+
   const reviewerText = formatDiscordRoleMessage(channel, {
     role: 'reviewer',
     mode: 'tribunal',
@@ -112,6 +125,7 @@ test('discord intermediate publisher edits one compact status message', async ()
   };
 
   const publisher = createDiscordIntermediatePublisher(channel);
+  await publisher.start({ agentName: 'owner', channelName: 'main' });
   await publisher.push({
     source: 'claude-cli',
     kind: 'tool',
@@ -135,10 +149,13 @@ test('discord intermediate publisher edits one compact status message', async ()
 
   assert.equal(sent.length, 1);
   assert.ok(edits.length >= 1);
-  assert.match(sent[0], /도구 실행 중: exec_command/u);
+  assert.match(sent[0], /처리 시작/u);
+  assert.match(sent[0], /main · owner/u);
+  assert.match(edits.join('\n'), /도구 실행 중: exec_command/u);
   assert.doesNotMatch(sent.join('\n'), /full tool payload/u);
   assert.doesNotMatch(edits.join('\n'), /full tool payload/u);
-  assert.match(edits.at(-1), /working on it/u);
+  assert.doesNotMatch(edits.join('\n'), /working on it/u);
+  assert.match(edits.at(-1), /최종 답변 전송 준비/u);
 });
 
 test('discord intermediate publisher accepts Codex stream events', async () => {
@@ -157,6 +174,7 @@ test('discord intermediate publisher accepts Codex stream events', async () => {
   };
 
   const publisher = createDiscordIntermediatePublisher(channel);
+  await publisher.start({ agentName: 'codex' });
   await publisher.push({
     source: 'codex-cli',
     kind: 'thinking',
@@ -169,12 +187,51 @@ test('discord intermediate publisher accepts Codex stream events', async () => {
     toolName: 'exec_command',
     text: '{"cmd":"pwd"}',
   });
+  await publisher.push({
+    source: 'codex-cli',
+    kind: 'text',
+    text: 'final draft body that should appear as a compact snippet',
+  });
   await publisher.finish();
 
   assert.equal(sent.length, 1);
-  assert.match(sent[0], /checking files/u);
-  assert.match(edits.at(-1), /도구 실행 중: exec_command/u);
+  assert.match(sent[0], /처리 시작/u);
+  assert.doesNotMatch(edits.join('\n'), /checking files/u);
+  assert.match(edits.join('\n'), /도구 실행 중: exec_command/u);
+  assert.match(edits.join('\n'), /답변 작성 중/u);
+  assert.match(edits.join('\n'), /final draft body/u);
+  assert.match(edits.at(-1), /최종 답변 전송 준비/u);
   assert.doesNotMatch(edits.join('\n'), /"cmd":"pwd"/u);
+});
+
+test('discord intermediate publisher keeps text progress compact', async () => {
+  const sent = [];
+  const edits = [];
+  const channel = {
+    async send(text) {
+      sent.push(text);
+      return {
+        async edit(nextText) {
+          edits.push(nextText);
+          return this;
+        },
+      };
+    },
+  };
+
+  const publisher = createDiscordIntermediatePublisher(channel);
+  await publisher.start();
+  await publisher.push({
+    source: 'claude-cli',
+    kind: 'text',
+    text: '가'.repeat(900),
+  });
+  await publisher.finish();
+
+  assert.equal(sent.length, 1);
+  assert.ok(edits.every((entry) => entry.length <= 700));
+  assert.match(edits.join('\n'), /답변 작성 중/u);
+  assert.match(edits.join('\n'), /…/u);
 });
 
 test('discord service flushes queued runtime outbox events', async () => {

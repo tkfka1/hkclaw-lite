@@ -79,6 +79,19 @@ test('telegram formatter labels tribunal roles clearly', () => {
   assert.match(ownerText, /owner 초안 · owner-agent/u);
   assert.match(ownerText, /tribunal-main · 1\/2/u);
 
+  const ownerFinalText = formatTelegramRoleMessage(channel, {
+    role: 'owner',
+    mode: 'tribunal',
+    round: 1,
+    maxRounds: 2,
+    final: true,
+    agent: {
+      name: 'owner-agent',
+    },
+    content: 'owner final',
+  });
+  assert.match(ownerFinalText, /owner 최종 · owner-agent/u);
+
   const reviewerText = formatTelegramRoleMessage(channel, {
     role: 'reviewer',
     mode: 'tribunal',
@@ -509,7 +522,7 @@ test('telegram outbox flush skips bad events and continues with valid ones', asy
   assert.equal(flushed, 1);
   assert.equal(sent.length, 1);
   assert.match(sent[0].payload.text, /owner result/u);
-  assert.match(sent[0].payload.text, /owner 초안/u);
+  assert.match(sent[0].payload.text, /owner 최종/u);
 
   const pending = await listPendingRuntimeOutboxEvents(projectRoot, { limit: 10 });
   assert.equal(pending.length, 1);

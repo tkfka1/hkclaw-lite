@@ -20,9 +20,11 @@ const DISCORD_MESSAGE_LIMIT = 1900;
 const DISCORD_OUTBOX_FLUSH_INTERVAL_MS = 1_000;
 const DISCORD_COMMAND_POLL_INTERVAL_MS = 1_000;
 const DISCORD_TYPING_REFRESH_MS = 8_000;
-const DISCORD_STREAM_FLUSH_INTERVAL_MS = 2_000;
-const DISCORD_STREAM_THINKING_FLUSH_CHARS = 800;
-const DISCORD_INTERMEDIATE_MESSAGE_LIMIT = 1_200;
+const DISCORD_STREAM_FLUSH_INTERVAL_MS = 1_500;
+const DISCORD_STREAM_THINKING_FLUSH_CHARS = 120;
+const DISCORD_STREAM_TEXT_FLUSH_CHARS = 180;
+const DISCORD_INTERMEDIATE_MESSAGE_LIMIT = 700;
+const DISCORD_INTERMEDIATE_SNIPPET_LIMIT = 260;
 
 export async function serveDiscord(projectRoot, { agentName = null } = {}) {
   const config = loadConfig(projectRoot);
@@ -266,6 +268,12 @@ async function handleInboundMessage({
     : createDiscordIntermediatePublisher(message.channel);
   let runId = null;
   try {
+    if (intermediatePublisher) {
+      await intermediatePublisher.start({
+        agentName: channel.agent || workerAgentName,
+        channelName: channel.name,
+      });
+    }
     const result = await executeChannelTurn({
       projectRoot,
       config,
@@ -598,12 +606,19 @@ function splitDiscordMessage(text) {
 
 export function createDiscordIntermediatePublisher(discordChannel) {
   let thinkingBuffer = '';
+  let textBuffer = '';
   let activeTool = null;
   let lastThinkingFlushAt = 0;
+  let lastTextFlushAt = 0;
   let statusMessage = null;
+  let lastStatusContent = '';
 
   const publishStatus = async (text) => {
     const content = truncateDiscordIntermediateText(text);
+    if (content === lastStatusContent) {
+      return;
+    }
+    lastStatusContent = content;
     if (statusMessage?.edit) {
       statusMessage = await statusMessage.edit(content);
       return;
@@ -627,7 +642,28 @@ export function createDiscordIntermediatePublisher(discordChannel) {
     }
     thinkingBuffer = '';
     lastThinkingFlushAt = now;
-    await publishStatus(`처리 중\n${trimmed}`);
+    await publishStatus(buildDiscordIntermediateStatus('처리 중', '요청 분석/답변 계획 중'));
+  };
+
+  const flushText = async ({ force = false } = {}) => {
+    const trimmed = textBuffer.trim();
+    if (!trimmed) {
+      textBuffer = '';
+      return;
+    }
+    const now = Date.now();
+    if (
+      !force &&
+      trimmed.length < DISCORD_STREAM_TEXT_FLUSH_CHARS &&
+      now - lastTextFlushAt < DISCORD_STREAM_FLUSH_INTERVAL_MS
+    ) {
+      return;
+    }
+    textBuffer = '';
+    lastTextFlushAt = now;
+    await publishStatus(
+      buildDiscordIntermediateStatus('답변 작성 중', compactDiscordProgressSnippet(trimmed)),
+    );
   };
 
   const flushTool = async () => {
@@ -640,6 +676,10 @@ export function createDiscordIntermediatePublisher(discordChannel) {
   };
 
   return {
+    async start({ agentName = null, channelName = null } = {}) {
+      const meta = [channelName, agentName].filter(Boolean).join(' · ');
+      await publishStatus(buildDiscordIntermediateStatus('처리 시작', meta || '요청 확인 중'));
+    },
     async push(event) {
       if (!event || !['claude-cli', 'codex-cli'].includes(event.source)) {
         return;
@@ -656,6 +696,7 @@ export function createDiscordIntermediatePublisher(discordChannel) {
 
       if (event.kind === 'tool') {
         await flushThinking({ force: true });
+        await flushText({ force: true });
         if (event.phase === 'start') {
           if (activeTool) {
             await flushTool();
@@ -685,13 +726,47 @@ export function createDiscordIntermediatePublisher(discordChannel) {
           }
           await flushTool();
         }
+        return;
+      }
+
+      if (event.kind === 'text') {
+        if (activeTool) {
+          await flushTool();
+        }
+        await flushThinking({ force: true });
+        textBuffer += String(event.text || '');
+        await flushText();
       }
     },
     async finish() {
       await flushThinking({ force: true });
+      await flushText({ force: true });
       await flushTool();
+      if (statusMessage) {
+        await publishStatus(buildDiscordIntermediateStatus('마무리 중', '최종 답변 전송 준비'));
+      }
     },
   };
+}
+
+function buildDiscordIntermediateStatus(title, detail = '') {
+  const lines = [String(title || '').trim() || '처리 중'];
+  const normalizedDetail = String(detail || '').trim();
+  if (normalizedDetail) {
+    lines.push(normalizedDetail);
+  }
+  return lines.join('\n');
+}
+
+function compactDiscordProgressSnippet(text) {
+  const normalized = String(text || '').replace(/\s+/gu, ' ').trim();
+  if (!normalized) {
+    return '내용 정리 중';
+  }
+  if (normalized.length <= DISCORD_INTERMEDIATE_SNIPPET_LIMIT) {
+    return normalized;
+  }
+  return `${normalized.slice(0, DISCORD_INTERMEDIATE_SNIPPET_LIMIT - 1).trimEnd()}…`;
 }
 
 function truncateDiscordIntermediateText(text) {
@@ -993,6 +1068,9 @@ function resolveRoleMessageTitle(channel, entry) {
     return 'owner 응답';
   }
   if (entry?.role === 'owner') {
+    if (entry?.final) {
+      return 'owner 최종';
+    }
     return 'owner 초안';
   }
   if (entry?.role === 'reviewer') {

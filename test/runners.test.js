@@ -457,6 +457,13 @@ test('runAgentTurn forwards Codex stream events while preserving the final resul
         toolName: 'exec_command',
         text: '{"cmd":"pwd"}',
       },
+      {
+        source: 'codex-cli',
+        kind: 'text',
+        phase: null,
+        toolName: null,
+        text: 'OK',
+      },
     ],
   );
 });

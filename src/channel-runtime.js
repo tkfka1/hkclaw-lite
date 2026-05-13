@@ -162,12 +162,14 @@ async function executeTribunalTurn({
       onStreamEvent,
     });
     ownerResponse = ownerTurn.content;
+    const ownerRuntimeBackend = ownerTurn.runtimeMeta?.runtimeBackend || null;
+    const ownerRuntimeSessionId = ownerTurn.runtimeMeta?.runtimeSessionId || null;
     await emitRoleMessage(onRoleMessage, {
       role: 'owner',
       agent: owner,
       content: ownerResponse,
-      runtimeBackend: ownerTurn.runtimeMeta?.runtimeBackend || null,
-      runtimeSessionId: ownerTurn.runtimeMeta?.runtimeSessionId || null,
+      runtimeBackend: ownerRuntimeBackend,
+      runtimeSessionId: ownerRuntimeSessionId,
       final: false,
       round,
       maxRounds,
@@ -210,14 +212,27 @@ async function executeTribunalTurn({
       content: reviewerResponse,
       runtimeBackend: reviewerTurn.runtimeMeta?.runtimeBackend || null,
       runtimeSessionId: reviewerTurn.runtimeMeta?.runtimeSessionId || null,
-      final: reviewerVerdict === 'approved',
+      final: false,
       round,
       maxRounds,
       mode: 'tribunal',
       verdict: reviewerVerdict,
+      outbox: reviewerVerdict !== 'approved',
     });
 
     if (reviewerVerdict === 'approved') {
+      await emitRoleMessage(onRoleMessage, {
+        role: 'owner',
+        agent: owner,
+        content: ownerResponse,
+        runtimeBackend: ownerRuntimeBackend,
+        runtimeSessionId: ownerRuntimeSessionId,
+        final: true,
+        round,
+        maxRounds,
+        mode: 'tribunal',
+        verdict: reviewerVerdict,
+      });
       return {
         role: 'owner',
         agent: owner,
@@ -552,11 +567,13 @@ async function createRuntimeRecorder(projectRoot, { channel, prompt, workdir, on
       async record(entry) {
         await swallowRuntimePersistenceError(async () => {
           await recordRuntimeRoleMessage(projectRoot, run.runId, entry);
-          await enqueueRuntimeOutboxEvent(projectRoot, {
-            runId: run.runId,
-            channel,
-            entry,
-          });
+          if (entry?.outbox !== false) {
+            await enqueueRuntimeOutboxEvent(projectRoot, {
+              runId: run.runId,
+              channel,
+              entry,
+            });
+          }
           await recordRuntimeRoleSession(projectRoot, {
             channel,
             runId: run.runId,
